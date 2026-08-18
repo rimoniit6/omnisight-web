@@ -1,0 +1,10 @@
+{
+  "name": "com.worklensai.website",
+  "description": "WorkLensAI website domain tracker — forwards domain-only events to the WorkLensAI desktop agent",
+  "path": "C:\\Program Files\\WorkLensAI\\worklens-native-host.exe",
+  "type": "stdio",
+  "allowed_origins": [
+    "chrome-extension://__CHROME_EXTENSION_ID__/",
+    "chrome-extension://__EDGE_EXTENSION_ID__/"
+  ]
+}

@@ -1,0 +1,1 @@
+not an image at all — plain text file with no magic bytes

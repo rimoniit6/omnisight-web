@@ -1,0 +1,26 @@
+:81 {
+	# Internal socket-service transform. The query value is validated against a
+	# FIXED allowlist (port 3010 only) — never forwarded as an arbitrary local
+	# port, which would let external clients proxy to any service on this host.
+	@transform_port_query {
+		query XTransformPort=3010
+	}
+
+	handle @transform_port_query {
+		reverse_proxy localhost:3010 {
+			header_up Host {host}
+			header_up X-Forwarded-For {remote_host}
+			header_up X-Forwarded-Proto {scheme}
+			header_up X-Real-IP {remote_host}
+		}
+	}
+
+	handle {
+		reverse_proxy localhost:3000 {
+			header_up Host {host}
+			header_up X-Forwarded-For {remote_host}
+			header_up X-Forwarded-Proto {scheme}
+			header_up X-Real-IP {remote_host}
+		}
+	}
+}

@@ -1,0 +1,81 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="110 110 280 280">
+  <defs>
+    <linearGradient id="grad1" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#00F2FE;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#4FACFE;stop-opacity:1" />
+    </linearGradient>
+
+    <linearGradient id="grad2" x1="0%" y1="100%" x2="100%" y2="0%">
+      <stop offset="0%" style="stop-color:#1A2B4C;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#00D4FF;stop-opacity:1" />
+    </linearGradient>
+
+    <filter id="glow">
+      <feGaussianBlur stdDeviation="3" result="coloredBlur"/>
+      <feMerge>
+        <feMergeNode in="coloredBlur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+  
+
+  <ellipse
+    cx="250"
+    cy="250"
+    rx="140"
+    ry="40"
+    transform="rotate(-30 250 250)"
+    fill="none"
+    stroke="url(#grad1)"
+    stroke-width="6"
+    stroke-dasharray="10 5"
+    opacity="0.6"
+  />
+
+  <ellipse
+    cx="250"
+    cy="250"
+    rx="140"
+    ry="40"
+    transform="rotate(30 250 250)"
+    fill="none"
+    stroke="url(#grad1)"
+    stroke-width="6"
+    opacity="0.4"
+  />
+
+  <circle
+    cx="250"
+    cy="250"
+    r="75"
+    fill="none"
+    stroke="url(#grad1)"
+    stroke-width="8"
+    opacity="0.8"
+  />
+
+  <path
+    d="M 190,250 C 225,205 275,205 310,250 C 275,295 225,295 190,250 Z"
+    fill="#0A192F"
+    stroke="url(#grad1)"
+    stroke-width="5"
+    filter="url(#glow)"
+  />
+
+  <text
+    x="250"
+    y="264"
+    font-family="'Segoe UI', -apple-system, Helvetica, Arial, sans-serif"
+    font-size="36"
+    font-weight="900"
+    fill="#00F2FE"
+    text-anchor="middle"
+    letter-spacing="4"
+    filter="url(#glow)"
+  >OS</text>
+
+  <circle cx="282" cy="242" r="2.5" fill="#00F2FE" opacity="0.8"/>
+  <circle cx="282" cy="250" r="2.5" fill="#4FACFE" opacity="0.6"/>
+  <circle cx="282" cy="258" r="2.5" fill="#00F2FE" opacity="0.8"/>
+</svg>

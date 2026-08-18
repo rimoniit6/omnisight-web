@@ -1,0 +1,175 @@
+import { NextRequest, NextResponse } from 'next/server';
+import { db } from '@/lib/db';
+import { verifyPassword, signJWT, setSessionCookie, jwtLifetimeSeconds } from '@/lib/auth';
+import { checkRateLimit, RATE_LIMITS } from '@/lib/rate-limit';
+import { getClientIpFromHeaders } from '@/lib/client-ip';
+import { log, requestContext } from '@/lib/logger';
+import { createUserSession, getUserAgent } from '@/lib/session';
+
+export async function POST(req: NextRequest) {
+  try {
+    const body = await req.json();
+    const { email, password } = body as { email?: string; password?: string };
+
+    if (!email || !password) {
+      return NextResponse.json(
+        { error: 'Email and password are required' },
+        { status: 400 }
+      );
+    }
+
+    // Rate limit: per IP + email — protects against brute force. IP is
+    // resolved with the SAME canonical resolver the rate limiter and every
+    // other route use (right-most proxy-appended XFF entry / x-real-ip), so a
+    // spoofed prepended header can never rotate the bucket key.
+    const clientIp = getClientIpFromHeaders(req.headers);
+    const rlKey = `login:${clientIp}:${String(email).toLowerCase()}`;
+    const rl = await checkRateLimit(rlKey, RATE_LIMITS.login.limit, RATE_LIMITS.login.windowMs);
+    if (!rl.allowed) {
+      log.warn('auth.login.rate_limited', { email: String(email).toLowerCase() }, requestContext(req));
+      return NextResponse.json(
+        { error: `Too many login attempts. Try again in ${rl.retryAfterSeconds} seconds.` },
+        { status: 429 }
+      );
+    }
+
+    // Find user by email. Fast path: exact (lowercased) match uses the
+    // unique index. Fallback: case-insensitive lookup for mixed-case emails
+    // (PostgreSQL ILIKE via `mode: 'insensitive'`).
+    let user = await db.appUser.findFirst({
+      where: { email: String(email).toLowerCase(), isActive: true },
+    });
+    if (!user) {
+      user = await db.appUser.findFirst({
+        where: { email: { equals: String(email), mode: 'insensitive' }, isActive: true },
+      });
+    }
+
+    if (!user || !user.password) {
+      log.warn('auth.login.failed', { email: String(email).toLowerCase(), reason: 'no_user' }, requestContext(req));
+      return NextResponse.json(
+        { error: 'Invalid email or password' },
+        { status: 401 }
+      );
+    }
+
+    // Verify password
+    const isValid = await verifyPassword(password, user.password);
+    if (!isValid) {
+      log.warn('auth.login.failed', { email: String(email).toLowerCase(), reason: 'bad_password' }, requestContext(req));
+      return NextResponse.json(
+        { error: 'Invalid email or password' },
+        { status: 401 }
+      );
+    }
+
+    log.info('auth.login.success', { userId: user.id, email: user.email }, requestContext(req));
+
+    // Update last login and create audit log
+    await db.$transaction(async (tx) => {
+      await tx.appUser.update({
+        where: { id: user.id },
+        data: { lastLogin: new Date() },
+      });
+
+      // Create audit log
+      await tx.auditLog.create({
+        data: {
+          action: 'login',
+          resource: 'auth',
+          resourceId: user.id,
+          description: `User ${user.name} (${user.email}) logged in`,
+          userId: user.id,
+          // Null for org-less super_admin (AuditLog.organizationId is nullable).
+          organizationId: user.organizationId ?? null,
+        },
+      });
+    });
+
+    // Get organization — derived strictly from the user's own record.
+    // No findFirst() fallback: an org-less user gets no org, never the
+    // "first row in the table" (tenant isolation).
+    const organization = user.organizationId
+      ? await db.organization.findUnique({
+          where: { id: user.organizationId },
+        })
+      : null;
+
+    // Server-authoritative session (S-04): one UserSession row per login. The
+    // JWT carries the sessionId so logout, force-logout, disable, and password
+    // change can revoke it server-side. The row expires in lockstep with the
+    // JWT lifetime.
+    const { id: sessionId } = await createUserSession({
+      userId: user.id,
+      organizationId: user.organizationId ?? null,
+      ipAddress: clientIp,
+      userAgent: getUserAgent(req),
+      expiresAt: new Date(Date.now() + jwtLifetimeSeconds() * 1000),
+    });
+
+    // Sign JWT
+    const token = await signJWT({
+      userId: user.id,
+      email: user.email,
+      role: user.role,
+      organizationId: user.organizationId || undefined,
+      sessionId,
+    });
+
+    const roleLabels: Record<string, string> = {
+      super_admin: 'Super Admin',
+      admin: 'Admin',
+      owner: 'Owner',
+      manager: 'Manager',
+      viewer: 'Viewer',
+    };
+
+    const initials = user.name
+      ? user.name
+          .split(' ')
+          .map((n) => n[0])
+          .join('')
+          .toUpperCase()
+          .slice(0, 2)
+      : 'AD';
+
+    const response = NextResponse.json({
+      token,
+      user: {
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        role: user.role,
+        roleLabel: roleLabels[user.role] || user.role,
+        initials,
+        avatar: user.avatar,
+        lastLogin: new Date(),
+      },
+      organization: organization
+        ? {
+            id: organization.id,
+            name: organization.name,
+            slug: organization.slug,
+            email: organization.email,
+            phone: organization.phone,
+            address: organization.address,
+            logo: organization.logo,
+            status: organization.status,
+            timezone: organization.timezone,
+            currency: organization.currency,
+          }
+        : null,
+    });
+
+    // Set httpOnly session cookie so all same-origin API calls are
+    // authenticated without JS-accessible tokens. Max-age mirrors the JWT
+    // lifetime so the cookie and the session row die together.
+    return setSessionCookie(response, token, jwtLifetimeSeconds());
+  } catch (error) {
+    log.error('auth.login.error', { err: error }, requestContext(req));
+    return NextResponse.json(
+      { error: 'Internal server error' },
+      { status: 500 }
+    );
+  }
+}

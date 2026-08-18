@@ -1,0 +1,1297 @@
+// OmniSight Database Schema
+// Self-hosted, AI-powered workforce intelligence platform
+// (formerly branded as WorkLensAI — schema identifiers are unchanged)
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  // Runtime/application traffic. On Supabase this MUST be the pooled
+  // connection string (port 6543, ?pgbouncer=true) for Vercel serverless.
+  url       = env("DATABASE_URL")
+  // Prisma Migrate / db push / admin operations use this DIRECT connection
+  // (port 5432) so DDL and advisory locks never run through the transaction
+  // pooler. Keep it unset on plain PostgreSQL hosts — Prisma falls back to
+  // `url` when DIRECT_URL is absent.
+  directUrl = env("DIRECT_URL")
+}
+
+// ==================== Organization ====================
+
+model Organization {
+  id          String   @id @default(cuid())
+  name        String
+  slug        String   @unique
+  logo        String?
+  email       String?
+  phone       String?
+  timezone    String   @default("Asia/Dhaka")
+  language    String   @default("en")
+  currency    String   @default("USD")
+  address     String?
+  status      String   @default("active") // active, suspended, archived
+  // NOTE: seat-limit fields (maxSeats/currentSeats) were REMOVED by migration
+  // 20260810130000_remove_seat_limit — employee capacity is unlimited.
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relations
+  employees     Employee[]
+  departments   Department[]
+  devices       Device[]
+  users         AppUser[]
+  notifications Notification[]
+  alerts        Alert[]
+  auditLogs     AuditLog[]
+  reports       Report[]
+  aiInsights    AiInsight[]
+  agentRegistrations AgentRegistration[]
+  deviceClaims       DeviceClaim[]
+  guests             Guest[]
+  agentBuilds        AgentBuild[]
+  screenshots   Screenshot[]
+  anomalies      Anomaly[]
+  consents       Consent[]
+  consentPolicies ConsentPolicy[]
+  organizationSettings OrganizationSetting[]
+  projects         Project[]
+  projectMembers   ProjectMember[]
+  timeEntries      TimeEntry[]
+  projectTimeSyncs ProjectTimeSync[]
+  sentimentRecords SentimentRecord[]
+  keyboardActivities KeyboardActivity[]
+  locationEvents      LocationEvent[]
+  agentCommands       AgentCommand[]
+  webcamSessions      WebcamSession[]
+  notificationPreferences NotificationPreference[]
+  userSessions        UserSession[]
+  breakSessions       BreakSession[]
+}
+
+// ==================== Department ====================
+
+model Department {
+  id            String   @id @default(cuid())
+  name          String
+  description   String?
+  status        String   @default("active") // active, inactive
+  organizationId String
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  // Relations
+  organization  Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  employees     Employee[]
+  managerId     String?
+  manager       Employee?    @relation("DepartmentManager", fields: [managerId], references: [id], onDelete: SetNull)
+  projects      Project[]
+
+  @@unique([organizationId, name])
+  @@index([organizationId])
+  @@index([managerId])
+}
+
+// ==================== Employee ====================
+
+model Employee {
+  id              String   @id @default(cuid())
+  employeeId      String   @unique
+  firstName       String
+  lastName        String
+  email           String
+  phone           String?
+  avatar          String?
+  designation     String?
+  status          String   @default("active") // active, inactive, archived
+  // Person type: "employee" (normal) or "guest" (admin-approved zero-touch
+  // enrollment, backed by a synthesized identity — see Guest). Guests use
+  // every existing runtime mechanism (AgentToken, AgentSession, Consent,
+  // telemetry, config, heartbeat) unchanged; conversion to a normal employee
+  // is an admin action that flips this to "employee".
+  type            String   @default("employee") // employee, guest
+  joinDate        DateTime?
+  leaveDate       DateTime?
+  organizationId  String
+  departmentId    String?
+  guestId         String?  @unique // Guest enrollment that backs this person (null for normal employees)
+  agentPassword   String?  // Password for Windows agent authentication
+  agentApproved   Boolean  @default(false) // Whether admin has approved this employee's agent
+  // Legacy PATH B brute-force protection (agent/authenticate employeeId+password).
+  // Mirrors the AgentAccount lockout pattern (5 fails -> 15 min) so IP rotation
+  // cannot bypass a per-account counter. Reset on successful authentication.
+  failedLoginCount Int      @default(0)
+  lockedUntil      DateTime?
+  // Admin-selected ACTIVE TRACKING PROJECT (nullable): the single project
+  // whose auto project time this employee's real agent activity is attributed
+  // to. Admin-only writes; the sync engine re-validates org + active
+  // membership + project status at sync time. Null = no explicit active
+  // project (engine falls back to the exactly-one-membership rule). SetNull
+  // keeps the FK honest when a project row is deleted.
+  activeTrackingProjectId String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  // Relations
+  organization  Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  department     Department?  @relation(fields: [departmentId], references: [id], onDelete: SetNull)
+  devices        Device[]
+  activities     Activity[]
+  departmentAsManager Department[] @relation("DepartmentManager")
+  agentTokens    AgentToken[]
+  agentRegistrations AgentRegistration[]
+  deviceClaims   DeviceClaim[]
+  screenshots    Screenshot[]
+  anomalies      Anomaly[]
+  consents       Consent[]
+  projectMembers ProjectMember[]
+  timeEntries    TimeEntry[]
+  sentimentRecords SentimentRecord[]
+  activeTrackingProject Project? @relation("ActiveTrackingProject", fields: [activeTrackingProjectId], references: [id], onDelete: SetNull)
+  agentAccount   AgentAccount? // 1:1 authenticated agent login (Phase 1)
+  guest          Guest?        // 1:1 guest enrollment (only when type = "guest")
+  keyboardActivities KeyboardActivity[]
+  locationEvents      LocationEvent[]
+  agentCommands       AgentCommand[]
+  webcamSessions      WebcamSession[]
+  projectTimeSyncs    ProjectTimeSync[]
+  breakSessions       BreakSession[]
+
+  @@unique([email, organizationId])
+  @@index([organizationId])
+  @@index([departmentId])
+  @@index([status])
+  @@index([activeTrackingProjectId])
+}
+
+// ==================== Agent Account (Authenticated Agent Login) ====================
+// Dedicated 1:1 credentials row for the employee-agent login flow (Phase 1).
+// The employee NEVER self-registers — the Admin creates this account and
+// provides the initial credentials. Password is always bcrypt (never plaintext).
+// Lockout fields protect the login endpoint from brute force; `agentId` is the
+// username the agent logs in with (defaults to Employee.employeeId).
+
+model AgentAccount {
+  id                String    @id @default(cuid())
+  employeeId        String    @unique // 1:1 with Employee
+  agentId           String    @unique // login username (default: Employee.employeeId)
+  passwordHash      String    // bcrypt — never stored or returned in plaintext
+  status            String    @default("active") // active, disabled
+  lastLoginAt       DateTime?
+  failedLoginCount  Int       @default(0)
+  lockedUntil       DateTime? // brute-force lockout window (null = not locked)
+  passwordChangedAt DateTime?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  // Relations
+  employee Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  @@index([status])
+}
+
+// ==================== Device ====================
+
+model Device {
+  id              String   @id @default(cuid())
+  name            String
+  hostname        String?
+  operatingSystem String?
+  osVersion       String?
+  processor       String?
+  memory          String?
+  ipAddress       String?
+  macAddress      String?
+  agentVersion    String?
+  status          String   @default("online") // online, offline, inactive, maintenance, retired
+  lastHeartbeat   DateTime?
+  organizationId  String
+  employeeId      String?
+  agentKey        String?  @unique // stable machine identity from the desktop agent (zero-touch discovery)
+  registeredAt    DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  // Relations
+  organization  Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  employee       Employee?    @relation(fields: [employeeId], references: [id], onDelete: SetNull)
+  activities     Activity[]
+  screenshots    Screenshot[]
+  anomalies      Anomaly[]
+  deviceClaims   DeviceClaim[]
+  guests         Guest[]
+  keyboardActivities KeyboardActivity[]
+  locationEvents      LocationEvent[]
+  agentCommands       AgentCommand[]
+  webcamSessions      WebcamSession[]
+  breakSessions       BreakSession[]
+
+  @@index([organizationId])
+  @@index([employeeId])
+  @@index([status])
+  // Live-updates poll: devices changed since cursor (LM-6)
+  @@index([updatedAt])
+}
+
+// ==================== Device Claim (Zero-Touch Discovery) ====================
+// A discovered-but-unassigned device awaiting admin approval. Device approval
+// (assignment to an employee) is COMPLETELY SEPARATE from Consent — approving
+// a claim never grants monitoring/screenshot/activity consent.
+
+model DeviceClaim {
+  id              String   @id @default(cuid())
+  organizationId  String
+  deviceId        String
+  claimSecretHash String // sha256 of the one-time device credential (never stored plaintext)
+  status          String   @default("pending") // pending, approved, rejected, revoked, expired, cancelled
+  employeeId      String?  // bound at approval
+  approvedBy      String?  // admin user id
+  approvedAt      DateTime?
+  rejectedAt      DateTime?
+  rejectionReason String?
+  cancelledAt     DateTime? // employee-initiated cancellation (agent "Cancel registration")
+  cancellationReason String? // e.g. 'employee_agent' — auditable cancellation source
+  cancelledByDeviceId String? // the device that requested the cancellation
+  expiresAt       DateTime?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  // Relations
+  device      Device       @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  employee    Employee?    @relation(fields: [employeeId], references: [id], onDelete: SetNull)
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId])
+  @@index([status])
+  @@index([employeeId])
+  @@index([deviceId])
+}
+
+// ==================== Guest (Admin-Approved Zero-Touch Person) ====================
+// A person-level enrollment created when an admin approves a zero-touch
+// DeviceClaim in GUEST mode (no employee credentials, no AgentAccount). The
+// guest is backed by a SYNTHESIZED Employee row (Employee.type = 'guest') so
+// ALL existing runtime machinery — AgentToken, AgentSession, Consent,
+// telemetry (Activity/Screenshot/KeyboardActivity/LocationEvent/UsbEvent),
+// config assignment, heartbeat, break sessions — works unchanged.
+//
+// Lifecycle: PENDING → ACTIVE → REJECTED (terminal) | REVOKED (terminal) |
+// SUSPENDED (reactivatable). Converting a guest to a normal employee deletes
+// this row after audit; the Employee row (and its telemetry history) survives.
+//
+// Approval NEVER creates an AgentAccount. Standard monitoring consent
+// (monitoring + activity_tracking) IS auto-granted at approval, bound to the
+// org's current published policies — a guest has no employee portal, so the
+// approving admin is the consent authority. Other consent types
+// (screenshot/keystroke/location/...) remain separate, deliberate grants.
+
+model Guest {
+  id             String   @id @default(cuid())
+  organizationId String
+  deviceId       String
+  employeeId     String   @unique // 1:1 with the synthesized Employee row
+  status         String   @default("PENDING") // PENDING, ACTIVE, REJECTED, REVOKED, SUSPENDED
+  approvedAt     DateTime?
+  approvedBy     String?  // admin AppUser id
+  rejectedAt     DateTime?
+  rejectedBy     String?
+  revokedAt      DateTime?
+  revokedBy      String?
+  suspendedAt    DateTime?
+  suspendedBy    String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  // Relations
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  device       Device       @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  employee     Employee     @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId])
+  @@index([organizationId, status])
+  @@index([deviceId])
+  @@index([status])
+  @@index([createdAt])
+  // At most ONE ACTIVE and ONE PENDING guest per device is enforced by
+  // partial unique indexes created in the migration SQL (Prisma cannot
+  // express partial indexes — see 20260817000000_guest_enrollment).
+}
+
+// ==================== Agent Build (Admin-built OmniSightAgent.exe) ====================
+// One record per build request issued from the Admin Panel "Agent Software"
+// section (Settings → Agent Software → Build OmniSight Agent). Metadata +
+// artifact lifecycle only: the baked configuration (server URL + optional
+// enrollment code) lives INSIDE the artifact — this table stores the validated
+// server URL and flags, NEVER the enrollment code plaintext or any secret.
+//
+// status: pending → building → completed | failed
+// sha256/fileName are set on completion; the artifact file itself is stored
+// outside the repo under uploads/agent-builds/<organizationId>/<buildId>.exe
+// and served only by the org-scoped download route.
+
+model AgentBuild {
+  id                 String   @id @default(cuid())
+  organizationId     String
+  serverUrl          String   // validated https:// URL baked into the artifact
+  enrollmentCodeBaked Boolean @default(false) // whether a code was embedded
+  agentVersion       String   // omnisight-agent package version
+  status             String   @default("pending") // pending, building, completed, failed
+  sha256             String?  // artifact digest (completed)
+  fileName           String?  // stored artifact file name (completed)
+  requestedBy        String   // admin AppUser id
+  error              String?  // failure detail (never contains secrets)
+  startedAt          DateTime?
+  completedAt        DateTime?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  // Relations
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId])
+  @@index([organizationId, createdAt])
+  @@index([status])
+}
+
+// ==================== Activity ====================
+
+model Activity {
+  id              String   @id @default(cuid())
+  type            String   // application, website, idle, screenshot, work_session
+  title           String?
+  url             String?  // for websites
+  applicationName String?  // for applications
+  category        String?  // productive, neutral, unproductive
+  duration        Int      // in seconds
+  employeeId      String
+  deviceId        String?
+  timestamp       DateTime @default(now())
+  createdAt       DateTime @default(now())
+
+  // Relations
+  employee       Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  device         Device?  @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+
+  @@index([employeeId])
+  @@index([deviceId])
+  @@index([timestamp])
+  @@index([employeeId, timestamp])
+  @@index([employeeId, category])
+  @@index([category, timestamp])
+  // Live-updates poll: new activity since cursor (LM-6)
+  @@index([createdAt])
+}
+
+// ==================== Keyboard Activity (Aggregate Only) ====================
+// Phase 2 — count-only keyboard telemetry. Stores ONLY aggregate per-interval
+// metadata: keystrokeCount (physical presses, auto-repeat suppressed) and
+// activeTypingSeconds over [intervalStart, intervalEnd]. There is deliberately
+// NO table for raw keys/characters — such data must never exist anywhere in
+// the system.
+
+model KeyboardActivity {
+  id                 String   @id @default(cuid())
+  employeeId         String
+  deviceId           String?
+  intervalStart      DateTime
+  intervalEnd        DateTime
+  keystrokeCount     Int
+  activeTypingSeconds Int
+  application        String?  // safe process identifier (e.g. chrome.exe)
+  organizationId     String
+  createdAt          DateTime @default(now())
+
+  // Relations
+  employee Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  device   Device?  @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([employeeId, intervalStart])
+  @@index([deviceId, intervalStart])
+  @@index([organizationId])
+  @@index([createdAt])
+}
+
+// ==================== Location Event ====================
+// Phase 3 — Windows-native geolocation. Coordinates + accuracy + timestamp
+// only. Addresses / reverse-geocoded strings are NEVER stored.
+
+model LocationEvent {
+  id             String   @id @default(cuid())
+  employeeId     String
+  deviceId       String?
+  latitude       Float
+  longitude      Float
+  accuracy       Float
+  recordedAt     DateTime
+  organizationId String
+  createdAt      DateTime @default(now())
+
+  // Relations
+  employee Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  device   Device?  @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([employeeId, recordedAt])
+  @@index([deviceId, recordedAt])
+  @@index([organizationId])
+}
+
+// ==================== Agent Command (Server → Agent) ====================
+// Phase 4 — narrowly-scoped device command channel. Commands are device-bound
+// and org-scoped, carry an allowlisted commandType (initially only
+// webcam.start / webcam.stop), expire, and transition PENDING → DELIVERED →
+// ACKNOWLEDGED (never executed twice — the DELIVERED transition is atomic).
+
+model AgentCommand {
+  id              String   @id @default(cuid())
+  organizationId  String
+  employeeId      String
+  deviceId        String
+  commandType     String   // allowlist: webcam.start | webcam.stop
+  payload         String   // JSON string (validated server-side)
+  status          String   @default("PENDING") // PENDING, DELIVERED, ACKNOWLEDGED, EXPIRED, CANCELLED
+  createdAt       DateTime @default(now())
+  expiresAt       DateTime
+  deliveredAt     DateTime?
+  acknowledgedAt  DateTime?
+
+  // Relations
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  employee     Employee     @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  device       Device       @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+
+  @@index([deviceId, status])
+  @@index([organizationId, status])
+  @@index([status, expiresAt])
+}
+
+// ==================== Webcam Session (metadata only) ====================
+// Phase 5 — on-demand webcam sessions. METADATA + audit only: sessionId,
+// status, startedBy, endedReason. Frames are NEVER persisted — the relay keeps
+// only the latest frame in memory with a TTL.
+
+model WebcamSession {
+  id           String   @id @default(cuid())
+  sessionId    String   @unique // opaque session token issued per command
+  employeeId   String
+  deviceId     String
+  organizationId String
+  commandId    String
+  status       String   @default("active") // active, ended, failed
+  startedAt    DateTime @default(now())
+  endedAt      DateTime?
+  startedBy    String   // admin user id that issued webcam.start
+  endedReason  String?  // command, timeout, disconnect, consent_revoked, config_disabled, error, shutdown
+  lastFrameAt  DateTime?
+  createdAt    DateTime @default(now())
+
+  // Relations
+  employee Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  device   Device   @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId])
+  @@index([employeeId])
+  @@index([deviceId])
+  @@index([deviceId, status])
+}
+
+// ==================== Notification ====================
+
+model Notification {
+  id              String   @id @default(cuid())
+  title           String
+  message         String
+  type            String   // device_offline, new_employee, policy_violation, high_inactivity, license_expiration, ai_recommendation, security, system, anomaly_detected, consent_update, project_deadline, overtime_alert
+  priority        String   @default("medium") // low, medium, high, critical
+  status          String   @default("unread") // unread, read, archived
+  actionUrl       String?  // relative URL to navigate to when clicked (e.g. /employees?id=xxx)
+  entityType      String?  // employee, device, anomaly, project, consent — what the notification is about
+  entityId        String?  // the ID of the entity
+  readAt          DateTime?
+  // Structured linkage (N-9) — identity/association only, never authorization.
+  // Populated by producers so queries filter on real fields instead of
+  // string-matching message text.
+  employeeId      String?
+  deviceId        String?
+  organizationId  String
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  // Relations
+  organization  Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId])
+  @@index([status])
+  @@index([organizationId, status, createdAt])
+  @@index([employeeId])
+  @@index([deviceId])
+  // Live-updates poll: new notifications since cursor (LM-6)
+  @@index([createdAt])
+}
+
+// ==================== Alert ====================
+
+model Alert {
+  id              String   @id @default(cuid())
+  title           String
+  description     String
+  type            String   // device_offline, policy_violation, high_inactivity, security, license, system
+  severity        String   @default("warning") // info, warning, error, critical
+  status          String   @default("pending") // pending, acknowledged, resolved, archived
+  source          String?
+  metadata        String?  // JSON string for additional data
+  // Structured linkage (N-9) — identity/association only, never authorization.
+  employeeId      String?
+  deviceId        String?
+  organizationId  String
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  // Relations
+  organization  Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId])
+  @@index([status])
+  @@index([createdAt])
+  @@index([organizationId, createdAt])
+  @@index([organizationId, status, createdAt])
+  @@index([employeeId])
+  @@index([deviceId])
+}
+
+// ==================== Notification Preference (org-level, N-6) ===============
+// Organization-wide notification behavior (notifications are org-broadcast,
+// not per-recipient): an admin can disable a notification type org-wide.
+// Absent row = enabled (default); explicit disable is honored by every
+// producer via createOrgNotification().
+
+model NotificationPreference {
+  id               String   @id @default(cuid())
+  organizationId   String
+  notificationType String
+  enabled          Boolean  @default(true)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, notificationType])
+  @@index([organizationId])
+}
+
+// ==================== Audit Log ====================
+
+model AuditLog {
+  id              String   @id @default(cuid())
+  action          String   // login, logout, create, update, delete, export, configure
+  resource        String   // employee, device, department, policy, settings, report, notification, alert
+  resourceId      String?
+  description     String
+  userId          String?
+  ipAddress       String?
+  userAgent       String?  // sanitized browser/agent User-Agent (bounded, 200 chars) — incident forensics
+  metadata        String?  // JSON string for additional data
+  // Nullable so org-less super_admin actions (the bootstrap state) can be
+  // audited — an empty string would violate the FK and break login.
+  organizationId  String?
+  createdAt       DateTime @default(now())
+
+  // Relations
+  organization  Organization? @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId])
+  @@index([organizationId, createdAt])
+}
+
+// ==================== Report ====================
+
+model Report {
+  id              String   @id @default(cuid())
+  title           String
+  type            String   // productivity, attendance, activity, device, organization, ai_insight
+  format          String   @default("pdf") // pdf, excel, csv
+  status          String   @default("completed") // requested, processing, generated, expired
+  periodStart     DateTime?
+  periodEnd       DateTime?
+  data            String?  // JSON string for report data
+  filePath        String?
+  organizationId  String
+  generatedBy     String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  // Relations
+  organization  Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId])
+}
+
+// ==================== AI Insight ====================
+
+model AiInsight {
+  id              String   @id @default(cuid())
+  title           String
+  content         String   @default("")
+  type            String   // productivity, anomaly, recommendation, trend, risk
+  category        String? // team, department, organization, employee
+  confidence      Float?   @default(0.0)
+  status          String   @default("active") // active, dismissed, actioned
+  actionTaken     String?
+  metadata        String?  // JSON string
+  organizationId  String
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  // Relations
+  organization  Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId])
+}
+
+// ==================== App User (for auth/admin) ====================
+
+model AppUser {
+  id              String   @id @default(cuid())
+  email           String   @unique
+  name            String
+  password        String?
+  role            String   @default("admin") // super_admin, owner, admin, manager, viewer
+  avatar          String?
+  organizationId  String?
+  isActive        Boolean  @default(true)
+  lastLogin       DateTime?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  // Relations
+  organization  Organization? @relation(fields: [organizationId], references: [id], onDelete: SetNull)
+  sessions      UserSession[]
+
+  @@index([organizationId])
+  @@index([role])
+}
+
+// ==================== Web Session (server-authoritative revocation) ====================
+// One row per successful web login. The JWT carries `sessionId`; every
+// authenticated request re-validates the row (revokedAt null + not expired), so
+// logout, admin force-logout, account disable, and password change can revoke a
+// live session server-side instead of waiting for the stateless JWT to expire.
+// Sessions with no row are treated as INVALID (fail closed): a signed JWT whose
+// session was deleted is rejected at the next request.
+
+model UserSession {
+  id             String   @id @default(cuid())
+  userId         String
+  organizationId String?
+  ipAddress      String?
+  userAgent      String?
+  createdAt      DateTime @default(now())
+  lastSeenAt     DateTime?
+  expiresAt      DateTime
+  revokedAt      DateTime?
+
+  user          AppUser       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  organization  Organization? @relation(fields: [organizationId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([userId, revokedAt])
+}
+
+// ==================== System Settings (Key-Value) ====================
+
+model SystemSetting {
+  id        String   @id @default(cuid())
+  key       String   @unique
+  value     String
+  category  String?  // general, security, monitoring, ai, notification
+  updatedAt DateTime @updatedAt
+}
+
+// ==================== Rate Limit Counter (shared, topology-independent) ====================
+// PostgreSQL-backed token bucket used by checkRateLimit(). A single row per
+// rate-limit key; the refill math runs in ONE atomic UPSERT (row lock), so
+// concurrent requests across ANY number of app instances serialize on the
+// row and can never bypass the limit (no race-condition window). Stale rows
+// are swept by the rate-limit cleanup job (see src/lib/jobs).
+
+model RateLimitCounter {
+  key        String   @id // composite key: `${label}:${identifier}` (e.g. `login:203.0.113.5:user@x.com`)
+  tokens     Float    // remaining tokens in the bucket (may go slightly negative)
+  lastRefill BigInt   // epoch ms of the last refill computation
+  updatedAt  DateTime @updatedAt
+}
+
+
+// ==================== Agent Registration (Pending Approval) ====================
+
+model AgentRegistration {
+  id              String   @id @default(cuid())
+  employeeId      String   @unique // Employee trying to register
+  hostname        String
+  operatingSystem String?
+  osVersion       String?
+  processor       String?
+  memory          String?
+  ipAddress       String?
+  macAddress      String?
+  agentVersion    String?
+  status          String   @default("pending") // pending, approved, rejected, expired
+  deviceName      String?  // Proposed device name
+  rejectionReason String?
+  organizationId  String
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  // Relations
+  employee    Employee     @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId])
+  @@index([status])
+  // Live-updates poll: new registrations since cursor (LM-6)
+  @@index([createdAt])
+}
+
+// ==================== Agent Token (Authenticated Sessions) ====================
+
+model AgentToken {
+  id           String   @id @default(cuid())
+  token        String   @unique // Bearer token for API calls
+  employeeId   String
+  deviceId     String?  // Current device this token is bound to
+  ipAddress    String?
+  userAgent    String?  // Agent version + OS info
+  expiresAt    DateTime
+  lastUsedAt   DateTime @default(now())
+  createdAt    DateTime @default(now())
+
+  // Relations
+  employee Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  @@index([employeeId])
+}
+
+// ==================== Agent Session (Phase 3 — Agent login bootstrap) ========
+// Short-lived, LOGIN-ONLY credential issued by POST /api/agent/login.
+//
+// It is NOT a device credential: it only unblocks the authenticated branch of
+// POST /api/agent/discover (employee + organization resolved SERVER-SIDE from
+// the AgentAccount, never from client input). Heartbeat / activity / screenshot
+// still require a device-bound AgentToken issued by POST /api/agent/authenticate
+// (PATH A) AFTER an admin approves the DeviceClaim. This separation closes the
+// "a login token must not grant pre-approval device access" hole that reusing
+// AgentToken for login would open.
+//
+// Ephemeral by design — no FK constraints (the row expires within hours and a
+// deleted employee/account must not cascade into a session audit trail).
+model AgentSession {
+  id             String   @id @default(cuid())
+  token          String   @unique // 64-char random (randomBytes) — nothing else
+  employeeId     String   // denormalized for fast lookup
+  organizationId String   // denormalized for fast lookup
+  ipAddress      String?  // login-time IP (spoof-resistant resolver)
+  expiresAt      DateTime
+  lastUsedAt     DateTime @default(now())
+  createdAt      DateTime @default(now())
+
+  @@index([employeeId])
+  @@index([expiresAt])
+}
+
+// ==================== Screenshot ====================
+
+model Screenshot {
+  id              String   @id @default(cuid())
+  employeeId      String
+  deviceId        String?
+  filePath        String
+  fileName        String
+  fileSize        Int
+  mimeType        String   @default("image/png")
+  width           Int?
+  height          Int?
+  appWindow       String?
+  ocrText         String?
+  aiAnalysis      String?
+  blurScore       Float?
+  flagged         Boolean  @default(false)
+  flagReason      String?
+  organizationId  String
+  capturedAt      DateTime @default(now())
+  createdAt       DateTime @default(now())
+
+  // Relations
+  employee    Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  device      Device?  @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId])
+  @@index([employeeId])
+  @@index([deviceId])
+  @@index([employeeId, capturedAt])
+  @@index([capturedAt])
+  @@index([flagged])
+  // Live-updates poll: new screenshots since cursor (LM-6)
+  @@index([createdAt])
+}
+
+// ==================== App Whitelist/Blacklist ====================
+
+model AppListEntry {
+  id              String   @id @default(cuid())
+  appName         String
+  executableName   String?  // e.g., chrome.exe, code.exe
+  category        String?  // auto-categorized
+  listType        String   // whitelist, blacklist
+  reason          String?
+  // Stronger identity fields (optional — name matching remains supported):
+  // publisher / sha256 (lowercase hex) / normalized process path.
+  publisher       String?
+  sha256          String?
+  path            String?
+  isActive        Boolean  @default(true)
+  organizationId  String
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  // DB-safe duplicate protection: at most ONE active entry per
+  // (organization, appName, listType). Soft-deleted (inactive) rows are
+  // excluded from the constraint so re-adding a previously-removed app works.
+  @@unique([organizationId, appName, listType, isActive])
+  @@index([organizationId])
+  // Active-policy lookup (agent config payload + resolver reads).
+  @@index([organizationId, isActive])
+}
+
+// ==================== USB Monitoring Event ====================
+
+model UsbEvent {
+  id              String   @id @default(cuid())
+  eventType        String   // usb_insert, usb_remove, usb_blocked
+  deviceName       String?  // e.g., USB Mass Storage
+  vendorName       String?
+  serialNumber     String?
+  filePath        String?  // if file access detected
+  // Device identity captured by the agent (SetupAPI enumeration).
+  vid             String?
+  pid             String?
+  manufacturer    String?
+  deviceClass     String?
+  driveLetter     String?
+  employeeId      String?
+  deviceId        String?
+  blocked         Boolean  @default(false)
+  organizationId  String
+  // Deterministic dedupe key (org + device + serial + type + 5-min bucket).
+  // Unique at the DB level so concurrent agent reports can never double-insert.
+  dedupeKey       String?  @unique
+  createdAt       DateTime @default(now())
+
+  @@index([organizationId])
+  @@index([employeeId])
+  @@index([deviceId])
+  @@index([organizationId, createdAt])
+  // Live-updates poll: new usb events since cursor (LM-6)
+  @@index([createdAt])
+}
+
+// ==================== Policy Violation (agent enforcement) ====================
+
+model PolicyViolation {
+  id              String   @id @default(cuid())
+  organizationId  String
+  employeeId      String?
+  deviceId        String?
+  policyId        String   // AppListEntry id that matched
+  executableName  String
+  processPath     String?
+  action          String   // 'blocked'
+  severity        String   // low | medium | high | critical
+  metadata        Json?
+  // Deterministic dedupe key (org + device + policy + executable + 5-min bucket).
+  dedupeKey       String   @unique
+  occurredAt      DateTime @default(now())
+  createdAt       DateTime @default(now())
+
+  @@index([organizationId, createdAt])
+  @@index([policyId])
+  @@index([deviceId])
+  @@index([employeeId])
+}
+
+// ==================== Anomaly (Auto-detected) ====================
+
+model Anomaly {
+  id              String   @id @default(cuid())
+  type            String   // productivity_drop, unusual_login, excessive_idle, rapid_app_switch, overtime_work, policy_breach, unusual_screenshot, low_activity_spike
+  severity        String   @default("medium") // low, medium, high, critical
+  status          String   @default("detected") // detected, investigating, resolved, false_positive
+  title           String
+  description     String
+  score           Float    @default(0.0)   // anomaly score 0-100
+  confidence      Float    @default(0.0)   // AI confidence 0-1
+  employeeId      String?
+  deviceId        String?
+  metadata        String?  // JSON: { baseline, current, threshold, ... }
+  aiAnalysis      String?  // AI-generated explanation
+  resolvedAt      DateTime?
+  resolvedBy      String?
+  dedupeKey       String?  // deterministic unique key (org:employee:type:utcDay) — DB-enforced dedupe (F-14); NULL releases the slot so the record can re-trigger
+  organizationId   String
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  // Relations
+  employee    Employee?    @relation(fields: [employeeId], references: [id], onDelete: SetNull)
+  device      Device?      @relation(fields: [deviceId], references: [id], onDelete: SetNull)
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId])
+  @@index([employeeId])
+  @@index([deviceId])
+  @@index([employeeId, createdAt])
+  @@index([organizationId, status])
+  // F-15: the default list query is organization-scoped ordered by createdAt;
+  // this index serves both the list sort and the live-updates poll cursor.
+  @@index([organizationId, createdAt])
+  @@index([createdAt])
+  // F-14: DB-safe dedupe for auto-detected/agent-reported anomalies. Postgres
+  // unique indexes permit multiple NULLs, so only live dedupe slots contend.
+  @@unique([dedupeKey])
+}
+
+// ==================== Consent Policy (Versioned) ====================
+
+model ConsentPolicy {
+  id              String   @id @default(cuid())
+  organizationId  String
+  consentType     String   // monitoring, screenshot, activity_tracking, keystroke, usb_monitoring, webcam_access, location, email_monitoring
+  title           String
+  content         String   // policy text employees read before consenting
+  version         String   // v1, v2, ... (unique per organization + type)
+  status          String   @default("draft") // draft, published, archived
+  effectiveAt     DateTime?  // when the published version became active
+  publishedAt     DateTime?
+  publishedBy     String?
+  createdBy       String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  // Relations
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  consents     Consent[]
+
+  @@unique([organizationId, consentType, version])
+  @@index([organizationId, consentType, status])
+}
+
+// ==================== Employee Consent ====================
+
+model Consent {
+  id              String   @id @default(cuid())
+  employeeId      String
+  consentType     String   // monitoring, screenshot, activity_tracking, keystroke, usb_monitoring, webcam_access, location, email_monitoring
+  status          String   @default("pending") // pending, granted, denied, revoked, expired
+  grantedAt       DateTime?
+  revokedAt       DateTime?
+  expiresAt        DateTime?
+  expiredAt       DateTime? // set by the expiration processor (Granted -> Expired)
+  ipAddress       String?
+  userAgent       String?
+  consentVersion  String   @default("v1")  // policy version at time of consent
+  policyId        String?  // ConsentPolicy the employee consented to
+  notes           String?  // admin notes or employee comment
+  organizationId  String
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  // Relations
+  employee        Employee      @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  organization    Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  consentLogs     ConsentLog[]
+  policy          ConsentPolicy? @relation(fields: [policyId], references: [id], onDelete: SetNull)
+
+  @@unique([employeeId, consentType])
+  @@index([organizationId])
+  @@index([status])
+  @@index([policyId])
+}
+
+// ==================== Consent Log (Audit Trail — immutable) ====================
+
+model ConsentLog {
+  id              String   @id @default(cuid())
+  consentId       String
+  action          String   // requested, granted, denied, revoked, expired, renewed, re_consented, admin_revoked, admin_granted, anonymized
+  description     String
+  performedBy     String?  // employee id or 'system' or admin name
+  ipAddress       String?
+  organizationId  String
+  anonymizedAt    DateTime? // set when PII fields are scrubbed after retention period
+  createdAt       DateTime @default(now())
+
+  consent         Consent @relation(fields: [consentId], references: [id], onDelete: Restrict)
+
+  // Audit/consent history is IMMUTABLE: the FK RESTRICT means a Consent row
+  // that owns ConsentLog entries can never be hard-deleted (the API refuses
+  // with 409). Only consents with zero log entries may be removed. This
+  // preserves the audit trail while still allowing genuine erasure requests
+  // on records that never produced history.
+
+  @@index([consentId])
+  @@index([organizationId])
+}
+
+// ==================== Organization Settings (Key-Value, Org-Scoped) ====================
+
+model OrganizationSetting {
+  id              String   @id @default(cuid())
+  organizationId  String
+  key             String
+  value           String
+  category        String?  // monitoring, security, compliance, notification
+  updatedAt       DateTime @updatedAt
+
+  // Relations
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, key])
+  @@index([organizationId])
+}
+
+// ==================== Job Run (Background Processor Lease) ====================
+
+model JobRun {
+  id              String   @id @default(cuid())
+  job             String   @unique // e.g. 'expire_consents', 'retention_cleanup'
+  status          String   @default("idle") // idle, running, completed, failed
+  startedAt       DateTime?
+  finishedAt      DateTime?
+  lastRunAt       DateTime?
+  lastDurationMs  Int?
+  lastError       String?
+  lastResult      String?  // JSON summary of affected counts from the last run
+  leaseExpiresAt  DateTime? // crash-safe lease: another worker may claim when expired
+}
+
+// ==================== Project ====================
+
+model Project {
+  id              String   @id @default(cuid())
+  name            String
+  description     String?
+  status          String   @default("active") // active, on_hold, completed, cancelled
+  priority        String   @default("medium") // low, medium, high, critical
+  startDate       DateTime?
+  deadline        DateTime?
+  estimatedHours  Float    @default(0.0)
+  color           String   @default("#10b981") // hex color for UI
+  tags            String?  // JSON array string
+  budgetType      String?  // fixed, hourly, retainer
+  hourlyRate      Float?
+  organizationId  String
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  // Relations
+  organization  Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  members        ProjectMember[]
+  timeEntries    TimeEntry[]
+  projectTimeSyncs ProjectTimeSync[]
+  sentimentRecords SentimentRecord[]
+  // Employees whose ADMIN-SELECTED active tracking project points at this project.
+  activeTrackingEmployees Employee[] @relation("ActiveTrackingProject")
+  departmentId   String?
+  department     Department?  @relation(fields: [departmentId], references: [id], onDelete: SetNull)
+
+  @@index([organizationId])
+  @@index([departmentId])
+  @@index([status])
+}
+
+// ==================== Project Member ====================
+
+model ProjectMember {
+  id              String   @id @default(cuid())
+  projectId       String
+  employeeId      String
+  role            String   @default("member") // lead, member, reviewer, stakeholder
+  hoursPerWeek    Float    @default(40.0)
+  joinedAt        DateTime @default(now())
+  leftAt          DateTime?
+  organizationId  String
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  // Relations
+  project      Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  employee     Employee  @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([projectId, employeeId])
+  @@index([organizationId])
+  @@index([projectId])
+  @@index([employeeId])
+}
+
+// ==================== Time Entry ====================
+
+model TimeEntry {
+  id              String   @id @default(cuid())
+  projectId       String
+  employeeId      String
+  date            DateTime
+  hours           Float
+  description     String?
+  category        String?  // development, design, meeting, research, testing, review, admin
+  billable        Boolean  @default(true)
+  // Source of the entry: MANUAL = admin-entered (Time Log form / bulk import),
+  // ACTIVITY_AUTO = derived automatically from real agent Activity by the
+  // project-time sync engine. Auto entries are aggregated per employee+project+
+  // date and are never fabricated. Manual entries never change behavior.
+  source          String   @default("MANUAL") // MANUAL, ACTIVITY_AUTO
+  organizationId  String
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  // Relations
+  project      Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  employee     Employee  @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId])
+  @@index([projectId])
+  @@index([employeeId])
+  @@index([projectId, date])
+  @@index([employeeId, date])
+  // Live-updates poll: new auto entries since cursor (project realtime updates)
+  @@index([source, createdAt])
+}
+
+// ==================== Project Time Sync (activity → project time engine) ====
+// Bookkeeping for the automatic activity→TimeEntry synchronization.
+//
+// - One row per (employee, project, date) bucket. `seconds` accumulates the
+//   REAL agent-reported activity duration attributed to that bucket; the
+//   matching TimeEntry (source=ACTIVITY_AUTO) is rewritten from this value,
+//   so the sum is always exact and idempotent.
+// - `lastActivityAt` is the newest Activity.timestamp absorbed into the
+//   bucket (metadata that explains where the auto time came from).
+// - The (employeeId, projectId, date) unique key is the idempotency anchor:
+//   re-running the sync can only increment, never duplicate.
+
+model ProjectTimeSync {
+  id             String    @id @default(cuid())
+  employeeId     String
+  projectId      String
+  date           DateTime
+  seconds        Int
+  lastActivityAt DateTime?
+  organizationId String
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  // Relations
+  employee     Employee     @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  project      Project      @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([employeeId, projectId, date])
+  @@index([organizationId])
+  @@index([date])
+  @@index([createdAt])
+}
+
+// ==================== Project Time Sync Cursor ====================
+// Single global row (id = 'global') holding the newest Activity.createdAt
+// already fed to the sync engine. Advancing is transactional with the bucket
+// writes, so a crash can never skip or double-process rows. The row is
+// created with `lastProcessedAt = now` on first run: only activity ingested
+// AFTER the feature is enabled is ever tracked (no automatic backfill).
+
+model ProjectTimeSyncCursor {
+  id              String   @id
+  lastProcessedAt DateTime
+  updatedAt       DateTime @updatedAt
+}
+
+// ==================== Break Session (canonical break state) =================
+// Single source of truth for an employee's break/privacy mode lifecycle.
+//
+// One row per break; an OPEN row (endedAt = NULL) means the employee is
+// currently on break. The DB-level partial unique index
+// `BreakSession_one_active_per_employee` (added in the migration SQL, since
+// Prisma cannot express partial unique indexes) guarantees at most ONE open
+// break per employee — concurrent starts cannot create duplicates.
+//
+// The legacy `Activity` mirror rows ("Break Mode Started/Ended …") are still
+// written by the break service in the same transaction so existing consumers
+// (realtime poll, event stats, reports) keep working unchanged. BreakSession
+// is the canonical state; Activity rows are the event stream.
+//
+// `source` identifies the entry point: admin | self_service | agent.
+// `startedBy`/`endedBy` record the authenticated actor (AppUser id for
+// admin/self-service, device id for the agent) — never client-supplied.
+// `endReason` explains how the break closed: admin_ended | employee_ended |
+// agent_ended | superseded (an overlapping start closed a stale open row).
+
+model BreakSession {
+  id             String   @id @default(cuid())
+  organizationId String
+  employeeId     String
+  deviceId       String?
+  startedAt      DateTime
+  endedAt        DateTime?
+  endReason      String?  // admin_ended, employee_ended, agent_ended, superseded
+  source         String   // admin, self_service, agent
+  startedBy      String?  // actor id (AppUser id / device id), null for legacy/system
+  endedBy        String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  // Relations
+  employee     Employee     @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  device       Device?      @relation(fields: [deviceId], references: [id], onDelete: SetNull)
+
+  @@index([organizationId])
+  @@index([employeeId])
+  @@index([employeeId, startedAt])
+  @@index([employeeId, endedAt])
+  @@index([organizationId, startedAt])
+  @@index([organizationId, endedAt])
+  @@index([startedAt])
+}
+
+// ==================== Sentiment Record ====================
+
+model SentimentRecord {
+  id              String   @id @default(cuid())
+  employeeId      String
+  projectId       String?  // Set ONLY when this record is project-scoped sentiment (derived from that project's TimeEntry data). NULL = employee-level sentiment (org-wide analysis). Never fabricated — employee-level records stay NULL.
+  score           Float?            // 0-100: 0=very negative, 50=neutral, 100=very positive. NULL when the employee had no activity data in the period (not scored — never a fabricated neutral).
+  mood            String   @default("neutral") // positive, neutral, negative, critical, no-data
+  signals         String?  // JSON: { productivityTrend, idleRate, overtimeHours, breakFrequency, loginConsistency, ... } (employee-level) or { hoursThisPeriod, hoursTrend, productiveRatio, ... } (project-scoped)
+  insight         String?  // AI-generated text insight about the employee's sentiment
+  riskFactors     String?  // JSON array: ["burnout_risk", "underperforming", "disengaged", "overworked", ...]
+  recommendation  String?  // AI-generated recommendation
+  periodStart     DateTime
+  periodEnd       DateTime
+  aiProviderUsed  String?  // openai, anthropic, google, mistral, ollama, or 'rules' for no AI
+  aiModel         String?  // gpt-4o-mini, claude-3-haiku, etc.
+  organizationId  String
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  // Relations
+  employee     Employee    @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  project      Project?    @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId])
+  @@index([employeeId])
+  @@index([projectId])
+  @@index([employeeId, periodStart])
+}

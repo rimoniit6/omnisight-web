@@ -1,0 +1,19 @@
+{
+  "manifest_version": 3,
+  "name": "OmniSight Website Tracker",
+  "version": "1.0.0",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA4ikI4pXSXhjDfL4GK0qv8qFXr+C3+WrvMylPSsjV3IfDBfwEghPSgqNrvwyZmFZ4NWYwgSS4Pyu2MHOU0eGJwoUltMYsHmUZVVkTHmv4J1GUmB04P94wTHxqAXARi2Z55yIXi/XFQ16PAWeRhW9GcxxbreX/FB25aDxmLGDq8RvRbRYLh8qPNcNrfYWKws/B7QdWBULOeEryzo4frXJqgLwrwyiIsZhla+TcSPPVPZE8nmOZHinXFn6K/GZs7jkWa+bkCu1js0+N8EJ/DMv0C8uargJCMTTB2oGhguL4nbf277duQx0OhC/BqPRjhtpZvQiMCxF1oIFIC86ZX009hwIDAQAB",
+  "description": "Privacy-first website DOMAIN tracking for OmniSight. Only bare website domains (e.g. github.com) are reported to the OmniSight desktop agent — never full URLs, paths, queries, or page contents.",
+  "permissions": ["tabs", "webNavigation", "nativeMessaging"],
+  "background": {
+    "service_worker": "src/background.js",
+    "type": "module"
+  },
+  "incognito": "spanning",
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "website-tracker@worklens.ai",
+      "strict_min_version": "109.0"
+    }
+  }
+}
