@@ -42,6 +42,10 @@
     "mini-services",
     // omnisight-agent is an independent Electron/TypeScript project with its
     // own tsconfig, tests, and build; it is never part of the admin build.
-    "omnisight-agent"
+    "omnisight-agent",
+    // Test files are not part of the production build. They are run
+    // independently via `tsx --test` and must not introduce cross-repository
+    // dependencies (e.g. ../omnisight-agent/...) into the Vercel build.
+    "tests"
   ]
 }
