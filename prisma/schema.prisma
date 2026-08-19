@@ -378,6 +378,9 @@ model Activity {
   @@index([employeeId, timestamp])
   @@index([employeeId, category])
   @@index([category, timestamp])
+  // Dashboard: org-scoped activity queries join through Employee and filter
+  // by timestamp+category — this 3-column index covers the full predicate.
+  @@index([employeeId, timestamp, category])
   // Live-updates poll: new activity since cursor (LM-6)
   @@index([createdAt])
 }
