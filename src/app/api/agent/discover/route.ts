@@ -9,6 +9,7 @@ import {
 import { validateAgentSession } from '@/lib/agent/session';
 import { checkRateLimit, RATE_LIMITS, getClientIpFromHeaders } from '@/lib/rate-limit';
 import { createOrgNotification } from '@/lib/notifications/service';
+import { log } from '@/lib/logger';
 
 // POST /api/agent/discover
 // Zero-touch bootstrap: a freshly installed agent silently identifies its
@@ -75,7 +76,13 @@ async function resolveOrgFromEnrollmentCode(code: string | null): Promise<{ id: 
 }
 
 export async function POST(req: NextRequest) {
+  const startTime = Date.now();
+  const requestId = req.headers.get('x-vercel-id') || req.headers.get('x-request-id') || undefined;
+  const ctx = { requestId };
+
   try {
+    log.info('agent-discover.start', { ...ctx });
+
     // A malformed/non-JSON body is a client error (400) — never a 500. The
     // agent always sends JSON; anything else is a broken or hostile caller.
     let body: unknown;
@@ -111,41 +118,36 @@ export async function POST(req: NextRequest) {
     // Spoof-resistant client IP (rightmost x-forwarded-for / x-real-ip) —
     // per-IP rate limiting that a rotating client-supplied header can't bypass.
     const clientIp = getClientIpFromHeaders(req.headers);
+
+    log.info('agent-discover.rate-limit:start', { ...ctx });
     const rl = await checkRateLimit(
       `agent-discover:${clientIp}:${deviceKey.slice(0, 16)}`,
       RATE_LIMITS.agentDiscover.limit,
       RATE_LIMITS.agentDiscover.windowMs
     );
     if (!rl.allowed) {
+      log.warn('agent-discover.rate-limit:denied', { ...ctx });
       return NextResponse.json(
         { error: `Too many discovery attempts. Try again in ${rl.retryAfterSeconds} seconds.` },
         { status: 429 }
       );
     }
+    log.info('agent-discover.rate-limit:success', { ...ctx });
 
     // ── AUTHENTICATED DISCOVERY (Phase 3) ──────────────────────────────────
-    // If the request carries a valid AgentSession (issued by POST
-    // /api/agent/login), derive the employee and organization from the
-    // authenticated session — never from client input. This is the PATH C
-    // flow: Agent login → discover device → PENDING claim.
-    //
-    // If no (valid) session is present, fall back to the anonymous zero-touch
-    // flow (device-bound claim secret). A device-bound AgentToken is NOT
-    // required here — the session powers ONLY discover; heartbeat/activity/
-    // screenshot still require a device-bound token after admin approval.
+    log.info('agent-discover.session:start', { ...ctx });
     const authResult = await validateAgentSession(req);
     const authenticatedEmployee = authResult.valid ? authResult.employee! : null;
+    log.info('agent-discover.session:success', { authenticated: authResult.valid, ...ctx });
 
     // Idempotent: reuse an existing Device for this identity — the device is
     // NEVER recreated on restart.
+    log.info('agent-discover.device-lookup:start', { ...ctx });
     const device = await db.device.findFirst({ where: { agentKey: deviceKey } });
+    log.info('agent-discover.device-lookup:success', { deviceFound: !!device, ...ctx });
 
     // ── ORGANIZATION RESOLUTION (server-derived, explicit only) ────────────
-    // Never the client: no organizationId in the body/query is ever accepted.
-    // 1) Authenticated session → the session's org (Phase 3 login flow).
-    // 2) Known device → its existing org (re-discover of an enrolled device).
-    // 3) NEW anonymous device → a valid admin-issued enrollment code. Without
-    //    one the server CANNOT determine a tenant, so nothing is created.
+    log.info('agent-discover.org-resolution:start', { ...ctx });
     let org: { id: string } | null = null;
     if (authenticatedEmployee) {
       org = await db.organization.findUnique({ where: { id: authenticatedEmployee.organizationId } });
@@ -157,6 +159,7 @@ export async function POST(req: NextRequest) {
       );
       if (!org) {
         const missing = enrollmentCode === undefined || enrollmentCode === null || enrollmentCode === '';
+        log.info('agent-discover.org-resolution:no-match', { missing, ...ctx });
         return NextResponse.json(
           {
             error: missing
@@ -169,17 +172,18 @@ export async function POST(req: NextRequest) {
     }
 
     if (!org) {
+      log.warn('agent-discover.org-resolution:no-org', { ...ctx });
       return NextResponse.json(
         { error: 'No organization is configured on this server' },
         { status: 503 }
       );
     }
 
+    log.info('agent-discover.org-resolution:success', { orgId: org.id, ...ctx });
+
     if (!device) {
       // First sight: create the pending Device + claim atomically.
-      // If the discover is authenticated (Phase 3 Agent login flow), link the
-      // device to the employee immediately. Otherwise leave it unlinked for
-      // the admin to assign during approval (anonymous zero-touch flow).
+      log.info('agent-discover.transaction:start', { flow: 'new-device', ...ctx });
       const created = await db.$transaction(async (tx) => {
         const dev = await tx.device.create({
           data: {
@@ -233,6 +237,14 @@ export async function POST(req: NextRequest) {
         return { dev, claim, secret };
       });
 
+      log.info('agent-discover.transaction:success', {
+        flow: 'new-device',
+        deviceId: created.dev.id,
+        claimId: created.claim.id,
+        durationMs: Date.now() - startTime,
+        ...ctx,
+      });
+
       return NextResponse.json(
         {
           success: true,
@@ -249,6 +261,7 @@ export async function POST(req: NextRequest) {
     // Device already known. Serialize per-device so two racing discoveries can
     // never create duplicate PENDING claims (a real risk now that the deviceId
     // unique constraint is gone — the history model allows many claims).
+    log.info('agent-discover.transaction:start', { flow: 'existing-device', ...ctx });
     const outcome = await db.$transaction(async (tx) => {
       await tx.$queryRaw`SELECT id FROM "Device" WHERE id = ${device.id} FOR UPDATE`;
 
@@ -267,11 +280,6 @@ export async function POST(req: NextRequest) {
       const now = new Date();
 
       // ── AUTHENTICATED AUTHORIZATION (rules B/C/D) ────────────────────────
-      // The AgentSession is the ONLY identity authority. A client-supplied
-      // deviceKey (or any body field) can never override session identity: a
-      // device owned by another organization or another employee is
-      // indistinguishable from a non-existent device (uniform 404 — nothing
-      // leaks: no ids, no status, no claim state, no ownership).
       if (authenticatedEmployee) {
         // Rule C — different organization: deny before any state is read.
         if (locked.organizationId !== authenticatedEmployee.organizationId) {
@@ -281,9 +289,7 @@ export async function POST(req: NextRequest) {
         if (locked.employeeId !== null && locked.employeeId !== authenticatedEmployee.id) {
           throw DENIED;
         }
-        // Revoked devices fail closed and are NEVER rebound: admin revocation
-        // unassigns the device (employeeId → null), so the unassigned-device
-        // bind below must not silently resurrect it.
+        // Revoked devices fail closed and are NEVER rebound.
         if (latest && latest.status === 'revoked') {
           return { kind: 'revoked' as const, claim: latest, device: locked };
         }
@@ -298,19 +304,7 @@ export async function POST(req: NextRequest) {
         }
       }
 
-      // 1) Approved → device is usable; return state (no new secret). A working
-      //    agent holds its one-time secret locally and NEVER re-registers. An
-      //    agent that explicitly re-registers (reRegister — fresh install or
-      //    lost/never-stored claim secret) falls through to a FRESH pending
-      //    claim below: the one-time secret is issued exactly once and can
-      //    never be re-issued for an approved claim.
-      //
-      //    The fall-through is gated on the device holding NO valid AgentToken:
-      //    a live token proves the device is working, so replaying reRegister
-      //    (possible by anyone who holds the client-supplied agentKey) must
-      //    never kill its credential or force an admin re-approval. Genuine
-      //    credential loss still recovers — either immediately (no token) or
-      //    once the 24h token expires (wiped userData within the token's life).
+      // 1) Approved → device is usable; return state (no new secret).
       if (latest && latest.status === 'approved') {
         if (!wantsFreshClaim) {
           return { kind: 'approved' as const, claim: latest, device: locked };
@@ -324,31 +318,19 @@ export async function POST(req: NextRequest) {
         }
         // No live token → credential-loss recovery: fall through to a FRESH claim.
       }
-      // 2) Active pending (not expired) → idempotent; no new secret. Even with
-      //    reRegister intent, an unexpired pending claim is returned as-is
-      //    (avoids duplicate pending claims from racing retries).
+      // 2) Active pending (not expired) → idempotent; no new secret.
       if (latest && latest.status === 'pending' && (!latest.expiresAt || latest.expiresAt > now)) {
         return { kind: 'pending' as const, claim: latest, device: locked };
       }
-      // 3) Revoked → terminal, fail closed. A revoked device must NOT silently
-      //    re-register (even with reRegister intent); only an admin can change
-      //    its fate.
+      // 3) Revoked → terminal, fail closed.
       if (latest && latest.status === 'revoked') {
         return { kind: 'revoked' as const, claim: latest, device: locked };
       }
-      // 4) Rejected while merely polling → surface the rejection so the agent
-      //    transitions to the REJECTED state and stops polling. A rejected
-      //    device re-registers ONLY on an explicit reRegister request.
+      // 4) Rejected while merely polling → surface the rejection.
       if (latest && latest.status === 'rejected' && !wantsFreshClaim) {
         return { kind: 'rejected' as const, claim: latest, device: locked };
       }
-      // 5) Pending but expired → close it, then issue a FRESH claim.
-      //    Cancelled (employee cancel → re-request) → FRESH claim.
-      //    Rejected + explicit reRegister → FRESH claim.
-      //    Approved + explicit reRegister (fresh install / lost credential) →
-      //    FRESH claim. The old approved claim is closed ('expired') so its
-      //    one-time secret can no longer authenticate; the new secret requires
-      //    a fresh admin approval — the secure credential-recovery path.
+      // 5) Pending but expired / cancelled / rejected+reRegister / approved+reRegister → FRESH claim.
       if (latest && (latest.status === 'pending' || (latest.status === 'approved' && wantsFreshClaim))) {
         await tx.deviceClaim.update({
           where: { id: latest.id },
@@ -417,6 +399,13 @@ export async function POST(req: NextRequest) {
       return { kind: 'fresh' as const, claim, secret, device: locked };
     });
 
+    log.info('agent-discover.transaction:success', {
+      flow: 'existing-device',
+      outcome: outcome.kind,
+      durationMs: Date.now() - startTime,
+      ...ctx,
+    });
+
     if (outcome.kind === 'approved') {
       return NextResponse.json({
         success: true,
@@ -467,12 +456,28 @@ export async function POST(req: NextRequest) {
       { status: 201 }
     );
   } catch (error) {
+    const durationMs = Date.now() - startTime;
     // Authorization denial inside the locked transaction — uniform concealing
     // 404. Same shape for cross-org, cross-employee, and deleted devices.
     if (error === DENIED) {
+      log.info('agent-discover.denied', { durationMs, ...ctx });
       return NextResponse.json({ error: 'Device not found' }, { status: 404 });
     }
-    console.error('Agent discover error:', error);
+    // Structured error logging: stage, error type, error message, Prisma code.
+    // NEVER log: enrollment codes, claim secrets, session tokens, authorization
+    // headers, or any other sensitive information.
+    const prismaCode =
+      error && typeof error === 'object' && 'code' in error
+        ? (error as { code: string }).code
+        : undefined;
+    log.error('agent-discover.error', {
+      stage: 'unknown',
+      errorName: error instanceof Error ? error.name : 'Unknown',
+      errorMessage: error instanceof Error ? error.message : String(error),
+      prismaCode,
+      durationMs,
+      ...ctx,
+    });
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }
