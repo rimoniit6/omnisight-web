@@ -34,7 +34,7 @@ Recommended setup order (Software behavior noted where relevant):
 | Configure retention | **Settings → Monitoring → Data Retention** | Per-org retention days per data class; `0` = keep forever; audit/consent logs are anonymized, never deleted |
 | Generate enrollment code (optional) | **Organization → (enrollment code action)** | Code shown exactly once; only SHA-256 hash stored |
 | Publish consent policies | **Consent** page | Draft → publish per type; publishing v2 archives v1 and invalidates v1-bound consents until re-consent |
-| Build the agent installer | **Settings → Agent Software** | Builds NSIS installer with server URL baked in (https required in production) |
+| Build the agent installer | CLI: `AGENT_SERVER_URL=... node omnisight-agent/scripts/build-prod.mjs` | Builds NSIS installer with server URL baked in (https required in production) |
 
 ### 1.3 Roles, departments, teams
 
@@ -149,7 +149,7 @@ A pragmatic adoption flow for a small/medium company (software behavior noted wh
 5. **Publish consent policies** (Consent page) for the types you enable.
 6. **Configure monitoring** (Settings → Monitoring): heartbeat, screenshot frequency, work hours; leave sensitive telemetry off until a decision is made.
 7. **Configure AI** (AI Provider): add a provider key (BYOK — key is encrypted at rest and never returned by the API).
-8. **Build the agent installer** (Settings → Agent Software) with your server URL; provision the enrollment code.
+8. **Build the agent installer** via CLI (`AGENT_SERVER_URL=... node omnisight-agent/scripts/build-prod.mjs`) with your server URL; provision the enrollment code.
 9. **Distribute to Windows machines** (MDM or manual install); approve claims as they appear in **Agent Approvals**.
 10. **Grant consents** for each employee (bulk grant in Consent) — or let the agent prompt the employee.
 11. **Monitor**: Dashboard, Live Monitor, Break Monitor, Screenshots, Analytics; review anomalies and alerts daily.

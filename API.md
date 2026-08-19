@@ -306,10 +306,7 @@ Related docs: [ARCHITECTURE.md](./ARCHITECTURE.md) · [SECURITY.md](./SECURITY.m
 | GET | `/api/audit-logs/export` | manager+ (proxy rule) | CSV export |
 | GET | `/api/search` | Any (org) | `?q=` employees/departments/devices (empty for org-less super admin) |
 | GET | `/api/guests` | admin+ | Guest list by status |
+| PUT | `/api/guests` | admin+ | Update org guest enrollment pending limit |
 | POST | `/api/guests/[id]/suspend` / `reactivate` / `revoke` / `convert` | admin+ | Guest lifecycle (convert requires name/email; telemetry preserved) |
-| GET | `/api/agent-software` | admin+ | Agent software config + builds |
-| POST | `/api/agent-software/build` | admin+ | Trigger build (rate 5/h; fixed command; enrollment code never stored) |
-| GET | `/api/agent-software/builds/[id]` | admin+ | Build status |
-| GET | `/api/agent-software/builds/[id]/download` | admin+ | Installer download (+ SHA-256) |
 | GET | `/api/app-list` | Any (org) | (see §17) |
 | POST | `/api/usb-events` | AgentToken | (see §8 agent/usb) |

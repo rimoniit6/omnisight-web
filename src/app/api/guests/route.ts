@@ -1,7 +1,8 @@
 'use server';
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
-import { authError, requireSessionOrg } from '@/lib/api';
+import { authError, requireAdminOrg, requireSessionOrg } from '@/lib/api';
+import { GUEST_PENDING_LIMIT_SETTING_KEY } from '@/lib/guests';
 
 // GET /api/guests
 // List guest enrollments for the caller's organization (admin session).
@@ -17,6 +18,12 @@ import { authError, requireSessionOrg } from '@/lib/api';
 //   - pagination (page/pageSize, clamped 1..100)
 //
 // Never exposes secrets: only device metadata + lifecycle timestamps.
+//
+// PUT /api/guests — update the org's guest enrollment pending limit (admin-only).
+// Body: { guestPendingLimit: number }
+// Validates the value, persists the OrganizationSetting, and produces an audit
+// log entry. The limit gates GUEST-mode approval only — normal employee
+// enrollment is never affected.
 
 const GUEST_STATUSES = ['PENDING', 'ACTIVE', 'SUSPENDED', 'REJECTED', 'REVOKED'] as const;
 
@@ -142,5 +149,66 @@ export async function GET(req: NextRequest) {
   } catch (error) {
     console.error('Guests GET error:', error);
     return NextResponse.json({ error: 'Failed to fetch guests' }, { status: 500 });
+  }
+}
+
+// PUT /api/guests — update the org's guest enrollment pending limit.
+// Admin-only, org-scoped, validated, audited.
+export async function PUT(req: NextRequest) {
+  try {
+    const admin = await requireAdminOrg(req);
+    if (!admin.ok) return authError(admin);
+
+    const body = await req.json().catch(() => ({})) as { guestPendingLimit?: unknown };
+
+    if (body.guestPendingLimit === undefined || body.guestPendingLimit === null) {
+      return NextResponse.json({ error: 'guestPendingLimit is required' }, { status: 422 });
+    }
+
+    const n = Number(body.guestPendingLimit);
+    if (!Number.isInteger(n) || n < 1 || n > 1000) {
+      return NextResponse.json({ error: 'Enter a whole number between 1 and 1000.' }, { status: 422 });
+    }
+
+    // Read old value for audit log
+    const oldSetting = await db.organizationSetting.findUnique({
+      where: { organizationId_key: { organizationId: admin.organizationId, key: GUEST_PENDING_LIMIT_SETTING_KEY } },
+    });
+    const oldValue = oldSetting ? Number.parseInt(oldSetting.value, 10) : 20;
+
+    await db.organizationSetting.upsert({
+      where: { organizationId_key: { organizationId: admin.organizationId, key: GUEST_PENDING_LIMIT_SETTING_KEY } },
+      update: { value: String(n), category: 'agent' },
+      create: { organizationId: admin.organizationId, key: GUEST_PENDING_LIMIT_SETTING_KEY, value: String(n), category: 'agent' },
+    });
+
+    // Audit log for guest pending limit change
+    await db.auditLog.create({
+      data: {
+        action: 'guest_pending_limit_updated',
+        resource: 'settings',
+        resourceId: admin.organizationId,
+        description: `Guest enrollment limit changed from ${oldValue} to ${n}`,
+        userId: admin.userId,
+        ipAddress: req.headers.get('x-real-ip') ?? undefined,
+        organizationId: admin.organizationId,
+      },
+    });
+
+    // Return current state
+    const guestPendingCount = await db.guest.count({
+      where: { organizationId: admin.organizationId, status: { in: ['ACTIVE', 'SUSPENDED'] } },
+    });
+    const remaining = Math.max(0, n - guestPendingCount);
+
+    return NextResponse.json({
+      success: true,
+      guestPendingLimit: n,
+      pendingGuestCount: guestPendingCount,
+      remaining,
+    });
+  } catch (error) {
+    console.error('Guests PUT error:', error);
+    return NextResponse.json({ error: 'Could not update the guest enrollment limit.' }, { status: 500 });
   }
 }

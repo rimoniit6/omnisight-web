@@ -31,7 +31,7 @@ This document is the source-of-truth feature inventory for the OmniSight reposit
 | Device claims (zero-touch) | Implemented | Discover → approve/reject/cancel/revoke |
 | Agent registrations (legacy path) | Implemented | Register → admin approve/reject |
 | Agent accounts (agent login) | Implemented | `agentId`/password, lockout, admin-managed |
-| Agent software build | Implemented | `POST /api/agent-software/build` (NSIS installer, server URL baked) |
+| Agent software build | Implemented (CLI only) | `node omnisight-agent/scripts/build-prod.mjs` (NSIS installer, server URL baked) |
 | Enrollment code | Implemented | Org-scoped, SHA-256 hashed, returned once |
 | Activity tracking (app/website/idle) | Implemented | Domain-only website URLs |
 | Website tracking (browser extension) | Partial | Best-effort (`websiteNativeTracking` opt-in) |
@@ -194,9 +194,7 @@ Navigation labels and sidebar groups: `src/lib/navigation.ts`, `src/components/l
 
 ### 2.7 Agent software build
 
-- Implemented: `POST /api/agent-software/build` (admin, rate-limited 5/h, audited) → runs `omnisight-agent/scripts/build-prod.mjs` producing an NSIS installer with `AGENT_SERVER_URL` baked (validated: https always; http only loopback) and optionally `AGENT_ENROLLMENT_CODE`.
-- Implemented: `GET /api/agent-software` (config + last/recent builds), `GET /api/agent-software/builds/[id]`, `GET /api/agent-software/builds/[id]/download` (artifact + SHA-256).
-- Model: `AgentBuild` (`pending|building|completed|failed`); artifacts under `uploads/agent-builds/<org>/<buildId>.exe`.
+- Implemented (CLI only): `node omnisight-agent/scripts/build-prod.mjs` with `AGENT_SERVER_URL` and optionally `AGENT_ENROLLMENT_CODE` environment variables → produces an NSIS installer. The web-based build UI has been removed; builds are performed directly via the CLI or CI pipeline.
 
 ### 2.8 Activity monitoring
 
@@ -328,8 +326,8 @@ Navigation labels and sidebar groups: `src/lib/navigation.ts`, `src/components/l
 
 ### 2.23 Realtime (WebSocket)
 
-- Implemented: `mini-services/live-updates` — Socket.IO on `LIVE_UPDATES_PORT` (default 3010), run with Bun; JWT handshake (HS256, same `JWT_SECRET`); org-scoped rooms; 5 s cursor-based polling of 15 tables; transition-only emissions for device/registration/claim/guest/build status.
-- Implemented: events `connected`, `device-status`, `employee-presence`, `activity-ping`, `notification`, `alert-event`, `break-status`, `break-started`, `break-ended`, `new-screenshot`, `agent-registration`, `device-claim`, `usb-event`, `project-time-update`, `anomaly`, `app-policy`, `policy-violation`, `guest`, `agent-build`, `device-summary`, `latency-pong`.
+- Implemented: `mini-services/live-updates` — Socket.IO on `LIVE_UPDATES_PORT` (default 3010), run with Bun; JWT handshake (HS256, same `JWT_SECRET`); org-scoped rooms; 5 s cursor-based polling of 14 tables; transition-only emissions for device/registration/claim/guest status.
+- Implemented: events `connected`, `device-status`, `employee-presence`, `activity-ping`, `notification`, `alert-event`, `break-status`, `break-started`, `break-ended`, `new-screenshot`, `agent-registration`, `device-claim`, `usb-event`, `project-time-update`, `anomaly`, `app-policy`, `policy-violation`, `guest`, `device-summary`, `latency-pong`.
 - Implemented: client provider (`websocket-provider.tsx`) with endpoint candidates (`NEXT_PUBLIC_LIVE_UPDATES_URL`, `/?XTransformPort=3010`, direct `:3010`), event log (80 entries), centralized React Query invalidation (`src/lib/ws-invalidation.ts`), latency probe.
 - Implemented: Live Monitor page, live activity ticker, presence provider.
 - Verified by: `tests/live-updates-cursor.test.ts`, `tests/live-monitor-event-stats.test.ts`, `tests/ws-invalidation.test.ts`.
@@ -360,7 +358,7 @@ Navigation labels and sidebar groups: `src/lib/navigation.ts`, `src/components/l
   - Services: orchestrator (lifecycle phases), heartbeat (config interval, default 60 s), consent refresh (60 s), config refresh (10 min), queue drain (20 s), screenshot spool (encrypted at rest, 50 files/250 MB bound), command poll (10 s), webcam guard (5 s), update service (4 h, HTTPS feed only), website bridge (loopback + token).
   - Enrollment paths: employee AgentAccount login → discover → admin approval (claims) OR legacy register → approve OR zero-touch enrollment code.
   - Fail-closed gates: `config flag AND consent AND native capability`; server re-enforces with 403.
-  - Packaging: `electron-builder` NSIS; `npm run package:agent`; server-side builds via `/api/agent-software/build`.
+  - Packaging: `electron-builder` NSIS; `npm run package:agent`; CLI builds via `node omnisight-agent/scripts/build-prod.mjs`.
 - Partial: agent-side anomaly/tamper/break reporting classes exist (`src/api/heartbeat.ts`) but are not instantiated by the agent runtime (dormant wiring).
 - Partial: auto-update — update service implemented but disabled unless `WL_UPDATE_URL` (HTTPS) is configured; `publish: null` in electron-builder config.
 

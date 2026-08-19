@@ -18,7 +18,7 @@ Internet ──► Caddy (TLS termination; repo Caddyfile) ──► :3000 Next.
                                                     └──► :3010 live-updates (Socket.IO)
                                                            PostgreSQL
                                                               │
-                                                              └──► uploads/ (screenshots, agent builds)
+                                                              └──► uploads/ (screenshots)
 ```
 
 - **One application instance** is the supported topology (see §6 — the rate
@@ -81,8 +81,8 @@ and store copies off-host (separate volume / object storage):
 
 ### Upload storage backup
 
-Screenshots and agent-build artifacts live in `uploads/` (server-referenced via
-DB rows). Back up the whole directory with the same cadence:
+Screenshots live in `uploads/` (server-referenced via DB rows). Back up the
+directory with the same cadence:
 
 ```bash
 tar -czf /var/backups/workai-uploads-$(date +%F).tgz uploads/

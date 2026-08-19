@@ -13,7 +13,7 @@ Related docs: [INSTALLATION.md](./INSTALLATION.md) · [PRODUCTION.md](./PRODUCTI
 ```
 Internet ──► Caddy (TLS termination; repo Caddyfile) ──► :3000 Next.js standalone
                                                    └──► :3010 live-updates (Socket.IO)
-                                                          PostgreSQL  ──► uploads/ (screenshots, agent builds)
+                                                          PostgreSQL  ──► uploads/ (screenshots)
 ```
 
 The repo `Caddyfile` binds `:81` and proxies:
@@ -32,7 +32,11 @@ The repo `Caddyfile` binds `:81` and proxies:
 
 ## 3. Desktop agent deployment
 
-1. In the admin console: **Settings → Agent Software** → configure enrollment code → **Build** (requires a Windows build machine with MSVC v143 + SDK 10.0.26100 + node-gyp; build runs a fixed command and is rate-limited to 5/h; result stored in `uploads/agent-builds` with SHA-256).
+1. Build the installer on a Windows machine with MSVC v143 + SDK 10.0.26100 + node-gyp:
+   ```bash
+   AGENT_SERVER_URL=https://your-server.example.com AGENT_ENROLLMENT_CODE=<code> node omnisight-agent/scripts/build-prod.mjs
+   ```
+   Alternatively, use the CI pipeline if configured. The build produces an NSIS installer under `uploads/agent-builds`.
 2. Distribute the installer (intranet share / MDM). Set `WL_UPDATE_URL` to an HTTPS feed for auto-updates (unset = updates disabled).
 3. On each Windows machine: install, launch; agent onboards (server URL default `http://localhost:3000` — override via `OMNISIGHT_SERVER_URL`/`WORKLENSAI_SERVER_URL` or bake `AGENT_SERVER_URL` at build time).
 4. Approve devices in **Agent Approvals** (employee-bound) or **Guests**; legacy registrations via **Agent Registrations**.
@@ -41,7 +45,7 @@ The repo `Caddyfile` binds `:81` and proxies:
 
 | Item | Note |
 |---|---|
-| Uploads | `uploads/screenshots` + `uploads/agent-builds` must be backed up with the DB; served only via authenticated routes with `nosniff`. |
+| Uploads | `uploads/screenshots` must be backed up with the DB; served only via authenticated routes with `nosniff`. |
 | Backups | DB dump or `VACUUM INTO` (see PRODUCTION.md); also back up `uploads/`. |
 | Secrets rotation | Rotating `JWT_SECRET` signs everyone out; rotating `ENCRYPTION_KEY` makes AI keys undecryptable — re-enter them. |
 | Multiple instances | The rate limiter is in-memory (per-process) — a load-balanced multi-instance setup weakens rate limits; pin to a single instance, or move limiting to the edge. |

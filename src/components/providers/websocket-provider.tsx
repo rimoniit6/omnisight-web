@@ -16,7 +16,6 @@ import {
   anomalyInvalidation,
   alertEventInvalidation,
   guestInvalidation,
-  agentBuildInvalidation,
 } from '@/lib/ws-invalidation';
 
 // ─── Event Types ───
@@ -106,15 +105,7 @@ export interface GuestEvent {
   timestamp: string;
 }
 
-export interface AgentBuildEvent {
-  id: string;
-  organizationId: string;
-  serverUrl: string;
-  agentVersion: string;
-  status: string;
-  sha256: string | null;
-  timestamp: string;
-}
+
 
 export interface ConnectedEvent {
   serverTime: string;
@@ -172,7 +163,7 @@ export interface PolicyViolationEvent {
   timestamp: string;
 }
 
-export type LiveEventType = 'device-status' | 'activity-ping' | 'notification' | 'break-status' | 'break-started' | 'break-ended' | 'screenshot' | 'agent-registration' | 'usb-event' | 'project-time-update' | 'device-claim' | 'alert-event' | 'guest' | 'agent-build';
+export type LiveEventType = 'device-status' | 'activity-ping' | 'notification' | 'break-status' | 'break-started' | 'break-ended' | 'screenshot' | 'agent-registration' | 'usb-event' | 'project-time-update' | 'device-claim' | 'alert-event' | 'guest';
 
 export interface LiveEventLog {
   id: string;
@@ -508,22 +499,7 @@ export function WebSocketProvider({ children }: { children: ReactNode }) {
       }
     });
 
-    // ─── Agent Build (build lifecycle transition: pending → building →
-    // completed/failed) ───
-    socket.on('agent-build', (event: AgentBuildEvent) => {
-      addEventLog({
-        type: 'agent-build',
-        title: event.status === 'completed' ? 'Agent Build Completed' : event.status === 'failed' ? 'Agent Build Failed' : 'Agent Build Started',
-        description: `v${event.agentVersion} — ${event.serverUrl}`,
-        timestamp: event.timestamp,
-        priority: event.status === 'failed' ? 'high' : event.status === 'completed' ? 'low' : 'medium',
-      });
-      // Refreshes the Agent Software card (Settings → Monitoring) without
-      // polling — the org-scoped 'agent-software' query is prefix-matched.
-      for (const key of agentBuildInvalidation()) {
-        queryClient.invalidateQueries({ queryKey: key });
-      }
-    });
+
 
     // ─── Anomaly (new anomaly detected/reported) ───
     // Refreshes the Anomalies page (any list/filter/pagination variant, via

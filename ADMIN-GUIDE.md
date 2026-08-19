@@ -57,9 +57,9 @@ Related docs: [USAGE.md](./USAGE.md) · [COMPANY-GUIDE.md](./COMPANY-GUIDE.md) �
 
 ## 6. Agent software builds (admin+)
 
-- **Settings → Agent Software** shows the build config (enrollment code enabled?, version, artifact URL).
-- **Build**: generates a Windows installer; enrollment code (if enabled) is baked into the installer — codes are single-use and stored only SHA-256-hashed. **Important:** builds require a machine with the native toolchain (MSVC + SDK 10.0.26100 + node-gyp) and run a fixed command; concurrent builds are serialized.
-- Downloads include SHA-256 checksums.
+- **Build the installer via CLI**: `AGENT_SERVER_URL=https://your-server.example.com AGENT_ENROLLMENT_CODE=<code> node omnisight-agent/scripts/build-prod.mjs` on a Windows machine with MSVC v143 + SDK 10.0.26100 + node-gyp.
+- The web-based build UI has been removed. Builds are performed directly via the CLI or CI pipeline.
+- Enrollment code (if enabled) is baked into the installer — codes are single-use and stored only SHA-256-hashed.
 
 ## 7. Imports & exports (admin+ / manager+)
 
@@ -86,7 +86,7 @@ Settings → Monitoring → Data Retention: per-class days (0 = keep forever; va
 ## 11. Maintenance & ops
 
 - **Jobs**: `expire_consents` (expire pending beyond TTL), `retention_cleanup`, `project_time_sync`, `anomaly_detection` — hourly, `JobRun` tracked, fails recorded.
-- **Backup**: `VACUUM INTO` or dump per your DB (see [DEPLOYMENT.md](./DEPLOYMENT.md)); `uploads/` (screenshots + agent builds) must be backed up too.
+- **Backup**: `VACUUM INTO` or dump per your DB (see [DEPLOYMENT.md](./DEPLOYMENT.md)); `uploads/` (screenshots) must be backed up too.
 - **Logs**: structured JSON on stdout; secrets redacted. `LOG_LEVEL` controls verbosity.
 - **Health**: `/api/health` + `/api/health/database`.
 - **Production guardrail**: `db:production-clean` requires `CONFIRM_PRODUCTION_CLEANUP=exactly-this-string`; `db:reset` requires `CONFIRM_DEV_RESET`; seeding (`db:seed:dev`) is blocked when `SEED_ALLOWED=false`.

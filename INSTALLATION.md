@@ -18,7 +18,7 @@ Related docs: [README.md](./README.md) · [DEPLOYMENT.md](./DEPLOYMENT.md) · [o
 | Node.js | **22.5 or newer recommended** (the SQLite→PostgreSQL migration script uses `node:sqlite`; no `engines` field is declared, so older versions are not guaranteed) |
 | Package managers | `npm` (primary; `package-lock.json` committed) and `bun` (required for `dev:live` / the live-updates mini-service) |
 | Database | **PostgreSQL** — the only supported application database. SQLite is not supported in production (`db/*.db` files are legacy dev artifacts) |
-| Disk | Database + `uploads/` (screenshots, agent builds) + `node_modules` |
+| Disk | Database + `uploads/` (screenshots) + `node_modules` |
 | RAM | Server process memory is capped via `NODE_OPTIONS=--max-old-space-size=768` in the provided configs; 1–2 GB free is a practical floor |
 | Git | Required to clone |
 
@@ -26,7 +26,7 @@ Related docs: [README.md](./README.md) · [DEPLOYMENT.md](./DEPLOYMENT.md) · [o
 
 - **Windows 10 or 11, x64**.
 - Runtime uses: DPAPI (secret storage), WinRT geolocation (location tracking), Media Foundation (webcam).
-- **Building the native addon** (only needed when building the agent yourself — prebuilt installers from the server's Agent Software page need nothing extra):
+- **Building the native addon** (only needed when building the agent yourself):
   - Node.js 22.x LTS
   - Visual Studio Build Tools with **MSVC v143** and **Windows SDK 10.0.26100.0** (required by `omnisight-agent/native/binding.gyp`)
   - `node-gyp` compatible toolchain
@@ -194,7 +194,7 @@ Notes:
 
 - `package:prod` runs `scripts/build-prod.mjs` which validates the URL (https required unless loopback), bakes URL + enrollment code, builds, and prints the installer path and SHA-256.
 - In production, `http://` URLs are rejected except loopback.
-- The preferred path for production is the **server-side build**: Settings → Agent Software → build (see [ADMIN-GUIDE.md](./ADMIN-GUIDE.md) / [DEPLOYMENT.md](./DEPLOYMENT.md)).
+- The preferred path for production is the **CLI build**: `AGENT_SERVER_URL=... AGENT_ENROLLMENT_CODE=... node omnisight-agent/scripts/build-prod.mjs` (see [DEPLOYMENT.md](./DEPLOYMENT.md)).
 
 ### 8.5 Enrollment
 
@@ -208,7 +208,7 @@ See [DEPLOYMENT.md](./DEPLOYMENT.md) for the full guide. Verified/supported layo
 Caddy (reverse proxy)  ──► :3000  Next.js server
                         └─► :3010  live-updates (Socket.IO)
 PostgreSQL  ◄── Prisma
-uploads/    (screenshots, agent-builds) — must be backed up with the DB
+uploads/    (screenshots) — must be backed up with the DB
 ```
 
 Key production environment: `DATABASE_URL`, `JWT_SECRET`, `ENCRYPTION_KEY` (mandatory), `SUPER_ADMIN_EMAIL/PASSWORD` (bootstrap only), `SESSION_COOKIE_NAME`, `NODE_ENV=production`. The committed `Caddyfile` proxies `:81` → `:3000` and `?XTransformPort=3010` → `:3010` (fixed allowlist).

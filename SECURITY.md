@@ -66,12 +66,12 @@ Related docs: [API.md](./API.md) · [PRIVACY.md](./PRIVACY.md) · [ARCHITECTURE.
 ## 8. Data at rest
 
 - Passwords: bcrypt (cost 12). Agent/claim secrets: SHA-256. AI keys: AES-256-GCM (`ENCRYPTION_KEY` must be a 32-byte key encoded base64).
-- Files (`uploads/screenshots`, `uploads/agent-builds`): outside the web root; served by authenticated route handlers with `nosniff`, cross-org → 404.
+- Files (`uploads/screenshots`): outside the web root; served by authenticated route handlers with `nosniff`, cross-org → 404.
 - Screenshots: validated PNG/JPEG/WebP (magic bytes, ≤ 5 MB); agent spool encrypted at rest.
 
 ## 9. Audit logging
 
-- `AuditLog` model; every sensitive mutation audits: admin/user writes, organization changes, settings, consent transitions, device approvals/revocations, commands, screenshots, reports, imports, policy changes, agent-software builds. Employee/user create/edit includes diffs of changed fields. Audit logs are append-only (no API to edit/delete); consent logs are immutable by design.
+- `AuditLog` model; every sensitive mutation audits: admin/user writes, organization changes, settings, consent transitions, device approvals/revocations, commands, screenshots, reports, imports, policy changes. Employee/user create/edit includes diffs of changed fields. Audit logs are append-only (no API to edit/delete); consent logs are immutable by design.
 
 ## 10. Known limitations (honest)
 

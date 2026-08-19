@@ -20,7 +20,7 @@ API / Server (Next.js App Router /api/*)
       ├── AI Providers (BYOK — OpenAI, Anthropic, Google, Mistral, Ollama, custom)
       ├── Realtime mini-service (Socket.IO, :3010, org-scoped rooms)
       ├── Background jobs (consent expiry, retention, project-time sync, anomaly detection)
-      └── File storage (uploads/screenshots, uploads/agent-builds)
+      └── File storage (uploads/screenshots)
               │
               ▼
       Windows Desktop Agent (Electron 33)
@@ -54,7 +54,7 @@ API / Server (Next.js App Router /api/*)
 
 - **PostgreSQL** (the only supported DB), Prisma 6 (`prisma-client-js`), 41 models, 22 migrations (2026-08-10 → 2026-08-17).
 - No Prisma enums — all enumerations are `String` columns with documented values in schema comments.
-- Key models: `Organization`, `Department`, `Employee`, `AgentAccount`, `Device`, `DeviceClaim`, `Guest`, `AgentBuild`, `Activity`, `KeyboardActivity`, `LocationEvent`, `Screenshot`, `WebcamSession`, `AgentCommand`, `UsbEvent`, `PolicyViolation`, `Anomaly`, `ConsentPolicy`, `Consent`, `ConsentLog`, `Notification`, `NotificationPreference`, `Alert`, `AuditLog`, `Report`, `AiInsight`, `SentimentRecord`, `Project`, `ProjectMember`, `TimeEntry`, `ProjectTimeSync` (+ cursor), `BreakSession`, `AppUser`, `SystemSetting`, `OrganizationSetting`, `JobRun`, `AgentRegistration`, `AgentToken`, `AgentSession`, `AppListEntry`.
+- Key models: `Organization`, `Department`, `Employee`, `AgentAccount`, `Device`, `DeviceClaim`, `Guest`, `Activity`, `KeyboardActivity`, `LocationEvent`, `Screenshot`, `WebcamSession`, `AgentCommand`, `UsbEvent`, `PolicyViolation`, `Anomaly`, `ConsentPolicy`, `Consent`, `ConsentLog`, `Notification`, `NotificationPreference`, `Alert`, `AuditLog`, `Report`, `AiInsight`, `SentimentRecord`, `Project`, `ProjectMember`, `TimeEntry`, `ProjectTimeSync` (+ cursor), `BreakSession`, `AppUser`, `SystemSetting`, `OrganizationSetting`, `JobRun`, `AgentRegistration`, `AgentToken`, `AgentSession`, `AppListEntry`.
 - Concurrency: `SELECT ... FOR UPDATE` on `Employee` during agent authenticate (single-active-device rule); atomic conditional `UPDATE` for consent transitions; `updateMany`-based leases for jobs; partial unique indexes for one-active-break and one-active-guest-per-device.
 
 ## 5. Authentication
@@ -143,7 +143,7 @@ See [AI-GUIDE.md](./AI-GUIDE.md) for the complete AI architecture.
 ```
 Caddy (included Caddyfile, :81) ──► :3000 Next.js (standalone build)
                               └──► :3010 live-updates (Socket.IO)
-PostgreSQL                        uploads/ (screenshots, agent-builds)
+PostgreSQL                        uploads/ (screenshots)
 ```
 
 See [DEPLOYMENT.md](./DEPLOYMENT.md).

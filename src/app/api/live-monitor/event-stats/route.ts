@@ -29,6 +29,9 @@ import { localDayKey, zonedDayStart } from '@/lib/timezone';
 //   projectTime   — automatically-tracked TimeEntry rows (source ACTIVITY_AUTO)
 //                   created in the window (the "Project Time Updated" event).
 //   total         — sum of the above.
+//
+// NOTE: agentBuild was previously counted here but has been removed as part
+// of the Agent Software web UI removal (the AgentBuild table no longer exists).
 export async function GET(req: NextRequest) {
   try {
     // Tenant isolation: organization identity ALWAYS comes from the verified
@@ -72,7 +75,7 @@ export async function GET(req: NextRequest) {
     // Activity/Break derive org through the employee relation (Activity has no
     // organizationId column); the rest carry organizationId directly. All
     // filters are indexed (createdAt / organizationId+createdAt).
-    const [devices, activity, notifications, screenshot, registration, usb, breakCount, projectTime, deviceClaim, guestCount, alertCount, agentBuild] = await Promise.all([
+    const [devices, activity, notifications, screenshot, registration, usb, breakCount, projectTime, deviceClaim, guestCount, alertCount] = await Promise.all([
       db.device.count({ where: { organizationId: orgId, updatedAt: { gte: from } } }),
       db.activity.count({
         where: {
@@ -99,7 +102,6 @@ export async function GET(req: NextRequest) {
       db.deviceClaim.count({ where: { organizationId: orgId, createdAt: { gte: from } } }),
       db.guest.count({ where: { organizationId: orgId, createdAt: { gte: from } } }),
       db.alert.count({ where: { organizationId: orgId, createdAt: { gte: from } } }),
-      db.agentBuild.count({ where: { organizationId: orgId, createdAt: { gte: from } } }),
     ]);
 
     return NextResponse.json({
@@ -120,8 +122,7 @@ export async function GET(req: NextRequest) {
           deviceClaim,
           guest: guestCount,
           alert: alertCount,
-          agentBuild,
-          total: devices + activity + notifications + breakCount + screenshot + registration + usb + projectTime + deviceClaim + guestCount + alertCount + agentBuild,
+          total: devices + activity + notifications + breakCount + screenshot + registration + usb + projectTime + deviceClaim + guestCount + alertCount,
         },
       },
     });
@@ -138,7 +139,7 @@ function emptyStats() {
       timezone: 'UTC',
       from: null,
       to: new Date().toISOString(),
-      counts: { devices: 0, activity: 0, notifications: 0, break: 0, screenshot: 0, registration: 0, usb: 0, projectTime: 0, deviceClaim: 0, guest: 0, alert: 0, agentBuild: 0, total: 0 },
+      counts: { devices: 0, activity: 0, notifications: 0, break: 0, screenshot: 0, registration: 0, usb: 0, projectTime: 0, deviceClaim: 0, guest: 0, alert: 0, total: 0 },
     },
   });
 }

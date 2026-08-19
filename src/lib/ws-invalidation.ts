@@ -134,14 +134,6 @@ export function guestInvalidation(): string[][] {
   ];
 }
 
-/**
- * Query keys invalidated by an `agent-build` transition (a build moved from
- * pending → building → completed/failed). Refreshes the Agent Software card
- * (Settings → Monitoring) so build completion shows up without polling.
- */
-export function agentBuildInvalidation(): string[][] {
-  return [['agent-software']];
-}
 
 /**
  * Query keys invalidated by an `anomaly` event (a new anomaly was detected

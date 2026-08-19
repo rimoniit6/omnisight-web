@@ -35,7 +35,6 @@ export const BROADCAST_TABLES = [
   'PolicyViolation',
   'Alert',
   'Guest',
-  'AgentBuild',
 ] as const;
 
 const TRIGGER_FUNCTION_SQL = `

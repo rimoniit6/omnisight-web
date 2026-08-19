@@ -272,10 +272,6 @@ const claimStatus = new Map<string, string>();
 // Last known guest status per guest — only real status transitions (created /
 // suspended / reactivated / revoked / converted) are emitted.
 const guestStatus = new Map<string, string>();
-// Last known build status per agent build — only real transitions (pending →
-// building → completed/failed) are emitted so the Agent Software card updates
-// without polling.
-const buildStatus = new Map<string, string>();
 // Per-employee live presence (derived from heartbeat freshness, NOT Device.status).
 const employeePresence: PresenceMap = new Map();
 // Department id → name lookup for activity events.
@@ -330,7 +326,7 @@ async function pollOnce(): Promise<void> {
   const now = new Date();
 
   try {
-    const [changedDevices, newActivities, newNotifications, newScreenshots, newRegistrations, newUsbEvents, breakActivities, newAutoTimeEntries, newClaims, newAnomalies, changedAppPolicy, newPolicyViolations, newAlerts, newGuests, changedBuilds] =
+    const [changedDevices, newActivities, newNotifications, newScreenshots, newRegistrations, newUsbEvents, breakActivities, newAutoTimeEntries, newClaims, newAnomalies, changedAppPolicy, newPolicyViolations, newAlerts,        newGuests] =
       await Promise.all([
         db.device.findMany({
           where: { updatedAt: { gt: since } },
@@ -512,24 +508,6 @@ async function pollOnce(): Promise<void> {
           orderBy: { updatedAt: 'desc' },
           take: 5,
         }),
-        // Agent builds — lifecycle transitions (pending → building →
-        // completed/failed). Polled on `updatedAt` so the Agent Software card
-        // refreshes when a build finishes without the client polling.
-        db.agentBuild.findMany({
-          where: { updatedAt: { gt: since } },
-          select: {
-            id: true,
-            organizationId: true,
-            serverUrl: true,
-            agentVersion: true,
-            status: true,
-            sha256: true,
-            createdAt: true,
-            updatedAt: true,
-          },
-          orderBy: { updatedAt: 'desc' },
-          take: 5,
-        }),
       ]);
 
     // Advance the poll cursor past every EVENT row this round actually
@@ -556,7 +534,6 @@ async function pollOnce(): Promise<void> {
       ...changedAppPolicy.map((p) => ({ ts: p.updatedAt })),
       ...newPolicyViolations.map((v) => ({ ts: v.createdAt })),
       ...newGuests.map((g) => ({ ts: g.updatedAt })),
-      ...changedBuilds.map((b) => ({ ts: b.updatedAt })),
     ]);
 
     // Persist the new cursor AFTER the round's broadcasts. Failure is logged
@@ -807,23 +784,6 @@ async function pollOnce(): Promise<void> {
       });
     }
 
-    // Agent builds (lifecycle transitions — the buildStatus map keeps
-    // re-fetched rows silent). Org-scoped so build completion in one
-    // organization never leaks to another.
-    for (const b of changedBuilds) {
-      const prev = buildStatus.get(b.id);
-      if (prev === b.status) continue;
-      buildStatus.set(b.id, b.status);
-      io.to(`org:${b.organizationId}`).emit('agent-build', {
-        id: b.id,
-        organizationId: b.organizationId,
-        serverUrl: b.serverUrl,
-        agentVersion: b.agentVersion,
-        status: b.status,
-        sha256: b.sha256 ?? null,
-        timestamp: b.updatedAt.toISOString(),
-      });
-    }
   } catch (err) {
     console.error('[live-updates] pollOnce error:', err);
   }
@@ -846,7 +806,6 @@ const REQUIRED_POLL_MODELS: (keyof PrismaClient)[] = [
   'agentRegistration',
   'usbEvent',
   'guest',
-  'agentBuild',
   'timeEntry',
   'anomaly',
   'employee',

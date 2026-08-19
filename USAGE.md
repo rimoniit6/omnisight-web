@@ -42,7 +42,7 @@ Two paths exist; both end with a device awaiting admin approval.
 **Path A — zero-touch (recommended):**
 
 1. In **Organization**, generate the enrollment code (shown once).
-2. Build the installer with the enrollment code baked in (**Settings → Agent Software → build**, or `AGENT_ENROLLMENT_CODE` on the machine).
+2. Build the installer with the enrollment code baked in (use the CLI: `AGENT_ENROLLMENT_CODE=<code> node omnisight-agent/scripts/build-prod.mjs`, or set `AGENT_ENROLLMENT_CODE` on the machine).
 3. On the Windows machine, install and run **OmniSight Agent**. The agent shows its status window (onboarding → login/pending).
 
 **Path B — Agent Account login:**
@@ -88,7 +88,7 @@ On the Windows machine, run the installed agent. It runs in the tray ("Open Agen
 
 - **Dashboard** — KPIs and live ticker.
 - **Activities** page — filterable activity list (application/website/idle), category colors, pagination.
-- **Live Monitor** — realtime event stream: LIVE/OFFLINE badge, sound toggle, pause/resume, clear, event-type filter chips (device-status, activity-ping, notification, break-status, screenshot, agent-registration, usb-event, device-claim, guest, agent-build), Event Stats (today/24h/7d counts), device grid.
+- **Live Monitor** — realtime event stream: LIVE/OFFLINE badge, sound toggle, pause/resume, clear, event-type filter chips (device-status, activity-ping, notification, break-status, screenshot, agent-registration, usb-event, device-claim, guest), Event Stats (today/24h/7d counts), device grid.
 - **Employee details → Activity tab** — per-employee timeline with date range selection.
 
 ## 10. Review website activity

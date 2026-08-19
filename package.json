@@ -18,7 +18,6 @@
     "test:agent-account": "tsx --test tests/agent-account.test.ts",
     "test:agent-account-admin": "tsx --test tests/agent-account-admin.test.ts",
     "test:agent-login": "tsx --test tests/agent-auth-login.test.ts",
-    "test:agent-software": "tsx --test tests/agent-software-build.test.ts",
     "test:health": "tsx --test tests/health.test.ts",
     "test:sentiment": "tsx --test tests/sentiment-fixes.test.ts",
     "test:project-sentiment": "tsx --test tests/project-sentiment.test.ts",

@@ -13,7 +13,6 @@ import { useTheme } from 'next-themes';
 import { Save, Shield, Cpu, Bell, Settings, ToggleLeft, Wrench, Sun, Moon, Monitor, Users, Trash2, ShieldCheck, Sparkles } from 'lucide-react';
 import { UserManagement } from '@/components/auth/user-management';
 import { ChangePasswordDialog } from '@/components/auth/change-password-dialog';
-import { AgentSoftwareCard } from '@/components/agent-software/agent-software-card';
 import { cn } from '@/lib/utils';
 
 const sections = [
@@ -596,9 +595,6 @@ export function SettingsPage() {
 
         {/* Agent Monitoring (org-scoped, drives GET /api/agent/config) */}
         {activeSection === 'monitoring' && <AgentMonitoringCard />}
-
-        {/* Agent Software (build the OmniSight Agent installer for this deployment) */}
-        {activeSection === 'monitoring' && <AgentSoftwareCard />}
 
         {/* Server-side monitoring & intelligence (not an agent runtime feature) */}
         {activeSection === 'monitoring' && <ServerSideIntelligenceCard />}

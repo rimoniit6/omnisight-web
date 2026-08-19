@@ -44,7 +44,6 @@ const SECURITY_CRITICAL_PREFIXES = [
   'guest:',
   'enrollment-code:',
   'agent-account-write:',
-  'agent-software-build:',
   'ai-test-connection:',
 ];
 

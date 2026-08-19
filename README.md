@@ -44,7 +44,7 @@ API / Server (Next.js App Router /api/*)
       ├── AI Providers (BYOK — OpenAI, Anthropic, Google, Mistral, Ollama, custom)
       ├── Realtime mini-service (Socket.IO, :3010, org-scoped rooms)
       ├── Background jobs (consent expiry, retention, project-time sync, anomaly detection)
-      └── File storage (uploads/screenshots, uploads/agent-builds)
+      └── File storage (uploads/screenshots)
               │
               ▼
       Windows Desktop Agent (Electron)
@@ -86,7 +86,7 @@ See [ARCHITECTURE.md](./ARCHITECTURE.md) for details.
 ├── prisma/               # schema.prisma + 22 migrations
 ├── scripts/              # dev, db, verification, certification tooling
 ├── tests/                # ~60 Node test suites (tsx --test)
-├── uploads/              # runtime storage (screenshots/, agent-builds/) — gitignored
+├── uploads/              # runtime storage (screenshots/) — gitignored
 └── docs/                 # architecture docs, audit trail, certifications
 ```
 
@@ -131,7 +131,7 @@ Full details, including every environment variable, the desktop agent build, and
 3. Open **Settings → Users** to create admin/manager/viewer accounts, or **Organization** to configure monitoring (heartbeat, screenshots, website tracking…).
 4. Open **Consent** to publish consent policies, then grant each employee's consents (or let the agent request them).
 5. Add employees (**Employees**), then install the **OmniSight Agent** on Windows machines. The agent can be:
-   - **Zero-touch**: build an installer from **Settings → Agent Software** with the server URL baked in; agents discover the server and request device approval (**Agent Approvals**), or
+   - **Zero-touch**: build the installer using the CLI (`AGENT_SERVER_URL=... node omnisight-agent/scripts/build-prod.mjs`) with the server URL baked in; agents discover the server and request device approval (**Agent Approvals**), or
    - **Enrollment code**: generate one in **Organization**, bake it into the installer, or set `WL_ENROLLMENT_CODE` on the machine.
 6. Approve devices in **Agent Approvals** (employee or guest mode).
 7. Monitor activity in **Dashboard / Live Monitor**, review **Screenshots**, and run **AI Insights / Sentiment** after configuring an AI provider in **AI Provider**.

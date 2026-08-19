@@ -50,7 +50,6 @@ model Organization {
   agentRegistrations AgentRegistration[]
   deviceClaims       DeviceClaim[]
   guests             Guest[]
-  agentBuilds        AgentBuild[]
   screenshots   Screenshot[]
   anomalies      Anomaly[]
   consents       Consent[]
@@ -315,42 +314,6 @@ model Guest {
   // At most ONE ACTIVE and ONE PENDING guest per device is enforced by
   // partial unique indexes created in the migration SQL (Prisma cannot
   // express partial indexes — see 20260817000000_guest_enrollment).
-}
-
-// ==================== Agent Build (Admin-built OmniSightAgent.exe) ====================
-// One record per build request issued from the Admin Panel "Agent Software"
-// section (Settings → Agent Software → Build OmniSight Agent). Metadata +
-// artifact lifecycle only: the baked configuration (server URL + optional
-// enrollment code) lives INSIDE the artifact — this table stores the validated
-// server URL and flags, NEVER the enrollment code plaintext or any secret.
-//
-// status: pending → building → completed | failed
-// sha256/fileName are set on completion; the artifact file itself is stored
-// outside the repo under uploads/agent-builds/<organizationId>/<buildId>.exe
-// and served only by the org-scoped download route.
-
-model AgentBuild {
-  id                 String   @id @default(cuid())
-  organizationId     String
-  serverUrl          String   // validated https:// URL baked into the artifact
-  enrollmentCodeBaked Boolean @default(false) // whether a code was embedded
-  agentVersion       String   // omnisight-agent package version
-  status             String   @default("pending") // pending, building, completed, failed
-  sha256             String?  // artifact digest (completed)
-  fileName           String?  // stored artifact file name (completed)
-  requestedBy        String   // admin AppUser id
-  error              String?  // failure detail (never contains secrets)
-  startedAt          DateTime?
-  completedAt        DateTime?
-  createdAt          DateTime @default(now())
-  updatedAt          DateTime @updatedAt
-
-  // Relations
-  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-
-  @@index([organizationId])
-  @@index([organizationId, createdAt])
-  @@index([status])
 }
 
 // ==================== Activity ====================
