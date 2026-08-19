@@ -448,11 +448,18 @@ test('RATE-1: rate limit enforced after burst (429)', async () => {
   const ip = '203.0.113.200';
   const key = 'key-rate-0001-burst-test-abcdef';
   let lastStatus = 0;
+  let lastRes: Response | null = null;
   for (let i = 0; i < 21; i++) {
     const res = await discoverApi.POST(makeReq(null, { body: discoverBody(key), ip }));
     lastStatus = res.status;
+    lastRes = res;
   }
   assert.equal(lastStatus, 429, '21st request within 1 min must be rate-limited');
+  assert.ok(lastRes, 'rate-limited response captured');
+  const retryAfter = lastRes!.headers.get('retry-after');
+  assert.ok(retryAfter && Number(retryAfter) > 0, `Retry-After header present and positive, got ${retryAfter}`);
+  const body = await lastRes!.json();
+  assert.ok(/Too many discovery attempts/.test(body.error ?? ''), '429 body carries the retry message');
 });
 
 // ═══════════════════════════════════════════════════════════════════════════

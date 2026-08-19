@@ -127,10 +127,14 @@ export async function POST(req: NextRequest) {
     );
     if (!rl.allowed) {
       log.warn('agent-discover.rate-limit:denied', { ...ctx });
-      return NextResponse.json(
+      const res = NextResponse.json(
         { error: `Too many discovery attempts. Try again in ${rl.retryAfterSeconds} seconds.` },
         { status: 429 }
       );
+      // Standard Retry-After header (seconds) — same convention as proxy.ts
+      // rateLimitResponse, so a standards-compliant client can honor it.
+      res.headers.set('Retry-After', String(rl.retryAfterSeconds));
+      return res;
     }
     log.info('agent-discover.rate-limit:success', { ...ctx });
 
