@@ -347,13 +347,6 @@ async function pollOnce(): Promise<void> {
           orderBy: { createdAt: 'desc' },
           take: 10,
         }),
-        // N-10: new alerts (createdAt cursor) — org room event so the Alerts
-        // page refreshes without a manual reload.
-        db.alert.findMany({
-          where: { createdAt: { gt: since } },
-          orderBy: { createdAt: 'desc' },
-          take: 10,
-        }),
         db.screenshot.findMany({
           where: { createdAt: { gt: since } },
           include: {
@@ -375,40 +368,6 @@ async function pollOnce(): Promise<void> {
           },
           orderBy: { updatedAt: 'desc' },
           take: 5,
-        }),
-        // Zero-touch device claims — the admin approval queue. Polled on
-        // `updatedAt` so claim creation AND lifecycle transitions (approved /
-        // rejected / revoked / cancelled / expired, plus re-registration back
-        // to pending) reach the org's admins in real time. Emission is
-        // transition-only via claimStatus.
-        db.deviceClaim.findMany({
-          where: { updatedAt: { gt: since } },
-          include: {
-            device: { select: { id: true, name: true, hostname: true, organizationId: true } },
-            employee: { select: { id: true, firstName: true, lastName: true } },
-          },
-          orderBy: { updatedAt: 'desc' },
-          take: 5,
-        }),
-        // New anomalies (auto-detected by the scheduler/on-demand run or
-        // reported by an agent). New rows only (createdAt poll): status
-        // changes are already reflected by the anomalies page's own mutation
-        // invalidation, so broadcasting them again would be redundant noise.
-        db.anomaly.findMany({
-          where: { createdAt: { gt: since } },
-          select: {
-            id: true,
-            organizationId: true,
-            employeeId: true,
-            deviceId: true,
-            type: true,
-            severity: true,
-            status: true,
-            title: true,
-            createdAt: true,
-          },
-          orderBy: { createdAt: 'desc' },
-          take: 10,
         }),
         // UsbEvent has no `employee` relation in the schema — it carries the
         // employeeId/organizationId columns directly, so select them explicitly
@@ -461,6 +420,40 @@ async function pollOnce(): Promise<void> {
           orderBy: { updatedAt: 'desc' },
           take: 10,
         }),
+        // Zero-touch device claims — the admin approval queue. Polled on
+        // `updatedAt` so claim creation AND lifecycle transitions (approved /
+        // rejected / revoked / cancelled / expired, plus re-registration back
+        // to pending) reach the org's admins in real time. Emission is
+        // transition-only via claimStatus.
+        db.deviceClaim.findMany({
+          where: { updatedAt: { gt: since } },
+          include: {
+            device: { select: { id: true, name: true, hostname: true, organizationId: true } },
+            employee: { select: { id: true, firstName: true, lastName: true } },
+          },
+          orderBy: { updatedAt: 'desc' },
+          take: 5,
+        }),
+        // New anomalies (auto-detected by the scheduler/on-demand run or
+        // reported by an agent). New rows only (createdAt poll): status
+        // changes are already reflected by the anomalies page's own mutation
+        // invalidation, so broadcasting them again would be redundant noise.
+        db.anomaly.findMany({
+          where: { createdAt: { gt: since } },
+          select: {
+            id: true,
+            organizationId: true,
+            employeeId: true,
+            deviceId: true,
+            type: true,
+            severity: true,
+            status: true,
+            title: true,
+            createdAt: true,
+          },
+          orderBy: { createdAt: 'desc' },
+          take: 10,
+        }),
         // App whitelist/blacklist policy changes — creation AND soft-delete
         // (isActive) transitions. Polled on `updatedAt` so second-admin
         // sessions see policy edits in real time (Prisma sets updatedAt =
@@ -476,6 +469,13 @@ async function pollOnce(): Promise<void> {
             updatedAt: true,
           },
           orderBy: { updatedAt: 'desc' },
+          take: 10,
+        }),
+        // N-10: new alerts (createdAt cursor) — org room event so the Alerts
+        // page refreshes without a manual reload.
+        db.alert.findMany({
+          where: { createdAt: { gt: since } },
+          orderBy: { createdAt: 'desc' },
           take: 10,
         }),
         // New policy violations (agent enforcement events) — new rows only.
