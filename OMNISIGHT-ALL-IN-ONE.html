@@ -1,0 +1,1023 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OmniSight - Complete Administrator Reference</title>
+    <script src="https://cdn.jsdelivr.net/npm/mermaid/dist/mermaid.min.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        :root {
+            --primary: #2196F3;
+            --secondary: #1976D2;
+            --success: #4CAF50;
+            --warning: #FF9800;
+            --danger: #f44336;
+            --info: #00BCD4;
+            --dark: #1a1a2e;
+            --darker: #16213e;
+            --light: #f8f9fa;
+            --gray: #6c757d;
+        }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: var(--dark);
+            color: #333;
+            line-height: 1.6;
+        }
+        
+        /* Navigation */
+        .nav {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 280px;
+            height: 100vh;
+            background: linear-gradient(180deg, #0f0c29 0%, #302b63 100%);
+            overflow-y: auto;
+            z-index: 1000;
+            padding: 20px 0;
+        }
+        
+        .nav-header {
+            padding: 20px;
+            text-align: center;
+            border-bottom: 1px solid rgba(255,255,255,0.1);
+            margin-bottom: 20px;
+        }
+        
+        .nav-header h2 {
+            color: white;
+            font-size: 1.3rem;
+            margin-bottom: 5px;
+        }
+        
+        .nav-header p {
+            color: rgba(255,255,255,0.6);
+            font-size: 0.85rem;
+        }
+        
+        .nav-section {
+            padding: 10px 20px;
+            color: rgba(255,255,255,0.5);
+            font-size: 0.75rem;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+        
+        .nav-item {
+            display: block;
+            padding: 12px 20px;
+            color: rgba(255,255,255,0.8);
+            text-decoration: none;
+            transition: all 0.3s;
+            border-left: 3px solid transparent;
+        }
+        
+        .nav-item:hover, .nav-item.active {
+            background: rgba(255,255,255,0.1);
+            color: white;
+            border-left-color: var(--primary);
+        }
+        
+        .nav-item .icon {
+            margin-right: 10px;
+        }
+        
+        /* Main Content */
+        .main {
+            margin-left: 280px;
+            background: var(--light);
+            min-height: 100vh;
+        }
+        
+        .hero {
+            background: linear-gradient(135deg, var(--primary) 0%, var(--secondary) 100%);
+            color: white;
+            padding: 60px 40px;
+            text-align: center;
+        }
+        
+        .hero h1 {
+            font-size: 2.5rem;
+            margin-bottom: 15px;
+        }
+        
+        .hero p {
+            font-size: 1.2rem;
+            opacity: 0.9;
+            max-width: 600px;
+            margin: 0 auto;
+        }
+        
+        .section {
+            padding: 50px 40px;
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        
+        .section-header {
+            text-align: center;
+            margin-bottom: 40px;
+        }
+        
+        .section-header h2 {
+            font-size: 2rem;
+            color: var(--dark);
+            margin-bottom: 10px;
+        }
+        
+        .section-header p {
+            color: var(--gray);
+            font-size: 1.1rem;
+        }
+        
+        /* Cards */
+        .card-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
+            gap: 25px;
+            margin-bottom: 40px;
+        }
+        
+        .card {
+            background: white;
+            border-radius: 16px;
+            box-shadow: 0 5px 20px rgba(0,0,0,0.1);
+            overflow: hidden;
+            transition: transform 0.3s, box-shadow 0.3s;
+        }
+        
+        .card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 10px 30px rgba(0,0,0,0.15);
+        }
+        
+        .card-header {
+            padding: 20px;
+            color: white;
+        }
+        
+        .card-header h3 {
+            font-size: 1.2rem;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        
+        .card-body {
+            padding: 20px;
+        }
+        
+        /* Color variants */
+        .bg-primary { background: linear-gradient(135deg, #2196F3 0%, #1976D2 100%); }
+        .bg-success { background: linear-gradient(135deg, #4CAF50 0%, #388E3C 100%); }
+        .bg-warning { background: linear-gradient(135deg, #FF9800 0%, #F57C00 100%); }
+        .bg-danger { background: linear-gradient(135deg, #f44336 0%, #D32F2F 100%); }
+        .bg-info { background: linear-gradient(135deg, #00BCD4 0%, #0097A7 100%); }
+        .bg-purple { background: linear-gradient(135deg, #9C27B0 0%, #7B1FA2 100%); }
+        .bg-indigo { background: linear-gradient(135deg, #3F51B5 0%, #303F9F 100%); }
+        .bg-teal { background: linear-gradient(135deg, #009688 0%, #00796B 100%); }
+        
+        /* Tables */
+        .table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        
+        .table th, .table td {
+            padding: 12px 15px;
+            text-align: left;
+            border-bottom: 1px solid #eee;
+        }
+        
+        .table th {
+            background: #f8f9fa;
+            font-weight: 600;
+            color: #333;
+        }
+        
+        .table tr:hover {
+            background: #f8f9fa;
+        }
+        
+        /* Status badges */
+        .badge {
+            display: inline-block;
+            padding: 4px 10px;
+            border-radius: 12px;
+            font-size: 0.8rem;
+            font-weight: 500;
+        }
+        
+        .badge-success { background: #e8f5e9; color: #2e7d32; }
+        .badge-warning { background: #fff3e0; color: #e65100; }
+        .badge-danger { background: #ffebee; color: #c62828; }
+        .badge-info { background: #e0f7fa; color: #006064; }
+        
+        /* Checklists */
+        .checklist {
+            list-style: none;
+        }
+        
+        .checklist li {
+            padding: 10px 0;
+            border-bottom: 1px solid #eee;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        
+        .checklist li:last-child {
+            border-bottom: none;
+        }
+        
+        .check-box {
+            width: 20px;
+            height: 20px;
+            border: 2px solid #ddd;
+            border-radius: 4px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        
+        /* Diagram container */
+        .diagram-container {
+            background: white;
+            border-radius: 12px;
+            padding: 25px;
+            margin: 20px 0;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.05);
+        }
+        
+        .diagram-title {
+            font-size: 1.1rem;
+            font-weight: 600;
+            color: var(--dark);
+            margin-bottom: 15px;
+            padding-bottom: 10px;
+            border-bottom: 2px solid var(--primary);
+        }
+        
+        .mermaid {
+            display: flex;
+            justify-content: center;
+            padding: 20px 0;
+        }
+        
+        /* Workflow boxes */
+        .workflow-box {
+            background: linear-gradient(135deg, #e3f2fd 0%, #bbdefb 100%);
+            border-radius: 10px;
+            padding: 20px;
+            margin: 15px 0;
+        }
+        
+        .workflow-box h4 {
+            color: #1565C0;
+            margin-bottom: 12px;
+        }
+        
+        .workflow-steps {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+        }
+        
+        .workflow-step {
+            background: white;
+            padding: 8px 15px;
+            border-radius: 20px;
+            font-size: 0.9rem;
+            border: 1px solid #90CAF9;
+            color: #1565C0;
+        }
+        
+        /* Pro tips */
+        .pro-tips {
+            background: linear-gradient(135deg, #fff3e0 0%, #ffe0b2 100%);
+            border-radius: 10px;
+            padding: 20px;
+            margin: 15px 0;
+        }
+        
+        .pro-tips h4 {
+            color: #e65100;
+            margin-bottom: 12px;
+        }
+        
+        .pro-tip {
+            display: flex;
+            align-items: flex-start;
+            gap: 10px;
+            margin-bottom: 10px;
+        }
+        
+        .pro-tip-num {
+            background: #FF9800;
+            color: white;
+            width: 22px;
+            height: 22px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.8rem;
+            font-weight: bold;
+            flex-shrink: 0;
+        }
+        
+        /* Footer */
+        .footer {
+            background: var(--dark);
+            color: white;
+            text-align: center;
+            padding: 30px;
+            margin-top: 50px;
+        }
+        
+        /* Responsive */
+        @media (max-width: 1024px) {
+            .nav {
+                width: 70px;
+            }
+            
+            .nav-header h2, .nav-header p, .nav-section, .nav-item span:not(.icon) {
+                display: none;
+            }
+            
+            .nav-item {
+                padding: 15px;
+                text-align: center;
+            }
+            
+            .nav-item .icon {
+                margin: 0;
+                font-size: 1.2rem;
+            }
+            
+            .main {
+                margin-left: 70px;
+            }
+        }
+        
+        @media (max-width: 768px) {
+            .nav {
+                display: none;
+            }
+            
+            .main {
+                margin-left: 0;
+            }
+            
+            .hero h1 {
+                font-size: 1.8rem;
+            }
+            
+            .section {
+                padding: 30px 20px;
+            }
+            
+            .card-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+        
+        @media print {
+            .nav {
+                display: none;
+            }
+            
+            .main {
+                margin-left: 0;
+            }
+            
+            .card {
+                break-inside: avoid;
+            }
+        }
+    </style>
+</head>
+<body>
+    <!-- Navigation Sidebar -->
+    <nav class="nav">
+        <div class="nav-header">
+            <h2>📋 OmniSight</h2>
+            <p>Administrator Reference</p>
+        </div>
+        
+        <div class="nav-section">Overview</div>
+        <a href="#overview" class="nav-item active">
+            <span class="icon">🏠</span> <span>Home</span>
+        </a>
+        <a href="#quick-ref" class="nav-item">
+            <span class="icon">⚡</span> <span>Quick Reference</span>
+        </a>
+        
+        <div class="nav-section">Workflows</div>
+        <a href="#onboarding" class="nav-item">
+            <span class="icon">👤</span> <span>Employee Onboarding</span>
+        </a>
+        <a href="#device" class="nav-item">
+            <span class="icon">💻</span> <span>Device Enrollment</span>
+        </a>
+        <a href="#offline" class="nav-item">
+            <span class="icon">⚠️</span> <span>Offline Investigation</span>
+        </a>
+        <a href="#activity" class="nav-item">
+            <span class="icon">📊</span> <span>Activity Review</span>
+        </a>
+        <a href="#security" class="nav-item">
+            <span class="icon">🔒</span> <span>Security Response</span>
+        </a>
+        <a href="#consent" class="nav-item">
+            <span class="icon">✅</span> <span>Consent Management</span>
+        </a>
+        <a href="#reports" class="nav-item">
+            <span class="icon">📄</span> <span>Report Generation</span>
+        </a>
+        
+        <div class="nav-section">Reference</div>
+        <a href="#raci" class="nav-item">
+            <span class="icon">📊</span> <span>RACI Matrix</span>
+        </a>
+        <a href="#checklists" class="nav-item">
+            <span class="icon">☑️</span> <span>Daily Checklists</span>
+        </a>
+        <a href="#troubleshoot" class="nav-item">
+            <span class="icon">🔧</span> <span>Troubleshooting</span>
+        </a>
+    </nav>
+    
+    <!-- Main Content -->
+    <main class="main">
+        <!-- Hero Section -->
+        <section class="hero" id="overview">
+            <h1>📋 OmniSight Complete Reference</h1>
+            <p>Your all-in-one guide for workforce intelligence platform administration</p>
+        </section>
+        
+        <!-- Quick Reference Section -->
+        <section class="section" id="quick-ref">
+            <div class="section-header">
+                <h2>⚡ Quick Reference Card</h2>
+                <p>Essential information at a glance</p>
+            </div>
+            
+            <div class="card-grid">
+                <!-- Login -->
+                <div class="card">
+                    <div class="card-header bg-primary">
+                        <h3>🔐 Login</h3>
+                    </div>
+                    <div class="card-body">
+                        <table class="table">
+                            <tr><td>1.</td><td>Open browser → OmniSight URL</td></tr>
+                            <tr><td>2.</td><td>Enter email and password</td></tr>
+                            <tr><td>3.</td><td>Click <strong>Sign In</strong></td></tr>
+                        </table>
+                        <p style="margin-top: 10px; color: #666; font-size: 0.9rem;">⚠️ 5 failed attempts = 15-min lockout</p>
+                    </div>
+                </div>
+                
+                <!-- Dashboard -->
+                <div class="card">
+                    <div class="card-header bg-success">
+                        <h3>📊 Dashboard Metrics</h3>
+                    </div>
+                    <div class="card-body">
+                        <table class="table">
+                            <tr><td><strong>Employees</strong></td><td>Verify headcount</td></tr>
+                            <tr><td><strong>Devices</strong></td><td>Check offline</td></tr>
+                            <tr><td><strong>Productivity</strong></td><td>Score &lt; 50? Act</td></tr>
+                            <tr><td><strong>Alerts</strong></td><td>Critical first</td></tr>
+                        </table>
+                    </div>
+                </div>
+                
+                <!-- Employees -->
+                <div class="card">
+                    <div class="card-header bg-purple">
+                        <h3>👥 Employee Actions</h3>
+                    </div>
+                    <div class="card-body">
+                        <table class="table">
+                            <tr><td><strong>Add</strong></td><td>Employees → Add → Save</td></tr>
+                            <tr><td><strong>Edit</strong></td><td>Click name → Edit</td></tr>
+                            <tr><td><strong>View</strong></td><td>Click name → Tabs</td></tr>
+                            <tr><td><strong>Export</strong></td><td>Export → Format</td></tr>
+                        </table>
+                    </div>
+                </div>
+                
+                <!-- Devices -->
+                <div class="card">
+                    <div class="card-header bg-warning">
+                        <h3>💻 Device States</h3>
+                    </div>
+                    <div class="card-body">
+                        <table class="table">
+                            <tr>
+                                <td><span class="badge badge-success">🟢 Online</span></td>
+                                <td>Active, sending data</td>
+                            </tr>
+                            <tr>
+                                <td><span class="badge badge-danger">🔴 Offline</span></td>
+                                <td>No communication</td>
+                            </tr>
+                            <tr>
+                                <td><span class="badge badge-info">⚫ Inactive</span></td>
+                                <td>Deauthorized</td>
+                            </tr>
+                        </table>
+                    </div>
+                </div>
+                
+                <!-- Security -->
+                <div class="card">
+                    <div class="card-header bg-danger">
+                        <h3>🚨 Alert Response</h3>
+                    </div>
+                    <div class="card-body">
+                        <table class="table">
+                            <tr>
+                                <td><span class="badge badge-danger">Critical</span></td>
+                                <td><strong>Immediate</strong></td>
+                            </tr>
+                            <tr>
+                                <td><span class="badge badge-warning">High</span></td>
+                                <td><strong>1 hour</strong></td>
+                            </tr>
+                            <tr>
+                                <td><span class="badge badge-info">Medium</span></td>
+                                <td><strong>4 hours</strong></td>
+                            </tr>
+                        </table>
+                    </div>
+                </div>
+                
+                <!-- Settings -->
+                <div class="card">
+                    <div class="card-header bg-info">
+                        <h3>⚙️ Key Settings</h3>
+                    </div>
+                    <div class="card-body">
+                        <table class="table">
+                            <tr><td><strong>Screenshots</strong></td><td>300 sec interval</td></tr>
+                            <tr><td><strong>Activity</strong></td><td>Enabled</td></tr>
+                            <tr><td><strong>Idle Alert</strong></td><td>15 minutes</td></tr>
+                            <tr><td><strong>Retention</strong></td><td>30-90 days</td></tr>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </section>
+        
+        <!-- Workflow Diagrams Section -->
+        <section class="section" id="onboarding" style="background: white;">
+            <div class="section-header">
+                <h2>👤 Employee Onboarding Workflow</h2>
+                <p>Complete process for adding new employees</p>
+            </div>
+            
+            <div class="diagram-container">
+                <div class="diagram-title">Process Flow</div>
+                <div class="mermaid">
+flowchart TD
+    A[👤 New Employee] --> B[📋 Add Employee]
+    B --> C[🔑 Create Agent Account]
+    C --> D[📦 Provide Installer]
+    D --> E[💻 Employee Installs]
+    E --> F[⏳ Pending Approval]
+    F --> G{Admin Decision}
+    G -->|Approve| H[✅ Device Active]
+    G -->|Reject| I[❌ Investigate]
+    H --> J[🔒 Grant Consent]
+    J --> K[✅ Complete]
+    I --> L[🔍 Troubleshoot]
+                </div>
+            </div>
+            
+            <div class="diagram-container">
+                <div class="diagram-title">Actor Responsibilities (Swimlane)</div>
+                <div class="mermaid">
+flowchart TB
+    subgraph Admin["👤 Administrator"]
+        A1[Add Employee]
+        A2[Create Account]
+        A3[Approve Device]
+        A4[Grant Consent]
+    end
+    
+    subgraph Employee["👥 Employee"]
+        E1[Install Agent]
+        E2[Enter Credentials]
+    end
+    
+    subgraph System["⚙️ System"]
+        S1[Create Record]
+        S2[Create Claim]
+        S3[Link Device]
+        S4[Start Monitoring]
+    end
+    
+    A1 --> S1 --> A2 --> A3 --> S3 --> A4 --> S4
+                </div>
+            </div>
+        </section>
+        
+        <!-- Device Enrollment -->
+        <section class="section" id="device">
+            <div class="section-header">
+                <h2>💻 Device Enrollment Workflow</h2>
+                <p>How to enroll new company devices</p>
+            </div>
+            
+            <div class="diagram-container">
+                <div class="diagram-title">Message Flow</div>
+                <div class="mermaid">
+sequenceDiagram
+    participant IT as 🔧 IT
+    participant S as ⚙️ System
+    participant A as 👤 Admin
+    
+    IT->>S: Agent Starts
+    IT->>S: Discovery Request
+    S-->>A: Notify: New Claim
+    
+    A->>S: Review Claim
+    A->>S: Approve Device
+    S-->>A: Device Online
+    
+    loop Every 5 min
+        IT->>S: Heartbeat
+    end
+                </div>
+            </div>
+        </section>
+        
+        <!-- Offline Investigation -->
+        <section class="section" id="offline" style="background: white;">
+            <div class="section-header">
+                <h2>⚠️ Offline Investigation Workflow</h2>
+                <p>Troubleshooting offline devices</p>
+            </div>
+            
+            <div class="diagram-container">
+                <div class="diagram-title">Decision Tree</div>
+                <div class="mermaid">
+flowchart TD
+    A[⚠️ Device Offline] --> B[Check Last Heartbeat]
+    B --> C{When?}
+    C -->|Recent| D[Network Issue]
+    C -->|Older| E[Agent Issue]
+    C -->|Very Old| F[Device Off]
+    D --> G[Contact Employee]
+    E --> H[Check Agent]
+    F --> I[Verify Status]
+    G --> J[Guide Fix]
+    H --> J
+    I --> J
+    J --> K[✅ Back Online]
+                </div>
+            </div>
+        </section>
+        
+        <!-- Security Response -->
+        <section class="section" id="security">
+            <div class="section-header">
+                <h2>🔒 Security Alert Response</h2>
+                <p>Handling security incidents</p>
+            </div>
+            
+            <div class="diagram-container">
+                <div class="diagram-title">Response Flow</div>
+                <div class="mermaid">
+sequenceDiagram
+    participant SY as ⚙️ System
+    participant SEC as 🔒 Security
+    participant A as 👤 Admin
+    participant E as 👥 Employee
+    
+    SY->>SEC: Send Alert
+    SEC->>SEC: Assess Severity
+    
+    alt Critical
+        SEC->>A: Escalate
+    end
+    
+    SEC->>A: Request Contact
+    A->>E: Contact Employee
+    E-->>A: Respond
+    A->>SEC: Forward Info
+    
+    SEC->>SEC: Investigate
+    SEC->>A: Recommend Action
+    A->>E: Instruct Fix
+                </div>
+            </div>
+        </section>
+        
+        <!-- Consent Management -->
+        <section class="section" id="consent" style="background: white;">
+            <div class="section-header">
+                <h2>✅ Consent Management</h2>
+                <p>Managing employee consent</p>
+            </div>
+            
+            <div class="card-grid">
+                <div class="card">
+                    <div class="card-header bg-success">
+                        <h3>Consent Types</h3>
+                    </div>
+                    <div class="card-body">
+                        <table class="table">
+                            <tr><td><strong>Monitoring</strong></td><td><span class="badge badge-success">Required</span></td></tr>
+                            <tr><td><strong>Screenshot</strong></td><td><span class="badge badge-success">Required</span></td></tr>
+                            <tr><td><strong>Activity</strong></td><td><span class="badge badge-success">Required</span></td></tr>
+                            <tr><td><strong>Keystroke</strong></td><td><span class="badge badge-info">Optional</span></td></tr>
+                            <tr><td><strong>Location</strong></td><td><span class="badge badge-info">Optional</span></td></tr>
+                        </table>
+                    </div>
+                </div>
+                
+                <div class="card">
+                    <div class="card-header bg-purple">
+                        <h3>Consent Workflow</h3>
+                    </div>
+                    <div class="card-body">
+                        <div class="workflow-box">
+                            <div class="workflow-steps">
+                                <span class="workflow-step">1. Create Policy</span>
+                                <span class="workflow-step">2. Publish</span>
+                                <span class="workflow-step">3. Request</span>
+                                <span class="workflow-step">4. Decision</span>
+                                <span class="workflow-step">5. Active</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+        
+        <!-- RACI Matrix -->
+        <section class="section" id="raci">
+            <div class="section-header">
+                <h2>📊 RACI Matrix</h2>
+                <p>Responsibility assignment for all activities</p>
+            </div>
+            
+            <div class="diagram-container">
+                <table class="table">
+                    <thead>
+                        <tr>
+                            <th>Activity</th>
+                            <th>Administrator</th>
+                            <th>Employee</th>
+                            <th>System</th>
+                            <th>Management</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><strong>Add Employee</strong></td>
+                            <td><span class="badge badge-danger">R</span></td>
+                            <td><span class="badge badge-info">I</span></td>
+                            <td><span class="badge badge-warning">C</span></td>
+                            <td><span class="badge badge-info">I</span></td>
+                        </tr>
+                        <tr>
+                            <td><strong>Install Agent</strong></td>
+                            <td><span class="badge badge-warning">C</span></td>
+                            <td><span class="badge badge-danger">R</span></td>
+                            <td><span class="badge badge-warning">C</span></td>
+                            <td><span class="badge badge-info">I</span></td>
+                        </tr>
+                        <tr>
+                            <td><strong>Approve Device</strong></td>
+                            <td><span class="badge badge-danger">R</span></td>
+                            <td><span class="badge badge-info">I</span></td>
+                            <td><span class="badge badge-warning">C</span></td>
+                            <td><span class="badge badge-info">I</span></td>
+                        </tr>
+                        <tr>
+                            <td><strong>Grant Consent</strong></td>
+                            <td><span class="badge badge-warning">C</span></td>
+                            <td><span class="badge badge-danger">R</span></td>
+                            <td><span class="badge badge-warning">C</span></td>
+                            <td><span class="badge badge-info">I</span></td>
+                        </tr>
+                        <tr>
+                            <td><strong>Monitor Activity</strong></td>
+                            <td><span class="badge badge-danger">R</span></td>
+                            <td><span class="badge badge-info">I</span></td>
+                            <td><span class="badge badge-danger">R</span></td>
+                            <td><span class="badge badge-info">I</span></td>
+                        </tr>
+                        <tr>
+                            <td><strong>Investigate Alert</strong></td>
+                            <td><span class="badge badge-danger">R</span></td>
+                            <td><span class="badge badge-warning">C</span></td>
+                            <td><span class="badge badge-warning">C</span></td>
+                            <td><span class="badge badge-info">I</span></td>
+                        </tr>
+                        <tr>
+                            <td><strong>Generate Report</strong></td>
+                            <td><span class="badge badge-danger">R</span></td>
+                            <td><span class="badge badge-info">I</span></td>
+                            <td><span class="badge badge-danger">R</span></td>
+                            <td><span class="badge badge-info">I</span></td>
+                        </tr>
+                        <tr>
+                            <td><strong>Make Decisions</strong></td>
+                            <td><span class="badge badge-warning">C</span></td>
+                            <td><span class="badge badge-info">I</span></td>
+                            <td><span class="badge badge-info">I</span></td>
+                            <td><span class="badge badge-danger">R</span></td>
+                        </tr>
+                    </tbody>
+                </table>
+                <p style="margin-top: 15px; color: #666; font-size: 0.9rem;">
+                    <strong>R</strong> = Responsible | <strong>A</strong> = Accountable | <strong>C</strong> = Consulted | <strong>I</strong> = Informed
+                </p>
+            </div>
+        </section>
+        
+        <!-- Daily Checklists -->
+        <section class="section" id="checklists" style="background: white;">
+            <div class="section-header">
+                <h2>☑️ Daily Checklists</h2>
+                <p>Essential tasks for administrators</p>
+            </div>
+            
+            <div class="card-grid">
+                <div class="card">
+                    <div class="card-header bg-primary">
+                        <h3>☀️ Start of Day</h3>
+                    </div>
+                    <div class="card-body">
+                        <ul class="checklist">
+                            <li><span class="check-box">☐</span> Check Dashboard for alerts</li>
+                            <li><span class="check-box">☐</span> Review offline devices</li>
+                            <li><span class="check-box">☐</span> Check Agent Approvals queue</li>
+                            <li><span class="check-box">☐</span> Address critical alerts</li>
+                        </ul>
+                    </div>
+                </div>
+                
+                <div class="card">
+                    <div class="card-header bg-success">
+                        <h3>🔄 During the Day</h3>
+                    </div>
+                    <div class="card-body">
+                        <ul class="checklist">
+                            <li><span class="check-box">☐</span> Monitor live activity</li>
+                            <li><span class="check-box">☐</span> Review flagged screenshots</li>
+                            <li><span class="check-box">☐</span> Handle incoming alerts</li>
+                            <li><span class="check-box">☐</span> Manage project tasks</li>
+                        </ul>
+                    </div>
+                </div>
+                
+                <div class="card">
+                    <div class="card-header bg-purple">
+                        <h3>🌙 End of Day</h3>
+                    </div>
+                    <div class="card-body">
+                        <ul class="checklist">
+                            <li><span class="check-box">☐</span> Review analytics trends</li>
+                            <li><span class="check-box">☐</span> Check unresolved issues</li>
+                            <li><span class="check-box">☐</span> Generate reports if needed</li>
+                            <li><span class="check-box">☐</span> Prepare for next day</li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+        </section>
+        
+        <!-- Troubleshooting -->
+        <section class="section" id="troubleshoot">
+            <div class="section-header">
+                <h2>🔧 Troubleshooting Guide</h2>
+                <p>Quick fixes for common issues</p>
+            </div>
+            
+            <div class="diagram-container">
+                <table class="table">
+                    <thead>
+                        <tr>
+                            <th>Problem</th>
+                            <th>Possible Cause</th>
+                            <th>Quick Fix</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><strong>Device offline</strong></td>
+                            <td>Agent service stopped</td>
+                            <td>Check agent, contact employee</td>
+                        </tr>
+                        <tr>
+                            <td><strong>No activity data</strong></td>
+                            <td>Consent not granted</td>
+                            <td>Verify consent, check settings</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Login fails</strong></td>
+                            <td>Incorrect credentials</td>
+                            <td>Check email, verify account</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Report empty</strong></td>
+                            <td>Insufficient data</td>
+                            <td>Expand date range</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Alert not clearing</strong></td>
+                            <td>Issue persists</td>
+                            <td>Investigate root cause</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+            
+            <div class="pro-tips">
+                <h4>💡 Pro Tips</h4>
+                <div class="pro-tip">
+                    <span class="pro-tip-num">1</span>
+                    <span>Use <strong>Ctrl+K</strong> for quick search</span>
+                </div>
+                <div class="pro-tip">
+                    <span class="pro-tip-num">2</span>
+                    <span><strong>Collapse sidebar</strong> for more screen space</span>
+                </div>
+                <div class="pro-tip">
+                    <span class="pro-tip-num">3</span>
+                    <span><strong>Filter data</strong> before generating reports</span>
+                </div>
+                <div class="pro-tip">
+                    <span class="pro-tip-num">4</span>
+                    <span><strong>Check timestamps</strong> when investigating</span>
+                </div>
+                <div class="pro-tip">
+                    <span class="pro-tip-num">5</span>
+                    <span><strong>Document actions</strong> in audit logs</span>
+                </div>
+            </div>
+        </section>
+        
+        <!-- Footer -->
+        <footer class="footer">
+            <p><strong>OmniSight Complete Administrator Reference</strong></p>
+            <p>Version 1.0 | August 2026</p>
+            <p style="margin-top: 10px; opacity: 0.7;">For Organization Administrators</p>
+        </footer>
+    </main>
+    
+    <script>
+        // Initialize Mermaid
+        mermaid.initialize({ 
+            startOnLoad: true,
+            theme: 'default',
+            flowchart: {
+                useMaxWidth: true,
+                htmlLabels: true,
+                curve: 'basis'
+            },
+            sequence: {
+                useMaxWidth: true,
+                mirrorActors: true
+            }
+        });
+        
+        // Active nav highlighting
+        document.querySelectorAll('.nav-item').forEach(item => {
+            item.addEventListener('click', function() {
+                document.querySelectorAll('.nav-item').forEach(i => i.classList.remove('active'));
+                this.classList.add('active');
+            });
+        });
+        
+        // Smooth scrolling
+        document.querySelectorAll('a[href^="#"]').forEach(anchor => {
+            anchor.addEventListener('click', function(e) {
+                e.preventDefault();
+                const target = document.querySelector(this.getAttribute('href'));
+                if (target) {
+                    target.scrollIntoView({
+                        behavior: 'smooth',
+                        block: 'start'
+                    });
+                }
+            });
+        });
+    </script>
+</body>
+</html>
