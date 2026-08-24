@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { generateEmployeeReport } from '@/lib/pdf-generator';
 import { format, startOfMonth, endOfMonth } from 'date-fns';
-import { getSessionOrg, authError, requireManagerOrg, isValidDate, parseJsonBody, BodyParseError } from '@/lib/api';
+import { authError, requireManagerOrg, isValidDate, parseJsonBody, BodyParseError } from '@/lib/api';
 import { NON_INTERNAL_AGENT_ACTIVITY_FILTER, excludeInternalAgentActivities } from '@/lib/agent-process';
 
 export async function POST(request: NextRequest) {
@@ -54,37 +54,46 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Fetch activities in date range
-    const activities = excludeInternalAgentActivities(await db.activity.findMany({
-      where: {
-        employeeId,
-        timestamp: { gte: startDate, lte: endDate },
-      },
-      include: {
-        employee: { include: { department: true } },
-        device: true,
-      },
-      orderBy: { timestamp: 'desc' },
-      take: 200,
-    }));
-
-    // Aggregate total stats
-    const totalResult = await db.activity.aggregate({
-      where: { employeeId, timestamp: { gte: startDate, lte: endDate }, ...NON_INTERNAL_AGENT_ACTIVITY_FILTER },
-      _sum: { duration: true },
-      _count: true,
-    });
-
-    // Productive activities aggregate
-    const productiveResult = await db.activity.aggregate({
-      where: {
-        employeeId,
-        category: 'productive',
-        timestamp: { gte: startDate, lte: endDate },
-        ...NON_INTERNAL_AGENT_ACTIVITY_FILTER,
-      },
-      _sum: { duration: true },
-    });
+    // Fetch activities + run aggregates in parallel (they share the same date range)
+    const [rawActivities, totalResult, productiveResult] = await Promise.all([
+      // Fetch activities in date range — only select fields needed for the PDF
+      // No need to include employee data — we already have the employee's name
+      db.activity.findMany({
+        where: {
+          employeeId,
+          timestamp: { gte: startDate, lte: endDate },
+        },
+        select: {
+          id: true,
+          timestamp: true,
+          applicationName: true,
+          title: true,
+          url: true,
+          category: true,
+          duration: true,
+          type: true,
+        },
+        orderBy: { timestamp: 'desc' },
+        take: 200,
+      }),
+      // Aggregate total stats
+      db.activity.aggregate({
+        where: { employeeId, timestamp: { gte: startDate, lte: endDate }, ...NON_INTERNAL_AGENT_ACTIVITY_FILTER },
+        _sum: { duration: true },
+        _count: true,
+      }),
+      // Productive activities aggregate
+      db.activity.aggregate({
+        where: {
+          employeeId,
+          category: 'productive',
+          timestamp: { gte: startDate, lte: endDate },
+          ...NON_INTERNAL_AGENT_ACTIVITY_FILTER,
+        },
+        _sum: { duration: true },
+      }),
+    ]);
+    const activities = excludeInternalAgentActivities(rawActivities);
 
     // Compute stats
     const totalDuration = totalResult._sum.duration || 0;
@@ -119,10 +128,9 @@ export async function POST(request: NextRequest) {
     );
     const websitesVisited = websitesSet.size;
 
-    // Fetch organization
-    const sessionOrg = await getSessionOrg(request);
-    const org = sessionOrg
-      ? await db.organization.findUnique({ where: { id: sessionOrg.id }, select: { name: true } })
+    // Organization name is already available from the scope — no extra query needed
+    const org = scope.organizationId
+      ? await db.organization.findUnique({ where: { id: scope.organizationId }, select: { name: true } })
       : null;
 
     // Build employee data for PDF generator
@@ -137,10 +145,12 @@ export async function POST(request: NextRequest) {
     };
 
     // Build activity data for PDF generator
+    // Employee name comes from the employee object (already fetched, no join needed)
+    const empFullName = `${employee.firstName} ${employee.lastName}`;
     const activityData = activities.map((a) => ({
       id: a.id,
       timestamp: a.timestamp,
-      employeeName: `${a.employee.firstName} ${a.employee.lastName}`,
+      employeeName: empFullName,
       appOrWebsite:
         a.applicationName || a.title || a.url || '',
       category: a.category || 'neutral',

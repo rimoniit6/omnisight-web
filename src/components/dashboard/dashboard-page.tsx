@@ -22,6 +22,67 @@ import { PdfDownloadButton } from '@/components/reports/pdf-download-button';
 import { pushUnique } from '@/lib/live-ticker';
 import { format } from 'date-fns';
 
+// Dashboard response type — matches the API response shape from /api/dashboard
+export type DashboardData = {
+  totalEmployees: number;
+  totalDevices: number;
+  onlineDevices: number;
+  avgProductivity: number;
+  productivityScore: number;
+  activeAlerts: number;
+  recentActivities: Array<{
+    id: string;
+    type: string;
+    title: string | null;
+    url: string | null;
+    applicationName: string | null;
+    category: string | null;
+    duration: number;
+    employeeId: string;
+    deviceId: string | null;
+    timestamp: string;
+    employee: { id: string; firstName: string; lastName: string; avatar: string | null };
+    device: { id: string; name: string } | null;
+  }>;
+  topEmployees: Array<{
+    id: string;
+    firstName: string;
+    lastName: string;
+    department: string;
+    productiveTime: number;
+  }>;
+  departmentBreakdown: Array<{
+    id: string;
+    name: string;
+    _count: { employees: number };
+  }>;
+  deviceStatusBreakdown: Array<{
+    status: string;
+    _count: number;
+  }>;
+  dailyProductivity: Array<{
+    date: string;
+    productive: number;
+    neutral: number;
+    unproductive: number;
+  }>;
+};
+
+// Default empty dashboard data — returned when no data is available
+const EMPTY_DASHBOARD: DashboardData = {
+  totalEmployees: 0,
+  totalDevices: 0,
+  onlineDevices: 0,
+  avgProductivity: 0,
+  productivityScore: 0,
+  activeAlerts: 0,
+  recentActivities: [],
+  topEmployees: [],
+  departmentBreakdown: [],
+  deviceStatusBreakdown: [],
+  dailyProductivity: [],
+};
+
 // Chart widgets paired in 2-col grids (module scope: referentially stable).
 const CHART_WIDGET_IDS = ['productivity-chart', 'department-chart', 'device-chart', 'top-employees'] as const;
 
@@ -42,13 +103,28 @@ const fadeVariants = {
 const TICKER_MAX = 3;
 
 export function DashboardPage() {
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, error } = useQuery<DashboardData>({
     queryKey: ['dashboard'],
     queryFn: async () => {
       const res = await fetch('/api/dashboard');
+      
+      // Handle HTTP errors (401, 403, 500, etc.)
+      if (!res.ok) {
+        const errorBody = await res.json().catch(() => ({ error: 'Unknown error' }));
+        throw new Error(errorBody.error || `Dashboard request failed: ${res.status}`);
+      }
+      
       const json = await res.json();
-      return json.data;
+      
+      // Validate response structure
+      if (!json.data || typeof json.data !== 'object') {
+        throw new Error('Invalid dashboard response: missing data field');
+      }
+      
+      return json.data as DashboardData;
     },
+    // Return empty dashboard data on error to prevent undefined
+    placeholderData: EMPTY_DASHBOARD,
   });
 
   const [liveFeedOpen, setLiveFeedOpen] = useState(false);
@@ -89,6 +165,28 @@ export function DashboardPage() {
 
   if (isLoading) {
     return <DashboardSkeleton />;
+  }
+
+  // Error state — show user-friendly error message
+  if (error) {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-[400px] p-8">
+        <div className="text-center max-w-md">
+          <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-destructive/10 flex items-center justify-center">
+            <svg className="w-8 h-8 text-destructive" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+            </svg>
+          </div>
+          <h3 className="text-lg font-semibold text-foreground mb-2">Unable to Load Dashboard</h3>
+          <p className="text-sm text-muted-foreground mb-4">
+            {error instanceof Error ? error.message : 'An unexpected error occurred while loading the dashboard.'}
+          </p>
+          <p className="text-xs text-muted-foreground/70">
+            Please check your connection and try refreshing the page.
+          </p>
+        </div>
+      </div>
+    );
   }
 
   const quickActions = [

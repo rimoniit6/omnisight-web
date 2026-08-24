@@ -48,42 +48,51 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Fetch organization
-    const org = scope.organizationId
-      ? await db.organization.findUnique({ where: { id: scope.organizationId }, select: { name: true } })
-      : null;
+    // ── Parallelize all independent queries ──
+    const todayStart = startOfDay(new Date());
+    const todayEnd = endOfDay(new Date());
+    const activityWhereBase = {
+      timestamp: { gte: startDate, lte: endDate },
+      ...activityOrgFilter,
+      ...NON_INTERNAL_AGENT_ACTIVITY_FILTER,
+    };
 
-    // ── Total employees count ──
-    const totalEmployees = await db.employee.count({
-      where: { status: 'active', ...orgFilter },
-    });
+    const [
+      org,
+      totalEmployees,
+      orgDevices,
+      totalAggregate,
+      productiveAggregate,
+      todayAggregate,
+      alertsPending,
+      projectsActive,
+    ] = await Promise.all([
+      // Organization
+      scope.organizationId
+        ? db.organization.findUnique({ where: { id: scope.organizationId }, select: { name: true } })
+        : Promise.resolve(null),
+      // Total employees count
+      db.employee.count({ where: { status: 'active', ...orgFilter } }),
+      // Active devices
+      db.device.findMany({ where: orgFilter, select: { status: true, lastHeartbeat: true } }),
+      // Total activity duration
+      db.activity.aggregate({ where: activityWhereBase, _sum: { duration: true } }),
+      // Productive activity duration
+      db.activity.aggregate({ where: { ...activityWhereBase, category: 'productive' }, _sum: { duration: true } }),
+      // Today's hours
+      db.activity.aggregate({
+        where: { timestamp: { gte: todayStart, lte: todayEnd }, ...activityOrgFilter, ...NON_INTERNAL_AGENT_ACTIVITY_FILTER },
+        _sum: { duration: true },
+      }),
+      // Pending alerts
+      db.alert.count({ where: { status: 'pending', ...orgFilter } }),
+      // Active projects
+      db.project.count({ where: { status: 'active', ...orgFilter } }),
+    ]);
 
-    // ── Active devices count (heartbeat freshness, never the sticky column) ──
-    const orgDevices = await db.device.findMany({
-      where: orgFilter,
-      select: { status: true, lastHeartbeat: true },
-    });
     const activeDevices = orgDevices.filter(
       (d) => effectiveLiveStatus(d.status, d.lastHeartbeat) === 'online'
     ).length;
-
-    // ── Average productivity: total productive duration / total duration in range ──
-    // Scoped via the employee relation — NEVER a direct organizationId filter
-    // on Activity (that column does not exist → 500).
-    const totalAggregate = await db.activity.aggregate({
-      where: { timestamp: { gte: startDate, lte: endDate }, ...activityOrgFilter, ...NON_INTERNAL_AGENT_ACTIVITY_FILTER },
-      _sum: { duration: true },
-    });
-
-    const productiveAggregate = await db.activity.aggregate({
-      where: {
-        timestamp: { gte: startDate, lte: endDate },
-        category: 'productive',
-        ...activityOrgFilter,
-        ...NON_INTERNAL_AGENT_ACTIVITY_FILTER,
-      },
-      _sum: { duration: true },
-    });
 
     const totalDurationAll = totalAggregate._sum.duration || 0;
     const productiveDurationAll = productiveAggregate._sum.duration || 0;
@@ -92,113 +101,91 @@ export async function POST(request: NextRequest) {
         ? Math.round((productiveDurationAll / totalDurationAll) * 100)
         : 0;
 
-    // ── Total hours today ──
-    const todayStart = startOfDay(new Date());
-    const todayEnd = endOfDay(new Date());
-    const todayAggregate = await db.activity.aggregate({
-      where: { timestamp: { gte: todayStart, lte: todayEnd }, ...activityOrgFilter, ...NON_INTERNAL_AGENT_ACTIVITY_FILTER },
-      _sum: { duration: true },
-    });
     const totalHoursToday = parseFloat(
       ((todayAggregate._sum.duration || 0) / 3600).toFixed(1),
     );
 
-    // ── Pending alerts count ──
-    const alertsPending = await db.alert.count({
-      where: { status: 'pending', ...orgFilter },
+    // ── Department breakdown + Top performers via single GROUP BY queries ──
+    // Instead of N+1 per-department and per-employee queries, we use two
+    // single GROUP BY queries that return all the data we need.
+
+    // Single query: total duration per employee
+    const empTotalAgg = await db.activity.groupBy({
+      by: ['employeeId'],
+      where: activityWhereBase,
+      _sum: { duration: true },
     });
 
-    // ── Active projects count ──
-    const projectsActive = await db.project.count({
+    // Single query: productive duration per employee
+    const empProductiveAgg = await db.activity.groupBy({
+      by: ['employeeId'],
+      where: { ...activityWhereBase, category: 'productive' },
+      _sum: { duration: true },
+    });
+
+    // Build a lookup map for productive durations
+    const productiveMap = new Map<string, number>();
+    for (const row of empProductiveAgg) {
+      productiveMap.set(row.employeeId, row._sum.duration || 0);
+    }
+
+    // Fetch active employees with department info (needed for both breakdowns)
+    const activeEmployees = await db.employee.findMany({
       where: { status: 'active', ...orgFilter },
+      select: { id: true, firstName: true, lastName: true, departmentId: true, department: { select: { name: true } } },
     });
 
-    // ── Department breakdown ──
-    const departments = await db.department.findMany({
-      where: { status: 'active', ...orgFilter },
-      include: {
-        employees: {
-          where: { status: 'active' },
-          select: { id: true },
-        },
-      },
+    // Build employee stats lookup
+    const empStatsMap = new Map<string, { name: string; department: string; totalDuration: number; productiveDuration: number }>();
+    for (const emp of activeEmployees) {
+      const totalDur = empTotalAgg.find((r) => r.employeeId === emp.id)?._sum.duration || 0;
+      empStatsMap.set(emp.id, {
+        name: `${emp.firstName} ${emp.lastName}`,
+        department: emp.department?.name || 'N/A',
+        totalDuration: totalDur,
+        productiveDuration: productiveMap.get(emp.id) || 0,
+      });
+    }
+
+    // Department breakdown: group employees by departmentId
+    const deptMap = new Map<string, { name: string; employeeIds: string[] }>();
+    for (const emp of activeEmployees) {
+      const deptId = emp.departmentId || 'none';
+      const deptName = emp.department?.name || 'Unassigned';
+      if (!deptMap.has(deptId)) deptMap.set(deptId, { name: deptName, employeeIds: [] });
+      deptMap.get(deptId)!.employeeIds.push(emp.id);
+    }
+
+    const departmentBreakdown = Array.from(deptMap.values()).map((dept) => {
+      let deptTotal = 0;
+      let deptProductive = 0;
+      for (const empId of dept.employeeIds) {
+        const stats = empStatsMap.get(empId);
+        if (stats) {
+          deptTotal += stats.totalDuration;
+          deptProductive += stats.productiveDuration;
+        }
+      }
+      return {
+        name: dept.name,
+        employees: dept.employeeIds.length,
+        avgProductivity: deptTotal > 0 ? Math.round((deptProductive / deptTotal) * 100) : 0,
+        totalHours: parseFloat((deptTotal / 3600).toFixed(1)),
+      };
     });
 
-    const departmentBreakdown = await Promise.all(
-      departments.map(async (dept) => {
-        const deptEmployeeIds = dept.employees.map((e) => e.id);
-        const deptTotalResult = await db.activity.aggregate({
-          where: {
-            employeeId: { in: deptEmployeeIds },
-            timestamp: { gte: startDate, lte: endDate },
-            ...NON_INTERNAL_AGENT_ACTIVITY_FILTER,
-          },
-          _sum: { duration: true },
-        });
-        const deptProductiveResult = await db.activity.aggregate({
-          where: {
-            employeeId: { in: deptEmployeeIds },
-            category: 'productive',
-            timestamp: { gte: startDate, lte: endDate },
-            ...NON_INTERNAL_AGENT_ACTIVITY_FILTER,
-          },
-          _sum: { duration: true },
-        });
-        const deptTotal = deptTotalResult._sum.duration || 0;
-        const deptProductive = deptProductiveResult._sum.duration || 0;
-        return {
-          name: dept.name,
-          employees: dept.employees.length,
-          avgProductivity:
-            deptTotal > 0
-              ? Math.round((deptProductive / deptTotal) * 100)
-              : 0,
-          totalHours: parseFloat((deptTotal / 3600).toFixed(1)),
-        };
-      }),
-    );
+    // Top 5 performers: compute from the pre-fetched data
+    const topPerformers = Array.from(empStatsMap.values())
+      .map((s) => ({
+        name: s.name,
+        department: s.department,
+        hours: parseFloat((s.totalDuration / 3600).toFixed(1)),
+        productivity: s.totalDuration > 0 ? Math.round((s.productiveDuration / s.totalDuration) * 100) : 0,
+      }))
+      .sort((a, b) => b.productivity - a.productivity)
+      .slice(0, 5);
 
-    // ── Top 5 performers by productivity score in date range ──
-    const employeesWithActivity = await db.employee.findMany({
-      where: { status: 'active', ...orgFilter },
-      include: { department: true },
-    });
-
-    const topPerformers = await Promise.all(
-      employeesWithActivity.map(async (emp) => {
-        const empTotalResult = await db.activity.aggregate({
-          where: {
-            employeeId: emp.id,
-            timestamp: { gte: startDate, lte: endDate },
-            ...NON_INTERNAL_AGENT_ACTIVITY_FILTER,
-          },
-          _sum: { duration: true },
-        });
-        const empProductiveResult = await db.activity.aggregate({
-          where: {
-            employeeId: emp.id,
-            category: 'productive',
-            timestamp: { gte: startDate, lte: endDate },
-            ...NON_INTERNAL_AGENT_ACTIVITY_FILTER,
-          },
-          _sum: { duration: true },
-        });
-        const empTotal = empTotalResult._sum.duration || 0;
-        const empProductive = empProductiveResult._sum.duration || 0;
-        return {
-          name: `${emp.firstName} ${emp.lastName}`,
-          department: emp.department?.name || 'N/A',
-          hours: parseFloat((empTotal / 3600).toFixed(1)),
-          productivity:
-            empTotal > 0
-              ? Math.round((empProductive / empTotal) * 100)
-              : 0,
-        };
-      }),
-    );
-
-    topPerformers.sort((a, b) => b.productivity - a.productivity);
-    const top5Performers = topPerformers.slice(0, 5);
+    const top5Performers = topPerformers;
 
     // ── Device status summary ──
     const devices = await db.device.findMany({

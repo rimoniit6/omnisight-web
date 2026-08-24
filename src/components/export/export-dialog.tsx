@@ -43,11 +43,11 @@ interface ExportDialogProps {
   filters?: Record<string, string>;
 }
 
-type ExportFormat = 'csv' | 'excel';
+type ExportFormat = 'csv' | 'xlsx';
 
 const FORMAT_CONFIG: Record<ExportFormat, { label: string; icon: typeof FileText; ext: string; mime: string }> = {
   csv: { label: 'CSV', icon: FileText, ext: 'csv', mime: 'text/csv;charset=utf-8;' },
-  excel: { label: 'Excel', icon: FileSpreadsheet, ext: 'xlsx', mime: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' },
+  xlsx: { label: 'Excel', icon: FileSpreadsheet, ext: 'xlsx', mime: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' },
 };
 
 const EXPORT_TYPE_LABELS: Record<ExportDialogProps['exportType'], string> = {

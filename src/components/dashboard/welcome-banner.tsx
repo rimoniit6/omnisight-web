@@ -46,12 +46,21 @@ export function WelcomeBanner() {
     return () => clearInterval(timer);
   }, []);
 
-  const { data } = useQuery({
+  const { data } = useQuery<{
+    totalEmployees: number;
+    onlineDevices: number;
+  } | null>({
     queryKey: ['dashboard-welcome'],
     queryFn: async () => {
       const res = await fetch('/api/dashboard');
+      
+      // Handle HTTP errors
+      if (!res.ok) {
+        return null;
+      }
+      
       const json = await res.json();
-      return json.data;
+      return json.data ?? null;
     },
     staleTime: 60000,
   });

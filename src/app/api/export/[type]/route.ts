@@ -118,10 +118,15 @@ async function fetchEmployees(
   search: string,
   department: string,
   status: string,
-  from: string,
-  to: string,
+  _from: string,
+  _to: string,
   orgId: string | null
 ): Promise<Record<string, unknown>[]> {
+  // NOTE: Employee exports are NOT filtered by join-date range. Date ranges
+  // are meaningful for activity/time-entry exports but not for employee
+  // records — the ExportDialog always sends a default 30-day window, which
+  // would silently return zero results for employees who joined outside
+  // that window.  We keep the parameter signature for API compatibility.
   const orgFilter = orgId ? { organizationId: orgId } : {};
   const employees = await db.employee.findMany({
     where: { status: { not: 'archived' }, ...orgFilter },
@@ -152,20 +157,6 @@ async function fetchEmployees(
 
   if (status) {
     filtered = filtered.filter((e) => e.status === status);
-  }
-
-  if (from) {
-    const fromDate = new Date(from);
-    filtered = filtered.filter(
-      (e) => e.joinDate && e.joinDate >= fromDate
-    );
-  }
-
-  if (to) {
-    const toDate = new Date(to);
-    filtered = filtered.filter(
-      (e) => e.joinDate && e.joinDate <= toDate
-    );
   }
 
   return filtered.map((e) => ({
@@ -516,12 +507,10 @@ export async function GET(
         break;
     }
 
-    if (data.length === 0) {
-      return NextResponse.json(
-        { error: 'No data found matching the given filters.' },
-        { status: 404 }
-      );
-    }
+    // When no rows match, return an empty file with headers instead of a
+    // 404 — the ExportDialog treats non-200 as an error, which confuses
+    // users who legitimately export with filters that yield zero results.
+    // generateCSV() already handles an empty array by returning just the header row.
 
     // 7. Generate export
     const filename = `omnisight-${type}-export`;
