@@ -1,0 +1,694 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OmniSight - Swimlane Diagrams</title>
+    <script src="https://cdn.jsdelivr.net/npm/mermaid/dist/mermaid.min.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            min-height: 100vh;
+            padding: 40px 20px;
+        }
+        
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+        
+        header {
+            text-align: center;
+            color: white;
+            margin-bottom: 40px;
+        }
+        
+        header h1 {
+            font-size: 2.5rem;
+            margin-bottom: 10px;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
+        }
+        
+        header p {
+            font-size: 1.2rem;
+            opacity: 0.9;
+        }
+        
+        .actor-legend {
+            display: flex;
+            justify-content: center;
+            gap: 30px;
+            margin-bottom: 40px;
+            flex-wrap: wrap;
+        }
+        
+        .actor-badge {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            background: rgba(255,255,255,0.1);
+            padding: 12px 20px;
+            border-radius: 30px;
+            color: white;
+            font-weight: 500;
+        }
+        
+        .actor-dot {
+            width: 16px;
+            height: 16px;
+            border-radius: 50%;
+        }
+        
+        .actor-dot.admin { background: #2196F3; }
+        .actor-dot.employee { background: #4CAF50; }
+        .actor-dot.system { background: #FF9800; }
+        .actor-dot.management { background: #9C27B0; }
+        .actor-dot.security { background: #f44336; }
+        
+        .workflow-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(700px, 1fr));
+            gap: 30px;
+            margin-bottom: 40px;
+        }
+        
+        .swimlane-card {
+            background: white;
+            border-radius: 16px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.3);
+            overflow: hidden;
+        }
+        
+        .card-header {
+            padding: 20px 25px;
+            color: white;
+        }
+        
+        .card-header.blue { background: linear-gradient(135deg, #2196F3 0%, #1976D2 100%); }
+        .card-header.green { background: linear-gradient(135deg, #4CAF50 0%, #388E3C 100%); }
+        .card-header.orange { background: linear-gradient(135deg, #FF9800 0%, #F57C00 100%); }
+        .card-header.purple { background: linear-gradient(135deg, #9C27B0 0%, #7B1FA2 100%); }
+        .card-header.red { background: linear-gradient(135deg, #f44336 0%, #D32F2F 100%); }
+        
+        .card-header h2 {
+            font-size: 1.3rem;
+            margin-bottom: 5px;
+        }
+        
+        .card-header p {
+            opacity: 0.9;
+            font-size: 0.95rem;
+        }
+        
+        .card-content {
+            padding: 25px;
+        }
+        
+        .mermaid {
+            display: flex;
+            justify-content: center;
+            padding: 20px 0;
+        }
+        
+        .raci-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 20px;
+        }
+        
+        .raci-table th,
+        .raci-table td {
+            padding: 12px 15px;
+            text-align: center;
+            border: 1px solid #e0e0e0;
+        }
+        
+        .raci-table th {
+            background: #f5f5f5;
+            font-weight: 600;
+            color: #333;
+        }
+        
+        .raci-table td:first-child {
+            text-align: left;
+            font-weight: 500;
+        }
+        
+        .raci-r { background: #e3f2fd; color: #1976D2; }
+        .raci-a { background: #fce4ec; color: #c62828; }
+        .raci-c { background: #fff3e0; color: #e65100; }
+        .raci-i { background: #f3e5f5; color: #7b1fa2; }
+        
+        .responsibility-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 20px;
+            margin-top: 20px;
+        }
+        
+        .responsibility-card {
+            background: #f8f9fa;
+            border-radius: 12px;
+            padding: 20px;
+            border-left: 4px solid;
+        }
+        
+        .responsibility-card.admin { border-color: #2196F3; }
+        .responsibility-card.employee { border-color: #4CAF50; }
+        .responsibility-card.system { border-color: #FF9800; }
+        
+        .responsibility-card h4 {
+            margin-bottom: 12px;
+            color: #333;
+        }
+        
+        .responsibility-card ul {
+            list-style: none;
+            padding: 0;
+        }
+        
+        .responsibility-card li {
+            padding: 6px 0;
+            color: #666;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        
+        .responsibility-card li::before {
+            content: "•";
+            color: inherit;
+            font-weight: bold;
+        }
+        
+        footer {
+            text-align: center;
+            color: white;
+            margin-top: 40px;
+            padding: 20px;
+            opacity: 0.8;
+        }
+        
+        @media (max-width: 768px) {
+            .workflow-grid {
+                grid-template-columns: 1fr;
+            }
+            
+            header h1 {
+                font-size: 1.8rem;
+            }
+            
+            .actor-legend {
+                flex-direction: column;
+                align-items: center;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🔄 OmniSight Swimlane Diagrams</h1>
+            <p>Actor Responsibilities in Workflows</p>
+        </header>
+        
+        <div class="actor-legend">
+            <div class="actor-badge">
+                <div class="actor-dot admin"></div>
+                <span>Administrator</span>
+            </div>
+            <div class="actor-badge">
+                <div class="actor-dot employee"></div>
+                <span>Employee</span>
+            </div>
+            <div class="actor-badge">
+                <div class="actor-dot system"></div>
+                <span>System</span>
+            </div>
+            <div class="actor-badge">
+                <div class="actor-dot management"></div>
+                <span>Management</span>
+            </div>
+            <div class="actor-badge">
+                <div class="actor-dot security"></div>
+                <span>Security</span>
+            </div>
+        </div>
+        
+        <div class="workflow-grid">
+            <!-- Scenario 1: Onboarding -->
+            <div class="swimlane-card">
+                <div class="card-header blue">
+                    <h2>👤 Scenario 1: New Employee Onboarding</h2>
+                    <p>Who does what when onboarding a new employee</p>
+                </div>
+                <div class="card-content">
+                    <div class="mermaid">
+flowchart TB
+    subgraph Admin["👤 Administrator"]
+        A1[Add Employee]
+        A2[Create Agent Account]
+        A3[Provide Installer]
+        A4[Approve Device]
+        A5[Grant Consent]
+    end
+    
+    subgraph Employee["👥 Employee"]
+        E1[Install Agent]
+        E2[Enter Credentials]
+    end
+    
+    subgraph System["⚙️ System"]
+        S1[Create Record]
+        S2[Create Claim]
+        S3[Link Device]
+        S4[Start Monitoring]
+    end
+    
+    A1 --> S1
+    S1 --> A2
+    A2 --> A3
+    A3 --> E1
+    E1 --> E2
+    E2 --> S2
+    S2 --> A4
+    A4 --> S3
+    S3 --> A5
+    A5 --> S4
+                    </div>
+                    
+                    <table class="raci-table">
+                        <thead>
+                            <tr>
+                                <th>Activity</th>
+                                <th>Admin</th>
+                                <th>Employee</th>
+                                <th>System</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr>
+                                <td>Add employee record</td>
+                                <td class="raci-r">R</td>
+                                <td class="raci-i">I</td>
+                                <td class="raci-c">C</td>
+                            </tr>
+                            <tr>
+                                <td>Create agent account</td>
+                                <td class="raci-r">R</td>
+                                <td class="raci-i">I</td>
+                                <td class="raci-c">C</td>
+                            </tr>
+                            <tr>
+                                <td>Install agent</td>
+                                <td class="raci-c">C</td>
+                                <td class="raci-r">R</td>
+                                <td class="raci-c">C</td>
+                            </tr>
+                            <tr>
+                                <td>Approve device</td>
+                                <td class="raci-r">R</td>
+                                <td class="raci-i">I</td>
+                                <td class="raci-c">C</td>
+                            </tr>
+                            <tr>
+                                <td>Grant consent</td>
+                                <td class="raci-c">C</td>
+                                <td class="raci-r">R</td>
+                                <td class="raci-c">C</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+            
+            <!-- Scenario 2: Device Enrollment -->
+            <div class="swimlane-card">
+                <div class="card-header green">
+                    <h2>🖥️ Scenario 2: Device Enrollment</h2>
+                    <p>Who does what when enrolling a new device</p>
+                </div>
+                <div class="card-content">
+                    <div class="mermaid">
+flowchart TB
+    subgraph IT["🔧 IT Department"]
+        I1[Prepare Device]
+        I2[Install Agent]
+        I3[Deliver to Employee]
+    end
+    
+    subgraph Admin["👤 Administrator"]
+        A1[Review Claim]
+        A2[Approve Device]
+        A3[Assign to Employee]
+    end
+    
+    subgraph System["⚙️ System"]
+        S1[Agent Starts]
+        S2[Create Claim]
+        S3[Notify Admin]
+        S4[Link Device]
+        S5[Start Monitoring]
+    end
+    
+    I1 --> I2 --> I3
+    I3 --> S1
+    S1 --> S2
+    S2 --> S3
+    S3 --> A1
+    A1 --> A2
+    A2 --> S4
+    S4 --> A3
+    A3 --> S5
+                    </div>
+                    
+                    <div class="responsibility-grid">
+                        <div class="responsibility-card admin">
+                            <h4>👤 Administrator</h4>
+                            <ul>
+                                <li>Review device claims</li>
+                                <li>Approve/reject devices</li>
+                                <li>Assign devices to employees</li>
+                            </ul>
+                        </div>
+                        <div class="responsibility-card system">
+                            <h4>⚙️ System</h4>
+                            <ul>
+                                <li>Detect new devices</li>
+                                <li>Create device claims</li>
+                                <li>Notify administrators</li>
+                                <li>Link approved devices</li>
+                            </ul>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Scenario 3: Security Response -->
+            <div class="swimlane-card">
+                <div class="card-header red">
+                    <h2>🚨 Scenario 6: Security Alert Response</h2>
+                    <p>Who does what during security incidents</p>
+                </div>
+                <div class="card-content">
+                    <div class="mermaid">
+flowchart TB
+    subgraph Security["🔒 Security Team"]
+        S1[Detect Alert]
+        S2[Assess Severity]
+        S3[Investigate]
+        S4[Document]
+    end
+    
+    subgraph Admin["👤 Administrator"]
+        A1[Oversee]
+        A2[Contact Employee]
+        A3[Make Decision]
+    end
+    
+    subgraph Employee["👥 Employee"]
+        E1[Provide Info]
+        E2[Take Action]
+    end
+    
+    subgraph System["⚙️ System"]
+        SY1[Generate Alert]
+        SY2[Log Event]
+        SY3[Update Status]
+    end
+    
+    SY1 --> S1
+    S1 --> S2 --> S3
+    S3 --> A1
+    A1 --> A2
+    A2 --> E1
+    E1 --> E2
+    E2 --> A3
+    A3 --> S4
+    S4 --> SY2
+    SY2 --> SY3
+                    </div>
+                    
+                    <table class="raci-table">
+                        <thead>
+                            <tr>
+                                <th>Activity</th>
+                                <th>Security</th>
+                                <th>Admin</th>
+                                <th>Employee</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr>
+                                <td>Detect alert</td>
+                                <td class="raci-r">R</td>
+                                <td class="raci-i">I</td>
+                                <td class="raci-i">I</td>
+                            </tr>
+                            <tr>
+                                <td>Investigate</td>
+                                <td class="raci-r">R</td>
+                                <td class="raci-a">A</td>
+                                <td class="raci-c">C</td>
+                            </tr>
+                            <tr>
+                                <td>Take corrective action</td>
+                                <td class="raci-c">C</td>
+                                <td class="raci-a">A</td>
+                                <td class="raci-r">R</td>
+                            </tr>
+                            <tr>
+                                <td>Document resolution</td>
+                                <td class="raci-r">R</td>
+                                <td class="raci-a">A</td>
+                                <td class="raci-i">I</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+            
+            <!-- Scenario 4: Consent Management -->
+            <div class="swimlane-card">
+                <div class="card-header purple">
+                    <h2>🔒 Scenario 7: Consent Management</h2>
+                    <p>Who does what for consent workflows</p>
+                </div>
+                <div class="card-content">
+                    <div class="mermaid">
+flowchart TB
+    subgraph Admin["👤 Administrator"]
+        A1[Create Policy]
+        A2[Publish Policy]
+        A3[Request Consent]
+        A4[Track Status]
+        A5[Grant/Deny]
+    end
+    
+    subgraph Employee["👥 Employee"]
+        E1[Review Policy]
+        E2[Make Decision]
+        E3[Grant/Deny]
+    end
+    
+    subgraph System["⚙️ System"]
+        S1[Store Policy]
+        S2[Send Request]
+        S3[Track Status]
+        S4[Update Monitoring]
+    end
+    
+    A1 --> S1
+    S1 --> A2
+    A2 --> A3
+    A3 --> S2
+    S2 --> E1
+    E1 --> E2
+    E2 --> E3
+    E3 --> A4
+    A4 --> A5
+    A5 --> S4
+                    </div>
+                    
+                    <div class="responsibility-grid">
+                        <div class="responsibility-card admin">
+                            <h4>👤 Administrator</h4>
+                            <ul>
+                                <li>Create consent policies</li>
+                                <li>Publish policies</li>
+                                <li>Request employee consent</li>
+                                <li>Track consent status</li>
+                            </ul>
+                        </div>
+                        <div class="responsibility-card employee">
+                            <h4>👥 Employee</h4>
+                            <ul>
+                                <li>Review policy content</li>
+                                <li>Make consent decision</li>
+                                <li>Grant or deny consent</li>
+                            </ul>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- RACI Matrix -->
+        <div class="swimlane-card" style="margin-bottom: 40px;">
+            <div class="card-header blue">
+                <h2>📊 RACI Matrix — Complete Responsibility Overview</h2>
+                <p>R = Responsible, A = Accountable, C = Consulted, I = Informed</p>
+            </div>
+            <div class="card-content">
+                <table class="raci-table">
+                    <thead>
+                        <tr>
+                            <th>Activity</th>
+                            <th>Administrator</th>
+                            <th>Employee</th>
+                            <th>System</th>
+                            <th>Management</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td>Add Employee</td>
+                            <td class="raci-r">R</td>
+                            <td class="raci-i">I</td>
+                            <td class="raci-c">C</td>
+                            <td class="raci-i">I</td>
+                        </tr>
+                        <tr>
+                            <td>Install Agent</td>
+                            <td class="raci-c">C</td>
+                            <td class="raci-r">R</td>
+                            <td class="raci-c">C</td>
+                            <td class="raci-i">I</td>
+                        </tr>
+                        <tr>
+                            <td>Approve Device</td>
+                            <td class="raci-r">R</td>
+                            <td class="raci-i">I</td>
+                            <td class="raci-c">C</td>
+                            <td class="raci-i">I</td>
+                        </tr>
+                        <tr>
+                            <td>Grant Consent</td>
+                            <td class="raci-c">C</td>
+                            <td class="raci-r">R</td>
+                            <td class="raci-c">C</td>
+                            <td class="raci-i">I</td>
+                        </tr>
+                        <tr>
+                            <td>Monitor Activity</td>
+                            <td class="raci-r">R</td>
+                            <td class="raci-i">I</td>
+                            <td class="raci-r">R</td>
+                            <td class="raci-i">I</td>
+                        </tr>
+                        <tr>
+                            <td>Investigate Alert</td>
+                            <td class="raci-r">R</td>
+                            <td class="raci-c">C</td>
+                            <td class="raci-c">C</td>
+                            <td class="raci-i">I</td>
+                        </tr>
+                        <tr>
+                            <td>Generate Report</td>
+                            <td class="raci-r">R</td>
+                            <td class="raci-i">I</td>
+                            <td class="raci-r">R</td>
+                            <td class="raci-i">I</td>
+                        </tr>
+                        <tr>
+                            <td>Make Decisions</td>
+                            <td class="raci-c">C</td>
+                            <td class="raci-i">I</td>
+                            <td class="raci-i">I</td>
+                            <td class="raci-r">R</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+        
+        <!-- Actor Responsibilities -->
+        <div class="swimlane-card">
+            <div class="card-header green">
+                <h2>👥 Actor Responsibilities Summary</h2>
+                <p>What each actor is responsible for</p>
+            </div>
+            <div class="card-content">
+                <div class="responsibility-grid">
+                    <div class="responsibility-card admin">
+                        <h4>👤 Administrator</h4>
+                        <ul>
+                            <li>Add, edit, archive employees</li>
+                            <li>Approve and assign devices</li>
+                            <li>Create consent policies</li>
+                            <li>Respond to security alerts</li>
+                            <li>Generate and distribute reports</li>
+                            <li>Configure system settings</li>
+                        </ul>
+                    </div>
+                    <div class="responsibility-card employee">
+                        <h4>👥 Employee</h4>
+                        <ul>
+                            <li>Install and maintain agent</li>
+                            <li>Grant or deny consent</li>
+                            <li>Follow company policies</li>
+                            <li>Report issues to admin</li>
+                            <li>Provide information when asked</li>
+                        </ul>
+                    </div>
+                    <div class="responsibility-card system">
+                        <h4>⚙️ System</h4>
+                        <ul>
+                            <li>Collect and store telemetry</li>
+                            <li>Detect anomalies and alerts</li>
+                            <li>Send notifications</li>
+                            <li>Enforce access controls</li>
+                            <li>Run automated jobs</li>
+                            <li>Maintain audit logs</li>
+                        </ul>
+                    </div>
+                    <div class="responsibility-card" style="border-color: #9C27B0;">
+                        <h4>👔 Management</h4>
+                        <ul>
+                            <li>Review reports and analytics</li>
+                            <li>Make strategic decisions</li>
+                            <li>Approve major changes</li>
+                            <li>Set company policies</li>
+                            <li>Allocate resources</li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <footer>
+            <p>OmniSight Swimlane Diagrams | Version 1.0 | August 2026</p>
+            <p>Actor Responsibilities in Workflows</p>
+        </footer>
+    </div>
+    
+    <script>
+        mermaid.initialize({ 
+            startOnLoad: true,
+            theme: 'default',
+            flowchart: {
+                useMaxWidth: true,
+                htmlLabels: true,
+                curve: 'basis'
+            }
+        });
+    </script>
+</body>
+</html>

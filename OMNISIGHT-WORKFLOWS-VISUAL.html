@@ -1,0 +1,554 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OmniSight - Visual Workflow Diagrams</title>
+    <script src="https://cdn.jsdelivr.net/npm/mermaid/dist/mermaid.min.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 40px 20px;
+        }
+        
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+        
+        header {
+            text-align: center;
+            color: white;
+            margin-bottom: 40px;
+        }
+        
+        header h1 {
+            font-size: 2.5rem;
+            margin-bottom: 10px;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.2);
+        }
+        
+        header p {
+            font-size: 1.2rem;
+            opacity: 0.9;
+        }
+        
+        .workflow-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(600px, 1fr));
+            gap: 30px;
+            margin-bottom: 40px;
+        }
+        
+        .workflow-card {
+            background: white;
+            border-radius: 16px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.2);
+            overflow: hidden;
+            transition: transform 0.3s ease;
+        }
+        
+        .workflow-card:hover {
+            transform: translateY(-5px);
+        }
+        
+        .card-header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 20px 25px;
+        }
+        
+        .card-header h2 {
+            font-size: 1.4rem;
+            margin-bottom: 5px;
+        }
+        
+        .card-header p {
+            opacity: 0.9;
+            font-size: 0.95rem;
+        }
+        
+        .card-content {
+            padding: 25px;
+        }
+        
+        .mermaid {
+            display: flex;
+            justify-content: center;
+            padding: 20px 0;
+        }
+        
+        .steps-list {
+            margin-top: 20px;
+            padding: 0;
+            list-style: none;
+        }
+        
+        .steps-list li {
+            padding: 12px 15px;
+            margin: 8px 0;
+            background: #f8f9fa;
+            border-radius: 8px;
+            border-left: 4px solid #667eea;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+        
+        .steps-list li .step-num {
+            background: #667eea;
+            color: white;
+            width: 28px;
+            height: 28px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: bold;
+            font-size: 0.9rem;
+        }
+        
+        .quick-ref {
+            background: white;
+            border-radius: 16px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.2);
+            padding: 30px;
+            margin-top: 40px;
+        }
+        
+        .quick-ref h2 {
+            color: #333;
+            margin-bottom: 25px;
+            text-align: center;
+            font-size: 1.8rem;
+        }
+        
+        .checklist-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
+            gap: 25px;
+        }
+        
+        .checklist-card {
+            background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
+            border-radius: 12px;
+            padding: 20px;
+        }
+        
+        .checklist-card h3 {
+            color: #333;
+            margin-bottom: 15px;
+            font-size: 1.2rem;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        
+        .checklist-card ul {
+            list-style: none;
+            padding: 0;
+        }
+        
+        .checklist-card li {
+            padding: 8px 0;
+            border-bottom: 1px solid rgba(0,0,0,0.1);
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        
+        .checklist-card li:last-child {
+            border-bottom: none;
+        }
+        
+        .checklist-card li::before {
+            content: "☐";
+            color: #667eea;
+            font-size: 1.2rem;
+        }
+        
+        .nav-flow {
+            background: white;
+            border-radius: 16px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.2);
+            padding: 30px;
+            margin-top: 40px;
+        }
+        
+        .nav-flow h2 {
+            color: #333;
+            margin-bottom: 25px;
+            text-align: center;
+            font-size: 1.8rem;
+        }
+        
+        footer {
+            text-align: center;
+            color: white;
+            margin-top: 40px;
+            padding: 20px;
+            opacity: 0.8;
+        }
+        
+        @media (max-width: 768px) {
+            .workflow-grid {
+                grid-template-columns: 1fr;
+            }
+            
+            header h1 {
+                font-size: 1.8rem;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🔄 OmniSight Visual Workflows</h1>
+            <p>Common Operational Scenarios for Administrators</p>
+        </header>
+        
+        <div class="workflow-grid">
+            <!-- Scenario 1: New Employee Onboarding -->
+            <div class="workflow-card">
+                <div class="card-header">
+                    <h2>👤 Scenario 1: New Employee Onboarding</h2>
+                    <p>Complete process for adding a new employee to the system</p>
+                </div>
+                <div class="card-content">
+                    <div class="mermaid">
+flowchart TD
+    A[👤 New Employee] --> B[📋 Add Employee]
+    B --> C[🔑 Create Agent Account]
+    C --> D[📦 Provide Installer]
+    D --> E[💻 Employee Installs]
+    E --> F[⏳ Pending Approval]
+    F --> G{Admin Decision}
+    G -->|Approve| H[✅ Device Active]
+    G -->|Reject| I[❌ Investigate]
+    H --> J[🔒 Grant Consent]
+    J --> K[✅ Complete]
+    I --> L[🔍 Troubleshoot]
+                    </div>
+                    <ul class="steps-list">
+                        <li><span class="step-num">1</span> Add employee in Employees page</li>
+                        <li><span class="step-num">2</span> Create agent account with credentials</li>
+                        <li><span class="step-num">3</span> Provide agent installer to employee</li>
+                        <li><span class="step-num">4</span> Approve device in Agent Approvals</li>
+                        <li><span class="step-num">5</span> Grant necessary consent types</li>
+                    </ul>
+                </div>
+            </div>
+            
+            <!-- Scenario 2: Device Enrollment -->
+            <div class="workflow-card">
+                <div class="card-header">
+                    <h2>🖥️ Scenario 2: New Device Enrollment</h2>
+                    <p>How to enroll a new company-owned device</p>
+                </div>
+                <div class="card-content">
+                    <div class="mermaid">
+flowchart TD
+    A[🖥️ New Device] --> B[📦 Install Agent]
+    B --> C[🌐 Contact Server]
+    C --> D[📋 Create Claim]
+    D --> E[👀 Admin Reviews]
+    E --> F{Legitimate?}
+    F -->|Yes| G[✅ Approve]
+    F -->|No| H[❌ Reject]
+    G --> I[👤 Assign Employee]
+    I --> J[🔗 Link Device]
+    J --> K[📊 Go Online]
+    K --> L[💓 Heartbeat]
+    L --> M[✅ Enrolled]
+    H --> N[📝 Record Reason]
+                    </div>
+                    <ul class="steps-list">
+                        <li><span class="step-num">1</span> Install agent on new device</li>
+                        <li><span class="step-num">2</span> Agent auto-registers with server</li>
+                        <li><span class="step-num">3</span> Admin reviews in Agent Approvals</li>
+                        <li><span class="step-num">4</span> Approve and assign to employee</li>
+                        <li><span class="step-num">5</span> Verify device comes online</li>
+                    </ul>
+                </div>
+            </div>
+            
+            <!-- Scenario 3: Offline Investigation -->
+            <div class="workflow-card">
+                <div class="card-header">
+                    <h2>⚠️ Scenario 3: Device Offline Investigation</h2>
+                    <p>Troubleshooting offline devices</p>
+                </div>
+                <div class="card-content">
+                    <div class="mermaid">
+flowchart TD
+    A[⚠️ Device Offline] --> B[📊 Check Dashboard]
+    B --> C[🖥️ Open Device Details]
+    C --> D[💓 Check Last Heartbeat]
+    D --> E{When?}
+    E -->|Recent| F[🌐 Network Issue]
+    E -->|Older| G[💻 Agent Issue]
+    E -->|Very Old| H[🔒 Device Off]
+    F --> I[📞 Contact Employee]
+    G --> J[🔍 Check Agent Service]
+    H --> K[🔐 Check Status]
+    I --> L[🔧 Guide Fix]
+    J --> M{Agent Running?}
+    M -->|Yes| N[🔄 Restart]
+    M -->|No| O[📦 Reinstall]
+    L --> P[✅ Back Online]
+    N --> P
+    O --> P
+                    </div>
+                    <ul class="steps-list">
+                        <li><span class="step-num">1</span> Check device status and last heartbeat</li>
+                        <li><span class="step-num">2</span> Determine likely cause</li>
+                        <li><span class="step-num">3</span> Contact employee if needed</li>
+                        <li><span class="step-num">4</span> Guide through resolution</li>
+                        <li><span class="step-num">5</span> Verify device returns online</li>
+                    </ul>
+                </div>
+            </div>
+            
+            <!-- Scenario 4: Activity Review -->
+            <div class="workflow-card">
+                <div class="card-header">
+                    <h2>📊 Scenario 4: Employee Activity Review</h2>
+                    <p>How to review and assess employee productivity</p>
+                </div>
+                <div class="card-content">
+                    <div class="mermaid">
+flowchart TD
+    A[📊 Review Needed] --> B[👥 Open Employees]
+    B --> C[🔍 Find Employee]
+    C --> D[👤 Open Detail]
+    D --> E[📊 Check Score]
+    E --> F{Acceptable?}
+    F -->|Yes| G[✅ Good]
+    F -->|No| H[⚠️ Investigate]
+    G --> I[🎉 Recognize]
+    H --> J[📈 Check Activity]
+    J --> K[💻 Review Apps]
+    K --> L{Issues?}
+    L -->|No| M[✅ OK]
+    L -->|Yes| N[📝 Document]
+    N --> O[🗣️ Discuss]
+    O --> P[📋 Plan]
+    I --> Q[✅ Complete]
+    M --> Q
+                    </div>
+                    <ul class="steps-list">
+                        <li><span class="step-num">1</span> Open employee detail page</li>
+                        <li><span class="step-num">2</span> Review productivity score</li>
+                        <li><span class="step-num">3</span> Check activity timeline</li>
+                        <li><span class="step-num">4</span> Review application usage</li>
+                        <li><span class="step-num">5</span> Document and discuss if needed</li>
+                    </ul>
+                </div>
+            </div>
+            
+            <!-- Scenario 5: Management Review -->
+            <div class="workflow-card">
+                <div class="card-header">
+                    <h2>📈 Scenario 5: Management Review</h2>
+                    <p>Preparing for management meetings</p>
+                </div>
+                <div class="card-content">
+                    <div class="mermaid">
+flowchart TD
+    A[📅 Meeting Scheduled] --> B[📊 Dashboard Review]
+    B --> C[📈 Analytics]
+    C --> D[👥 Employee Status]
+    D --> E[💻 Device Fleet]
+    E --> F{Issues?}
+    F -->|Yes| G[🔍 Investigate]
+    F -->|No| H[📊 Continue]
+    G --> I[📝 Document]
+    I --> H
+    H --> J[📄 Generate Reports]
+    J --> K[🎯 Action Items]
+    K --> L[📋 Prepare]
+    L --> M[✅ Ready]
+                    </div>
+                    <ul class="steps-list">
+                        <li><span class="step-num">1</span> Review dashboard metrics</li>
+                        <li><span class="step-num">2</span> Analyze productivity trends</li>
+                        <li><span class="step-num">3</span> Generate relevant reports</li>
+                        <li><span class="step-num">4</span> Identify action items</li>
+                        <li><span class="step-num">5</span> Prepare presentation materials</li>
+                    </ul>
+                </div>
+            </div>
+            
+            <!-- Scenario 6: Security Alert -->
+            <div class="workflow-card">
+                <div class="card-header">
+                    <h2>🚨 Scenario 6: Security Alert Response</h2>
+                    <p>Responding to security-related alerts</p>
+                </div>
+                <div class="card-content">
+                    <div class="mermaid">
+flowchart TD
+    A[🚨 Alert Received] --> B[🔔 Check Details]
+    B --> C{Severity}
+    C -->|Critical| D[🚨 Immediate]
+    C -->|High| E[⏰ Urgent]
+    C -->|Medium| F[📋 Review]
+    D --> G[🔒 Contain]
+    E --> G
+    F --> G
+    G --> H[🔍 Investigate]
+    H --> I{Issue Type}
+    I -->|Policy| J[📋 Review Policy]
+    I -->|Anomaly| K[📊 Analyze]
+    I -->|Security| L[🔐 Check Logs]
+    J --> M[👤 Contact Employee]
+    K --> M
+    L --> M
+    M --> N{Response?}
+    N -->|Yes| O[📝 Resolve]
+    N -->|No| P[📧 Escalate]
+    O --> Q[✅ Closed]
+                    </div>
+                    <ul class="steps-list">
+                        <li><span class="step-num">1</span> Acknowledge alert immediately</li>
+                        <li><span class="step-num">2</span> Assess severity and type</li>
+                        <li><span class="step-num">3</span> Contain if critical</li>
+                        <li><span class="step-num">4</span> Investigate root cause</li>
+                        <li><span class="step-num">5</span> Document and resolve</li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Quick Reference Checklists -->
+        <div class="quick-ref">
+            <h2>📋 Quick Reference Checklists</h2>
+            <div class="checklist-grid">
+                <div class="checklist-card">
+                    <h3>☀️ Daily Tasks</h3>
+                    <ul>
+                        <li>Check Dashboard for alerts</li>
+                        <li>Review offline devices</li>
+                        <li>Check Agent Approvals queue</li>
+                        <li>Review critical notifications</li>
+                        <li>Monitor live activity if needed</li>
+                    </ul>
+                </div>
+                
+                <div class="checklist-card">
+                    <h3>📊 Weekly Tasks</h3>
+                    <ul>
+                        <li>Review Analytics trends</li>
+                        <li>Generate weekly productivity report</li>
+                        <li>Check consent compliance</li>
+                        <li>Review audit logs</li>
+                        <li>Update device assignments</li>
+                        <li>Address any anomalies</li>
+                    </ul>
+                </div>
+                
+                <div class="checklist-card">
+                    <h3>📈 Monthly Tasks</h3>
+                    <ul>
+                        <li>Review data retention settings</li>
+                        <li>Analyze department performance</li>
+                        <li>Update application policies</li>
+                        <li>Review and resolve anomalies</li>
+                        <li>Generate monthly summary report</li>
+                        <li>Conduct management review</li>
+                        <li>Update consent policies if needed</li>
+                    </ul>
+                </div>
+                
+                <div class="checklist-card">
+                    <h3>🔒 Security Checklist</h3>
+                    <ul>
+                        <li>Review security alerts daily</li>
+                        <li>Check anomaly detection results</li>
+                        <li>Verify policy compliance</li>
+                        <li>Review audit logs weekly</li>
+                        <li>Update security policies monthly</li>
+                        <li>Conduct security review quarterly</li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Navigation Flow -->
+        <div class="nav-flow">
+            <h2>🧭 Navigation Flow</h2>
+            <div class="mermaid">
+flowchart LR
+    subgraph Login["🔐 Authentication"]
+        A[Login Page]
+    end
+    
+    subgraph Main["📊 Main Interface"]
+        B[Dashboard]
+        C[Employees]
+        D[Devices]
+        E[Analytics]
+        F[Security]
+        G[Settings]
+    end
+    
+    subgraph Details["👤 Detail Views"]
+        H[Employee Detail]
+        I[Device Detail]
+        J[Project Detail]
+    end
+    
+    subgraph Tabs["📑 Tabs"]
+        K[Overview]
+        L[Activity]
+        M[Apps]
+        N[Location]
+        O[Keyboard]
+        P[Webcam]
+    end
+    
+    A --> B
+    B --> C
+    B --> D
+    B --> E
+    B --> F
+    B --> G
+    C --> H
+    D --> I
+    H --> K
+    H --> L
+    H --> M
+    H --> N
+    H --> O
+    H --> P
+            </div>
+        </div>
+        
+        <footer>
+            <p>OmniSight Visual Workflows | Version 1.0 | August 2026</p>
+            <p>For Organization Administrators</p>
+        </footer>
+    </div>
+    
+    <script>
+        mermaid.initialize({ 
+            startOnLoad: true,
+            theme: 'default',
+            flowchart: {
+                useMaxWidth: true,
+                htmlLabels: true,
+                curve: 'basis'
+            }
+        });
+    </script>
+</body>
+</html>

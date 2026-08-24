@@ -616,7 +616,7 @@ export function AnomaliesPage() {
   const hasFilters = typeFilter || severityFilter || statusFilter || search || employeeFilter || dateRange?.from || dateRange?.to || sortBy !== 'createdAt' || sortOrder !== 'desc';
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-4" role="region" aria-label="Anomaly Detection">
       {/* Header */}
       <Card className="falcon-card p-0">
         <CardContent className="p-4">

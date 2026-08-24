@@ -133,7 +133,7 @@ export function AuditPage() {
   const groupedLogs = useMemo(() => groupByDate(logs), [logs]);
 
   return (
-    <div className='space-y-4 rounded-lg p-1'>
+    <div className='space-y-4 rounded-lg p-1' role='region' aria-label='Audit Logs'>
       {/* Filters Row with Stats */}
       <div className='flex flex-col lg:flex-row gap-3 items-start lg:items-center justify-between'>
         <div className='flex flex-col sm:flex-row gap-3 flex-1 w-full sm:w-auto'>

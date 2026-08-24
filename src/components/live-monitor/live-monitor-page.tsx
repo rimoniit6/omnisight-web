@@ -643,7 +643,7 @@ export function LiveMonitorPage() {
   const allSelected = activeFilters.size === ALL_EVENT_TYPES.length;
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6" role="region" aria-label="Live Monitor">
       {/* ─── Header Bar ─── */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div className="flex items-center gap-3">

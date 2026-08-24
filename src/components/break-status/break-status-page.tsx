@@ -407,7 +407,7 @@ export function BreakStatusPage() {
   const employees = statusData?.data || [];
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6" role="region" aria-label="Break Monitor">
       {/* Page Header */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
         <div>

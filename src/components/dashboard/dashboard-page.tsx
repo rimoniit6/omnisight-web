@@ -99,7 +99,7 @@ export function DashboardPage() {
   ];
 
   return (
-    <div data-tour-target="dashboard-content" className="space-y-6 overflow-x-hidden">
+    <div data-tour-target="dashboard-content" className="space-y-6 overflow-x-hidden" role="region" aria-label="Dashboard">
       {/* Top bar: quick actions + customize */}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-3">

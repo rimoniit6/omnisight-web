@@ -338,7 +338,7 @@ export function GuestsPage() {
   );
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-4" role="region" aria-label="Guests">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div>
           <h1 className="text-xl font-semibold flex items-center gap-2">

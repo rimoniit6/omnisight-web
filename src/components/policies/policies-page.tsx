@@ -218,7 +218,7 @@ function AppListTab() {
   });
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-4" role="region" aria-label="Policies">
       {/* Stats */}
       <div className="grid grid-cols-2 gap-4">
         <Card className="falcon-card p-0">

@@ -405,7 +405,7 @@ export function ScreenshotsPage() {
     : 'Neutral';
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6" role="region" aria-label="Screenshots">
       {/* Page title */}
       <div>
         <h1 className="text-2xl font-bold tracking-tight">Screenshots</h1>

@@ -83,11 +83,18 @@ function AppLayout() {
 
   return (
     <div className='h-screen overflow-hidden flex flex-col'>
+      {/* Skip to main content link for keyboard users */}
+      <a
+        href="#main-content"
+        className="sr-only focus:not-sr-only focus:absolute focus:z-50 focus:top-2 focus:left-2 focus:bg-primary focus:text-primary-foreground focus:px-4 focus:py-2 focus:rounded-md focus:outline-none"
+      >
+        Skip to main content
+      </a>
       <div className='flex flex-1 min-h-0'>
         {!isMobile && <AppSidebar />}
         <div className='flex-1 flex flex-col min-w-0'>
           <AppHeader isMobile={isMobile} onMobileMenuToggle={() => setMobileOpen(true)} />
-          <main className='flex-1 p-4 md:p-6 overflow-y-auto min-h-0'>
+          <main id="main-content" role="main" aria-label="Main content" className='flex-1 p-4 md:p-6 overflow-y-auto min-h-0'>
             <AnimatePresence mode="wait">
               <motion.div
                 key={currentPage}
@@ -102,7 +109,7 @@ function AppLayout() {
           </main>
           <footer className='py-3 px-4 md:px-6 text-center text-xs text-muted-foreground'>
             <div className='flex flex-col items-center gap-1'>
-              <span>© 2025 OmniSight v1.0.0</span>
+              <span>© 2026 OmniSight v1.0.0</span>
               <div className='hidden md:flex items-center gap-2' suppressHydrationWarning>
                 <FooterLink page='dashboard'>Dashboard</FooterLink><span>·</span>
                 <FooterLink page='employees'>Employees</FooterLink><span>·</span>

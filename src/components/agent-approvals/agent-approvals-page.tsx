@@ -383,7 +383,7 @@ function ZeroTouchDevicesTab() {
   };
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-4" role="region" aria-label="Agent Approvals">
       <QuickStats stats={stats} />
 
       {/* Filters */}

@@ -377,7 +377,7 @@ export function NotificationsPage() {
   };
 
   return (
-    <div className='space-y-4'>
+    <div className='space-y-4' role='region' aria-label='Notifications'>
       {/* ===== Stat Cards ===== */}
       <div className='grid grid-cols-1 sm:grid-cols-3 gap-3'>
         <Card className='border-emerald-200 dark:border-emerald-800'>

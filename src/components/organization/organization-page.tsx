@@ -177,7 +177,7 @@ export function OrganizationPage() {
   }));
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6" role="region" aria-label="Organization">
       {/* Header Card with Gradient */}
       <Card className="border-0 shadow-lg overflow-hidden">
         <div className="relative bg-gradient-to-br from-primary to-primary/85 p-6">

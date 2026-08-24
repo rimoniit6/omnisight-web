@@ -55,7 +55,7 @@ export function LoginPage() {
     'border-border focus:border-primary focus:ring-2 focus:ring-primary/20 placeholder:text-muted-foreground/70';
 
   return (
-    <div className="relative min-h-screen flex items-center justify-center overflow-hidden bg-muted/40">
+    <div className="relative min-h-screen flex items-center justify-center overflow-hidden bg-muted/40" role="main" aria-label="Login">
       {/* Subtle neutral washes */}
       <div className="absolute -top-40 -right-40 w-96 h-96 rounded-full bg-primary/5 blur-[80px] pointer-events-none" />
       <div className="absolute -bottom-40 -left-40 w-96 h-96 rounded-full bg-primary/5 blur-[80px] pointer-events-none" />
@@ -103,6 +103,9 @@ export function LoginPage() {
                   autoComplete="email"
                   autoFocus
                   disabled={isLoading}
+                  aria-required="true"
+                  aria-invalid={!!error}
+                  aria-describedby={error ? 'login-error' : undefined}
                 />
               </div>
             </div>
@@ -123,6 +126,9 @@ export function LoginPage() {
                   className={cn(inputBase, 'pr-10')}
                   autoComplete="current-password"
                   disabled={isLoading}
+                  aria-required="true"
+                  aria-invalid={!!error}
+                  aria-describedby={error ? 'login-error' : undefined}
                 />
                 <button
                   type="button"
@@ -137,7 +143,7 @@ export function LoginPage() {
 
             {/* Error */}
             {error && (
-              <div role="alert" className="text-sm text-destructive bg-destructive/5 border border-destructive/20 rounded-lg px-3 py-2">
+              <div id="login-error" role="alert" aria-live="assertive" className="text-sm text-destructive bg-destructive/5 border border-destructive/20 rounded-lg px-3 py-2">
                 {error}
               </div>
             )}
@@ -159,7 +165,7 @@ export function LoginPage() {
         </div>
 
         <p className="text-center text-xs text-muted-foreground mt-6">
-          © 2025 OmniSight · Workforce Intelligence Platform
+          © 2026 OmniSight · Workforce Intelligence Platform
         </p>
       </div>
     </div>

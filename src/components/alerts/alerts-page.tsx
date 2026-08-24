@@ -278,7 +278,7 @@ export function AlertsPage() {
   };
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-4" role="region" aria-label="Alerts">
       {/* Quick Stats */}
       <QuickStats stats={alertStats} />
 

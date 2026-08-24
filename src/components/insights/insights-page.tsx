@@ -346,7 +346,7 @@ export function InsightsPage() {
   const rulesData: AnalysisInsight[] = analysisData?.data ?? [];
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6" role="region" aria-label="AI Insights">
       {/* Summary Stats */}
       <div className="grid grid-cols-3 gap-3">
         {[

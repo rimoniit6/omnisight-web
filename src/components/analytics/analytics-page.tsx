@@ -157,7 +157,7 @@ export function AnalyticsPage() {
   const workload = data?.summary?.workloadDistribution;
 
   return (
-    <div className='space-y-5'>
+    <div className='space-y-5' role='region' aria-label='Analytics'>
       {/* Page header + Date Controls */}
       <div className='flex flex-col md:flex-row items-start md:items-center justify-between gap-3'>
         <div className='min-w-0'>

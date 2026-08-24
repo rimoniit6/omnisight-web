@@ -347,7 +347,7 @@ export function ReportsPage() {
   ];
 
   return (
-    <div className='space-y-4'>
+    <div className='space-y-4' role='region' aria-label='Reports'>
       {/* Statistics Header */}
       <div className='grid grid-cols-2 lg:grid-cols-4 gap-3 relative z-10'>
         {statCards.map((s) => {

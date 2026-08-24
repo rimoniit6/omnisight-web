@@ -877,7 +877,7 @@ export function AiProviderPage() {
 
   return (
     <TooltipProvider>
-      <div className="flex min-h-[calc(100vh-4rem)] gap-0">
+      <div className="flex min-h-[calc(100vh-4rem)] gap-0" role="region" aria-label="AI Provider">
         {/* ── Left Sidebar ── */}
         <aside className="w-56 shrink-0 sticky top-0 h-[calc(100vh-4rem)] overflow-y-auto border-r bg-muted/30">
           <div className="p-4">

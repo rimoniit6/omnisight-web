@@ -190,6 +190,8 @@ export function AppSidebar({ onNavigate }: AppSidebarProps) {
     <TooltipProvider delayDuration={0}>
       <aside
         data-tour-target="sidebar"
+        role="complementary"
+        aria-label="Sidebar navigation"
         className={cn(
           'h-screen bg-sidebar text-sidebar-foreground flex flex-col transition-all duration-300 ease-in-out sticky top-0 border-r border-sidebar-border shrink-0',
           sidebarOpen ? 'w-[240px]' : 'w-[64px]'
@@ -220,7 +222,7 @@ export function AppSidebar({ onNavigate }: AppSidebarProps) {
         </div>
 
         {/* Navigation */}
-        <nav className="flex-1 overflow-y-auto custom-scrollbar py-2 px-2">
+        <nav className="flex-1 overflow-y-auto custom-scrollbar py-2 px-2" aria-label="Main navigation">
           {visibleGroups.map((group, gi) => (
             <div key={group.section}>
               {gi > 0 && <Separator className="my-2 bg-sidebar-border/50" />}
@@ -268,7 +270,7 @@ export function AppSidebar({ onNavigate }: AppSidebarProps) {
                         )}
                       </span>
                       {sidebarOpen && (
-                        <span className="truncate flex-1 text-left">{item.label}</span>
+                        <span className="truncate flex-1 text-left" aria-hidden={isActive}>{item.label}</span>
                       )}
                       {sidebarOpen && isActive && (
                         <span className="w-1 h-4 rounded-full bg-primary shrink-0" />

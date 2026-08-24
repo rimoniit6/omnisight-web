@@ -92,7 +92,7 @@ export function AppHeader({ onMobileMenuToggle, isMobile }: AppHeaderProps) {
   const displayUser = user || authUser;
 
   return (
-    <header className="h-14 bg-background/80 backdrop-blur supports-[backdrop-filter]:bg-background/60 flex items-center justify-between px-4 md:px-6 sticky top-0 z-30 border-b border-border">
+    <header className="h-14 bg-background/80 backdrop-blur supports-[backdrop-filter]:bg-background/60 flex items-center justify-between px-4 md:px-6 sticky top-0 z-30 border-b border-border" role="banner">
       {/* ── Left side: hamburger + title + breadcrumb ── */}
       <div className="flex items-center gap-3 min-w-0">
         {/* Hamburger menu — mobile only */}
@@ -110,7 +110,7 @@ export function AppHeader({ onMobileMenuToggle, isMobile }: AppHeaderProps) {
 
         <div className="flex flex-col min-w-0">
           {/* Page title */}
-          <h1 className="text-base font-semibold text-foreground leading-tight truncate">
+          <h1 className="text-base font-semibold text-foreground leading-tight truncate" id="page-title">
             {pageLabels[currentPage] || 'Dashboard'}
           </h1>
 

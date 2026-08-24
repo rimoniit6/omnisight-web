@@ -235,7 +235,7 @@ export function SecurityPage() {
   const hasFilters = severityFilter || statusFilter || search;
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-4" role="region" aria-label="Agent Security">
       {/* Stats */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         <StatCard label="Agent Security Alerts" value={total} icon={ShieldAlert} color="bg-red-500" sub="Agent/security-specific events" />

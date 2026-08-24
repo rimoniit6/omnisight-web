@@ -489,11 +489,11 @@ export function SettingsPage() {
   const configSettings = sectionSettings.filter((s) => s.value !== 'true' && s.value !== 'false');
 
   return (
-    <div className='grid grid-cols-1 lg:grid-cols-4 gap-6'>
+    <div className='grid grid-cols-1 lg:grid-cols-4 gap-6' role='region' aria-label='Settings'>
       {/* Section nav */}
       <Card className='falcon-card lg:col-span-1 h-fit sticky top-20'>
         <CardContent className='p-2'>
-          <nav className='space-y-1'>
+          <nav className='space-y-1' aria-label='Settings sections'>
             {sections.map((s) => {
               const Icon = s.icon;
               const isActive = activeSection === s.key;
