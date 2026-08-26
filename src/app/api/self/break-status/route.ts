@@ -3,6 +3,7 @@ import { authError, requireManagerOrg, parseJsonBody, BodyParseError } from '@/l
 import { getScopedEmployee } from '@/lib/self-guard';
 import { startBreak, endBreak, getCurrentBreak } from '@/lib/breaks/service';
 import { getClientIpFromHeaders, UNKNOWN_CLIENT_IP } from '@/lib/client-ip';
+import { log, requestContext } from '@/lib/logger';
 
 // GET /api/self/break-status?employeeId=xxx
 // Current break state for one employee (org-scoped).
@@ -32,7 +33,7 @@ export async function GET(req: NextRequest) {
       },
     });
   } catch (error) {
-    console.error('Self break-status GET error:', error);
+    log.error('api.self.break-status.', { error: String('Self break-status GET error:') }, requestContext(req));
     return NextResponse.json({ error: 'Failed to fetch break status' }, { status: 500 });
   }
 }
@@ -128,7 +129,7 @@ export async function POST(req: NextRequest) {
               : 'No active break to end.',
     });
   } catch (error) {
-    console.error('Self break-status error:', error);
+    log.error('api.self.break-status.', { error: String('Self break-status error:') }, requestContext(req));
     return NextResponse.json({ error: 'Failed to update break status' }, { status: 500 });
   }
 }

@@ -1,9 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import sharp from 'sharp';
 import { db } from '@/lib/db';
-import { getRequestToken, verifyJWT, hasRolePermission } from '@/lib/auth';
+import { getRequestToken, hasRolePermission } from '@/lib/auth';
+import { verifySessionToken } from '@/lib/session';
 import { getClientIpFromHeaders, UNKNOWN_CLIENT_IP } from '@/lib/client-ip';
 import { putAvatar } from '@/lib/storage';
+import { log, requestContext } from '@/lib/logger';
 
 const ALLOWED_MIME_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
 const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5MB
@@ -17,7 +19,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ success: false, error: 'Authentication required' }, { status: 401 });
     }
 
-    const payload = await verifyJWT(token);
+    const payload = await verifySessionToken(token);
     if (!payload) {
       return NextResponse.json({ success: false, error: 'Invalid or expired token' }, { status: 401 });
     }
@@ -138,7 +140,7 @@ export async function POST(request: NextRequest) {
     // ─── Response ────────────────────────────────────────────────────────
     return NextResponse.json({ success: true, avatar: avatarUrl });
   } catch (error) {
-    console.error('[Avatar Upload Error]', error);
+    log.error('api.upload.avatar.', { error: String('[Avatar Upload Error]') }, requestContext(request));
     return NextResponse.json(
       { success: false, error: 'Internal server error' },
       { status: 500 },

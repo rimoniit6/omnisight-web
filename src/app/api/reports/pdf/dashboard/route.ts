@@ -6,6 +6,7 @@ import { authError, authenticateRequest, requireSessionOrg, isValidDate, parseJs
 import { hasRolePermission as hasRole } from '@/lib/auth';
 import { NON_INTERNAL_AGENT_ACTIVITY_FILTER } from '@/lib/agent-process';
 import { effectiveLiveStatus } from '@/lib/presence';
+import { log, requestContext } from '@/lib/logger';
 
 export async function POST(request: NextRequest) {
   try {
@@ -264,7 +265,7 @@ export async function POST(request: NextRequest) {
       },
     });
   } catch (error) {
-    console.error('PDF generation error:', error);
+    log.error('api.reports.pdf.dashboard.', { error: String('PDF generation error:') }, requestContext(request));
     return NextResponse.json(
       { error: 'Failed to generate report' },
       { status: 500 },

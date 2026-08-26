@@ -5,6 +5,17 @@ import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tansta
 import { motion, AnimatePresence } from 'framer-motion';
 import { toast } from 'sonner';
 import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
+import { localDayKey } from '@/lib/timezone';
+import {
   FolderKanban,
   Plus,
   Search,
@@ -183,6 +194,7 @@ export function ProjectsPage() {
   const [savingEdit, setSavingEdit] = useState(false);
   const [archiving, setArchiving] = useState(false);
   const [editError, setEditError] = useState('');
+  const [removeMemberTarget, setRemoveMemberTarget] = useState<ProjectMember | null>(null);
 
   // Create project form
   const [formName, setFormName] = useState('');
@@ -225,7 +237,10 @@ export function ProjectsPage() {
 
   // Add time entry form
   const [teEmployeeId, setTeEmployeeId] = useState('');
-  const [teDate, setTeDate] = useState(new Date().toISOString().split('T')[0]);
+  const [teDate, setTeDate] = useState(() => {
+    const tz = useAuthStore.getState().organization?.timezone || 'UTC';
+    return localDayKey(new Date(), tz);
+  });
   const [teHours, setTeHours] = useState('');
   const [teDescription, setTeDescription] = useState('');
   const [teCategory, setTeCategory] = useState('development');
@@ -712,7 +727,8 @@ export function ProjectsPage() {
 
   function resetTEForm() {
     setTeEmployeeId('');
-    setTeDate(new Date().toISOString().split('T')[0]);
+    const tz = useAuthStore.getState().organization?.timezone || 'UTC';
+    setTeDate(localDayKey(new Date(), tz));
     setTeHours('');
     setTeDescription('');
     setTeCategory('development');
@@ -892,11 +908,12 @@ export function ProjectsPage() {
       }
     });
 
+    const tz = useAuthStore.getState().organization?.timezone || 'UTC';
     const last14Days: { date: string; hours: number }[] = [];
     for (let i = 13; i >= 0; i--) {
       const d = new Date();
       d.setDate(d.getDate() - i);
-      const key = d.toISOString().split('T')[0];
+      const key = localDayKey(d, tz);
       last14Days.push({ date: key, hours: dailyHours[key] || 0 });
     }
 
@@ -1921,7 +1938,7 @@ export function ProjectsPage() {
                                 size="icon"
                                 className="h-8 w-8 text-muted-foreground hover:text-rose-600"
                                 aria-label={`Remove ${member.employee.firstName} ${member.employee.lastName} from project`}
-                                onClick={() => removeMemberMutation.mutate(member.id)}
+                                onClick={() => setRemoveMemberTarget(member)}
                               >
                                 <X className="w-4 h-4" />
                               </Button>
@@ -2756,6 +2773,22 @@ export function ProjectsPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* ==================== Remove Member Confirmation (H-2) ==================== */}
+      <AlertDialog open={!!removeMemberTarget} onOpenChange={(open) => { if (!open) setRemoveMemberTarget(null); }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Remove project member?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {removeMemberTarget ? `Remove ${removeMemberTarget.employee.firstName} ${removeMemberTarget.employee.lastName} from this project? They will lose access to project time tracking. ${removeMemberTarget._count.timeEntries > 0 ? `${removeMemberTarget._count.timeEntries} time entries will be preserved.` : ''}` : ''}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={removeMemberMutation.isPending}>Cancel</AlertDialogCancel>
+            <AlertDialogAction disabled={removeMemberMutation.isPending} className="bg-destructive text-destructive-foreground hover:bg-destructive/90" onClick={() => { if (removeMemberTarget) { removeMemberMutation.mutate(removeMemberTarget.id); setRemoveMemberTarget(null); } }}>Remove</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       {/* ==================== Delete Time Entry Confirmation ==================== */}
       <Dialog open={deleteEntryDialogOpen} onOpenChange={(open) => { setDeleteEntryDialogOpen(open); if (!open) setEntryToDelete(null); }}>

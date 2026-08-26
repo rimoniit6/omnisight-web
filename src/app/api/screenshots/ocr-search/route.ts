@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { authError, requireSessionOrg } from '@/lib/api';
+import { log, requestContext } from '@/lib/logger';
 
 // GET /api/screenshots/ocr-search?query=...&page=1&pageSize=20
 export async function GET(req: NextRequest) {
@@ -93,7 +94,7 @@ export async function GET(req: NextRequest) {
       totalPages: Math.ceil(total / pageSize),
     });
   } catch (error) {
-    console.error('OCR search error:', error);
+    log.error('api.screenshots.ocr-search.', { error: String('OCR search error:') }, requestContext(req));
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }

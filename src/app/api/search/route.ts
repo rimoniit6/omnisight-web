@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { authError, requireSessionOrg } from '@/lib/api';
+import { log, requestContext } from '@/lib/logger';
 
 function emptySearch() {
   return NextResponse.json({ employees: [], departments: [], devices: [] });
@@ -112,7 +113,7 @@ export async function GET(request: NextRequest) {
       devices: mappedDevices,
     });
   } catch (error) {
-    console.error('Search API error:', error);
+    log.error('api.search.', { error: String('Search API error:') }, requestContext(request));
     return NextResponse.json(
       { employees: [], departments: [], devices: [], error: 'Search failed' },
       { status: 500 }

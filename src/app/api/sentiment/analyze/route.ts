@@ -4,6 +4,7 @@ import { callAIProvider } from '@/lib/ai-provider-helper';
 import type { Prisma } from '@prisma/client';
 import { requireManagerOrg, authError } from '@/lib/api';
 import { hasActiveConsent } from '@/lib/consent';
+import { log, requestContext } from '@/lib/logger';
 
 interface Signals {
   productivityTrend: number;
@@ -579,7 +580,7 @@ export async function POST(req: NextRequest) {
         };
         return { ok: true, employee, data };
       } catch (err) {
-        console.error(`Failed to analyze employee ${employee.id}:`, err);
+        log.error('api.sentiment.analyze.', { error: String(`Failed to analyze employee ${employee.id}:`) }, requestContext(req));log.error('api.sentiment\analyze\route.ts.', { error: String(`Failed to analyze employee ${employee.id}:`) }, requestContext(req));
         return { ok: false as const, employeeId: employee.id, reason: String(err) };
       }
     });
@@ -655,7 +656,7 @@ export async function POST(req: NextRequest) {
       periodEnd,
     });
   } catch (error) {
-    console.error('Sentiment analyze error:', error);
+    log.error('api.sentiment.analyze.', { error: String('Sentiment analyze error:') }, requestContext(req));
     return NextResponse.json(
       { error: 'Failed to analyze sentiment' },
       { status: 500 }

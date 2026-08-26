@@ -57,12 +57,15 @@ const EXPORT_TYPE_LABELS: Record<ExportDialogProps['exportType'], string> = {
   projects: 'Projects',
 };
 
+import { localDayKey } from '@/lib/timezone';
+
 function getDefaultDateRange(): { from: string; to: string } {
+  const tz = useAuthStore.getState().organization?.timezone || 'UTC';
   const now = new Date();
   const thirtyDaysAgo = new Date(now);
   thirtyDaysAgo.setDate(now.getDate() - 30);
-  const toISO = now.toISOString().split('T')[0];
-  const fromISO = thirtyDaysAgo.toISOString().split('T')[0];
+  const toISO = localDayKey(now, tz);
+  const fromISO = localDayKey(thirtyDaysAgo, tz);
   return { from: fromISO, to: toISO };
 }
 
@@ -142,6 +145,7 @@ export function ExportDialog({
   }, [availableColumns]);
 
   const handleExport = useCallback(async () => {
+    if (exporting) return; // M-15: double-click protection
     setExporting(true);
     try {
       const selectedKeys = Object.entries(enabledColumns)

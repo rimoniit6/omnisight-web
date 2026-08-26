@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { Prisma } from '@prisma/client';
 import { authError, requireAdminOrg } from '@/lib/api';
+import { log, requestContext } from '@/lib/logger';
 
 // Authoritative value set (mirror of the TimeEntry model comment + POST route).
 const TIME_CATEGORIES = ['development', 'design', 'meeting', 'research', 'testing', 'review', 'admin'] as const;
@@ -135,7 +136,7 @@ export async function PUT(
 
     return NextResponse.json({ data: timeEntry });
   } catch (error) {
-    console.error('Project time entry PUT error:', error);
+    log.error('api.projects.id.time-entries.param.', { error: String('Project time entry PUT error:') }, requestContext(req));
     return NextResponse.json({ error: 'Failed to update time entry' }, { status: 500 });
   }
 }
@@ -190,7 +191,7 @@ export async function DELETE(
 
     return NextResponse.json({ data: { id: entryId }, message: 'Time entry deleted' });
   } catch (error) {
-    console.error('Project time entry DELETE error:', error);
+    log.error('api.projects.id.time-entries.param.', { error: String('Project time entry DELETE error:') }, requestContext(req));
     return NextResponse.json({ error: 'Failed to delete time entry' }, { status: 500 });
   }
 }

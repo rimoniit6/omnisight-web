@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { authError, requireSessionOrg } from '@/lib/api';
 import { deriveEmployeePresence } from '@/lib/presence';
+import { log, requestContext } from '@/lib/logger';
 
 // GET /api/employees/presence
 // Organization-scoped employee presence snapshot.

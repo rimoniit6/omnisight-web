@@ -10,6 +10,7 @@ import {
 } from '@/lib/agent/activation';
 import { checkRateLimit, RATE_LIMITS, getClientIpFromHeaders } from '@/lib/rate-limit';
 import { AGENT_ACCOUNT } from '@/lib/agent-account';
+import { log, requestContext } from '@/lib/logger';
 
 // POST /api/agent/authenticate
 // Two authentication paths:
@@ -271,7 +272,7 @@ export async function POST(req: NextRequest) {
     if (error instanceof EmployeeNotEligibleError || error instanceof DeviceNotEligibleError) {
       return NextResponse.json({ error: error.message }, { status: 403 });
     }
-    console.error('Agent authenticate error:', error);
+    log.error('api.agent.authenticate.', { error: String('Agent authenticate error:') }, requestContext(req));
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }

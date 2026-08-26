@@ -5,6 +5,7 @@ import { hasRolePermission } from '@/lib/auth';
 import { applyConsentTransition, isValidConsentStatus } from '@/lib/consent';
 import type { ConsentStatus } from '@/lib/consent';
 import { endWebcamSessionsOnRevoke } from '@/lib/webcam-session-cleanup';
+import { log, requestContext } from '@/lib/logger';
 
 // PUT /api/consent/[id] — update consent (revoke, renew, grant, deny)
 // Manager+ role; the consent must belong to the caller's organization.
@@ -81,7 +82,7 @@ export async function PUT(
       throw transitionError;
     }
   } catch (error) {
-    console.error('Consent PUT error:', error);
+    log.error('api.consent.id.', { error: String('Consent PUT error:') }, requestContext(req));
     return NextResponse.json({ error: 'Failed to update consent' }, { status: 500 });
   }
 }
@@ -158,7 +159,7 @@ export async function DELETE(
         { status: 409 }
       );
     }
-    console.error('Consent DELETE error:', error);
+    log.error('api.consent.id.', { error: String('Consent DELETE error:') }, requestContext(req));
     return NextResponse.json({ error: 'Failed to delete consent' }, { status: 500 });
   }
 }

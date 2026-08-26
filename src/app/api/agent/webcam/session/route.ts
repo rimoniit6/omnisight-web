@@ -3,6 +3,7 @@ import { db } from '@/lib/db';
 import { validateAgentToken } from '@/lib/agent/auth';
 import { hasActiveConsent } from '@/lib/consent';
 import { resolveOrgMonitoring } from '@/lib/jobs/settings';
+import { log, requestContext } from '@/lib/logger';
 
 // POST /api/agent/webcam/session
 // The agent registers the session it opened after executing `webcam.start`.
@@ -101,7 +102,7 @@ export async function POST(req: NextRequest) {
       throw err;
     }
   } catch (error) {
-    console.error('Agent webcam session error:', error);
+    log.error('api.agent.webcam.session.', { error: String('Agent webcam session error:') }, requestContext(req));
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }

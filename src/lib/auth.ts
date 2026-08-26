@@ -24,12 +24,57 @@ export interface JWTPayload {
 
 // ─── Config from env ────────────────────────────────────────────────────────
 
+/** Patterns that match known placeholder / default secret values. */
+const PLACEHOLDER_PATTERNS = [
+  /^replace_with/i,
+  /^change_me/i,
+  /^your_secret/i,
+  /^your_/i,
+  /^example/i,
+  /^default/i,
+  /^secret$/i,
+  /^changeme/i,
+  /^password$/i,
+  /^admin/i,
+  /^test$/i,
+  /^dev$/i,
+  /^localhost/i,
+  /^placeholder/i,
+  /^todo/i,
+  /^fixme/i,
+  /^xxx/i,
+];
+
+/**
+ * Assert that a secret is not a known placeholder value.
+ * Throws a descriptive error if the secret matches a placeholder pattern.
+ * Never logs or exposes the actual secret value.
+ */
+export function assertProductionSecret(
+  value: string,
+  name: string,
+  minLength = 16,
+): void {
+  if (!value) {
+    throw new Error(`${name} must be set in the environment`);
+  }
+  if (value.length < minLength) {
+    throw new Error(`${name} must be at least ${minLength} characters`);
+  }
+  for (const pattern of PLACEHOLDER_PATTERNS) {
+    if (pattern.test(value)) {
+      throw new Error(
+        `${name} contains a known placeholder value. ` +
+        'Generate a cryptographically random secret and set it in your environment.'
+      );
+    }
+  }
+}
+
 function getJWTSecret(): string {
   const secret = process.env.JWT_SECRET;
-  if (!secret || secret.length < 16) {
-    throw new Error('JWT_SECRET must be set and at least 16 characters');
-  }
-  return secret;
+  assertProductionSecret(secret || '', 'JWT_SECRET', 16);
+  return secret!;
 }
 
 function getJWTExpiresIn(): string {
@@ -254,19 +299,6 @@ export function getRequestToken(req: NextRequest): string | null {
   if (headerToken) return headerToken;
   const cookie = req.cookies.get(SESSION_COOKIE_NAME);
   return cookie?.value || null;
-}
-
-/**
- * Get super admin credentials from .env
- * Throws if not configured — no hardcoded fallback credentials.
- */
-export function getSuperAdminCredentials(): { email: string; password: string } {
-  const email = process.env.SUPER_ADMIN_EMAIL;
-  const password = process.env.SUPER_ADMIN_PASSWORD;
-  if (!email || !password) {
-    throw new Error('SUPER_ADMIN_EMAIL and SUPER_ADMIN_PASSWORD must be set in environment');
-  }
-  return { email, password };
 }
 
 /**

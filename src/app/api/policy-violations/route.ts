@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { authError, requireSessionOrg, validatePagination } from '@/lib/api';
 import type { Prisma } from '@prisma/client';
+import { log, requestContext } from '@/lib/logger';
 
 const MAX_SEARCH_LENGTH = 100;
 
@@ -75,7 +76,7 @@ export async function GET(req: NextRequest) {
       summary,
     });
   } catch (error) {
-    console.error('Policy violations GET error:', error);
+    log.error('api.policy-violations.', { error: String('Policy violations GET error:') }, requestContext(req));
     return NextResponse.json({ error: 'Failed to fetch policy violations' }, { status: 500 });
   }
 }

@@ -2,6 +2,7 @@ import { NextRequest } from 'next/server';
 import { db } from '@/lib/db';
 import { apiError, apiSuccess, requireSessionOrg, authError } from '@/lib/api';
 import { Prisma } from '@prisma/client';
+import { log, requestContext } from '@/lib/logger';
 
 // Lightweight, org-scoped employee search for searchable selectors
 // (EmployeeCombobox). Returns only the minimal fields required for

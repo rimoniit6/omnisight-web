@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { validateAgentToken } from '@/lib/agent/auth';
 import { clearSession } from '@/lib/webcam-relay';
+import { log, requestContext } from '@/lib/logger';
 
 // POST /api/agent/webcam/session/end
 // The agent terminates an on-demand webcam session (command, timeout,
@@ -69,7 +70,7 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({ success: true, sessionId, status: endedReason === 'error' ? 'failed' : 'ended' });
   } catch (error) {
-    console.error('Agent webcam session end error:', error);
+    log.error('api.agent.webcam.session.end.', { error: String('Agent webcam session end error:') }, requestContext(req));
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }

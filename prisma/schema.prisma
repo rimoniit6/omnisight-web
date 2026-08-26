@@ -67,6 +67,8 @@ model Organization {
   notificationPreferences NotificationPreference[]
   userSessions        UserSession[]
   breakSessions       BreakSession[]
+  audioRecordings     AudioRecording[]
+  audioTranscriptions AudioTranscription[]
 }
 
 // ==================== Department ====================
@@ -156,6 +158,7 @@ model Employee {
   webcamSessions      WebcamSession[]
   projectTimeSyncs    ProjectTimeSync[]
   breakSessions       BreakSession[]
+  audioRecordings     AudioRecording[]
 
   @@unique([email, organizationId])
   @@index([organizationId])
@@ -224,10 +227,13 @@ model Device {
   agentCommands       AgentCommand[]
   webcamSessions      WebcamSession[]
   breakSessions       BreakSession[]
+  audioRecordings     AudioRecording[]
 
   @@index([organizationId])
   @@index([employeeId])
   @@index([status])
+  @@index([organizationId, status])
+  @@index([organizationId, updatedAt])
   // Live-updates poll: devices changed since cursor (LM-6)
   @@index([updatedAt])
 }
@@ -797,6 +803,7 @@ model Screenshot {
   @@index([employeeId])
   @@index([deviceId])
   @@index([employeeId, capturedAt])
+  @@index([organizationId, capturedAt])
   @@index([capturedAt])
   @@index([flagged])
   // Live-updates poll: new screenshots since cursor (LM-6)
@@ -1260,4 +1267,64 @@ model SentimentRecord {
   @@index([employeeId])
   @@index([projectId])
   @@index([employeeId, periodStart])
+}
+
+// ==================== Audio Recording ====================
+// Admin-uploaded audio files awaiting or completed transcription.
+// State machine: uploaded → queued → transcribing → completed | failed
+// Retry: failed → queued (bounded by MAX_RETRIES=3)
+
+model AudioRecording {
+  id              String   @id @default(cuid())
+  organizationId  String
+  employeeId      String?
+  deviceId        String?
+  fileName        String
+  filePath        String   // storage key: audio/<orgId>/<uuid>.<ext>
+  fileSize        Int      // bytes
+  mimeType        String
+  duration        Float?   // seconds (set after transcription)
+  status          String   @default("uploaded") // uploaded, queued, transcribing, completed, failed
+  language        String?  // detected language code
+  errorMessage    String?
+  retryCount      Int      @default(0)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  // Relations
+  organization  Organization        @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  employee      Employee?           @relation(fields: [employeeId], references: [id], onDelete: SetNull)
+  device        Device?             @relation(fields: [deviceId], references: [id], onDelete: SetNull)
+  transcription AudioTranscription?
+
+  @@index([organizationId])
+  @@index([employeeId])
+  @@index([deviceId])
+  @@index([status])
+  @@index([createdAt])
+}
+
+// ==================== Audio Transcription ====================
+// Transcription result for an AudioRecording. One-to-one (recordingId unique).
+
+model AudioTranscription {
+  id              String   @id @default(cuid())
+  recordingId     String   @unique
+  organizationId  String
+  text            String   // full transcription text
+  segments        String?  // JSON: [{start, end, text}]
+  language        String   // detected language code (e.g. "en")
+  confidence      Float?   // overall confidence 0-1
+  model           String   // whisper model used (e.g. "whisper-base")
+  duration        Float    // audio duration in seconds
+  wordCount       Int
+  processingMs    Int?     // inference time in milliseconds
+  createdAt       DateTime @default(now())
+
+  // Relations
+  recording      AudioRecording @relation(fields: [recordingId], references: [id], onDelete: Cascade)
+  organization   Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId])
+  @@index([createdAt])
 }

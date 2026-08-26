@@ -227,18 +227,23 @@ export function ScreenshotsPage() {
   const {
     data: screenshotsData,
     isLoading,
+    isError,
     refetch,
   } = useQuery({
     queryKey: ['screenshots', searchMode, getQueryParams()],
-    queryFn: () => {
+    queryFn: async () => {
+      let res: Response;
       if (searchMode === 'ocr' && search.trim()) {
         const params = new URLSearchParams();
         params.set('query', search);
         params.set('page', String(page));
         params.set('pageSize', String(pageSize));
-        return fetch(`/api/screenshots/ocr-search?${params}`).then((r) => r.json());
+        res = await fetch(`/api/screenshots/ocr-search?${params}`);
+      } else {
+        res = await fetch(`/api/screenshots?${getQueryParams()}`);
       }
-      return fetch(`/api/screenshots?${getQueryParams()}`).then((r) => r.json());
+      if (!res.ok) throw new Error(`Failed to load screenshots (${res.status})`);
+      return res.json();
     },
   });
 
@@ -288,13 +293,14 @@ export function ScreenshotsPage() {
     if (!selectedId) return;
     setAnalyzing(true);
     try {
-      await fetch(`/api/screenshots/${selectedId}/analyze`, { method: 'POST' });
+      const res = await fetch(`/api/screenshots/${selectedId}/analyze`, { method: 'POST' });
+      if (!res.ok) throw new Error('Analysis failed');
       toast.success('Analysis complete');
       queryClient.invalidateQueries({ queryKey: ['screenshot-detail', selectedId] });
       queryClient.invalidateQueries({ queryKey: ['screenshots'] });
       queryClient.invalidateQueries({ queryKey: ['screenshot-stats'] });
-    } catch {
-      toast.error('Analysis failed');
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Analysis failed');
     } finally {
       setAnalyzing(false);
     }
@@ -303,19 +309,20 @@ export function ScreenshotsPage() {
   const handleFlag = async () => {
     if (!selectedId || !flagReasonInput.trim()) return;
     try {
-      await fetch(`/api/screenshots/${selectedId}`, {
+      const res = await fetch(`/api/screenshots/${selectedId}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ flagged: true, flagReason: flagReasonInput }),
       });
+      if (!res.ok) throw new Error('Failed to flag screenshot');
       toast.success('Screenshot flagged');
       setFlagDialogOpen(false);
       setFlagReasonInput('');
       queryClient.invalidateQueries({ queryKey: ['screenshot-detail', selectedId] });
       queryClient.invalidateQueries({ queryKey: ['screenshots'] });
       queryClient.invalidateQueries({ queryKey: ['screenshot-stats'] });
-    } catch {
-      toast.error('Failed to flag screenshot');
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to flag screenshot');
     }
   };
 
@@ -351,13 +358,20 @@ export function ScreenshotsPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ screenshotIds: Array.from(selectedForBatch) }),
       });
+      if (!res.ok) throw new Error('Batch analysis failed');
       const data = await res.json();
-      toast.success(`Analyzed ${data.analyzed} of ${data.analyzed + data.failed} screenshots`);
+      const analyzed = data.analyzed ?? 0;
+      const failed = data.failed ?? 0;
+      if (failed > 0) {
+        toast.warning(`Analyzed ${analyzed} of ${analyzed + failed} screenshots (${failed} failed)`);
+      } else {
+        toast.success(`Analyzed ${analyzed} screenshot(s)`);
+      }
       setSelectedForBatch(new Set());
       queryClient.invalidateQueries({ queryKey: ['screenshots'] });
       queryClient.invalidateQueries({ queryKey: ['screenshot-stats'] });
-    } catch {
-      toast.error('Batch analysis failed');
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Batch analysis failed');
     } finally {
       setBatchAnalyzing(false);
     }

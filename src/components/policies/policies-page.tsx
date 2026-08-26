@@ -34,6 +34,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { EmptyState } from '@/components/ui/empty-state';
 import { toast } from 'sonner';
+import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 
 // ==================== Types ====================
 
@@ -183,6 +184,7 @@ function AppListTab() {
   const [listTypeFilter, setListTypeFilter] = useState('');
   const [search, setSearch] = useState('');
   const [addOpen, setAddOpen] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<AppEntry | null>(null);
   const queryClient = useQueryClient();
 
   const { data, isLoading, isError, refetch } = useQuery({
@@ -347,7 +349,7 @@ function AppListTab() {
                     {new Date(entry.createdAt).toLocaleDateString()}
                   </span>
                   <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-destructive hover:bg-destructive/10"
-                    onClick={() => deleteMutation.mutate(entry.id)}>
+                    onClick={() => setDeleteTarget(entry)}>
                     <Trash2 className="h-3.5 w-3.5" />
                   </Button>
                 </div>
@@ -358,6 +360,16 @@ function AppListTab() {
       )}
 
       <AddAppDialog open={addOpen} onClose={() => setAddOpen(false)} />
+
+      <ConfirmDialog
+        open={deleteTarget !== null}
+        onOpenChange={(open) => { if (!open) setDeleteTarget(null); }}
+        title="Remove App from Policy List"
+        description={`Are you sure you want to remove \"${deleteTarget?.appName ?? ''}\" from the ${deleteTarget?.listType ?? ''} list? The agent will stop enforcing this policy for this app on its next config sync.`}
+        confirmLabel="Remove"
+        onConfirm={() => { if (deleteTarget) { deleteMutation.mutate(deleteTarget.id); setDeleteTarget(null); } }}
+        disabled={deleteMutation.isPending}
+      />
     </div>
   );
 }

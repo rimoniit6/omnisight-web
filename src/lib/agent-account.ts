@@ -133,12 +133,6 @@ export async function getAgentAccount(accountId: string): Promise<AgentAccountPu
   return account ? toPublicAccount(account) : null;
 }
 
-/** Look up an account by login agentId. */
-export async function getAgentAccountByAgentId(agentId: string): Promise<AgentAccountPublic | null> {
-  const account = await db.agentAccount.findUnique({ where: { agentId } });
-  return account ? toPublicAccount(account) : null;
-}
-
 /** Look up an account by employee (internal id or Employee.employeeId code). */
 export async function getAgentAccountByEmployee(
   employeeRef: string

@@ -5,6 +5,7 @@ import { validateAgentToken } from '@/lib/agent/auth';
 import { resolveOrgMonitoring } from '@/lib/jobs/settings';
 import { validatePolicyViolationInput, violationDedupeKey } from '@/lib/policies/validation';
 import { createOrgNotification } from '@/lib/notifications/service';
+import { log, requestContext } from '@/lib/logger';
 
 // POST /api/agent/policy-violations
 // Agent reports a real enforcement event: a running process matched a
@@ -139,7 +140,7 @@ export async function POST(req: NextRequest) {
       throw error;
     }
   } catch (error) {
-    console.error('Agent policy-violation POST error:', error);
+    log.error('api.agent.policy-violations.', { error: String('Agent policy-violation POST error:') }, requestContext(req));
     return NextResponse.json({ error: 'Failed to report policy violation' }, { status: 500 });
   }
 }

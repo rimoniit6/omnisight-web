@@ -4,6 +4,7 @@ import { getScopedEmployee } from '@/lib/self-guard';
 import { authenticateRequest } from '@/lib/api';
 import { applyConsentTransition, isValidConsentType } from '@/lib/consent';
 import type { ConsentStatus, ConsentType } from '@/lib/consent';
+import { log, requestContext } from '@/lib/logger';
 
 // PUT /api/self/consents/[id]
 // Manager+ role (enforced by middleware); employee scoped to caller's org.
@@ -186,7 +187,7 @@ export async function PUT(
       throw transitionError;
     }
   } catch (error) {
-    console.error('Self Consent PUT error:', error);
+    log.error('api.self.consents.id.', { error: String('Self Consent PUT error:') }, requestContext(req));
     return NextResponse.json(
       { error: 'Failed to update consent' },
       { status: 500 }

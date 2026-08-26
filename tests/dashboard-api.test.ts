@@ -96,6 +96,21 @@ async function freshOrg(): Promise<{
   return { orgId: org.id, empId: emp.id, token };
 }
 
+// A truly empty organization (no employees/devices) for empty-state assertions.
+async function emptyOrg(): Promise<{ orgId: string; token: string }> {
+  seq += 1;
+  const org = await db.organization.create({
+    data: { name: `DashAPI Empty ${seq}`, slug: `dashapi-empty-${seq}`, timezone: 'UTC' },
+  });
+  const token = await signJWT({
+    userId: `admin-empty-${seq}`,
+    email: `admin-empty${seq}@dashapi.test`,
+    role: 'admin',
+    organizationId: org.id,
+  });
+  return { orgId: org.id, token };
+}
+
 function makeReq(token: string | null): NextRequest {
   const headers: Record<string, string> = {};
   if (token) headers.authorization = `Bearer ${token}`;
@@ -340,7 +355,7 @@ test('NPLUS-1: dashboard does not generate N+1 queries for employees', async () 
 // ═══════════════════════════════════════════════════════════════════════════
 
 test('EMPTY-1: empty org returns valid zero dashboard', async () => {
-  const { token } = await freshOrg();
+  const { token } = await emptyOrg();
   const data = (await dashboard(token)).body.data;
   assert.equal(data.totalEmployees, 0);
   assert.equal(data.totalDevices, 0);

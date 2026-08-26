@@ -12,6 +12,7 @@ import {
   isValidAnomalyConfidence,
 } from '@/lib/anomalies/constants';
 import { createOrgAlert, createOrgNotification } from '@/lib/notifications/service';
+import { log, requestContext } from '@/lib/logger';
 
 // POST /api/agent/anomaly — Agent reports an anomaly detected on the endpoint.
 //
@@ -158,7 +159,7 @@ export async function POST(req: NextRequest) {
       throw error;
     }
   } catch (error) {
-    console.error('Agent anomaly POST error:', error);
+    log.error('api.agent.anomaly.', { error: String('Agent anomaly POST error:') }, requestContext(req));
     return NextResponse.json({ error: 'Failed to report anomaly' }, { status: 500 });
   }
 }

@@ -845,14 +845,7 @@ function AnalysisResultCard({ insight, index }: { insight: AnalysisInsight; inde
                     <p className="text-xs text-foreground/80 leading-relaxed">{insight.recommendation}</p>
                   </div>
                 </div>
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  className="h-7 text-[11px] text-emerald-600 dark:text-emerald-400 hover:text-emerald-700 hover:bg-emerald-500/10 mt-2 px-2"
-                  onClick={() => toast.success('Action noted — follow up in your workflow')}
-                >
-                  Take Action <ArrowRight className="w-3 h-3 ml-1" />
-                </Button>
+
               </div>
             </div>
           </div>

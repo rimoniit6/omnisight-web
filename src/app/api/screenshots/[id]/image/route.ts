@@ -3,6 +3,7 @@ import { db } from '@/lib/db';
 import { authError, requireSessionOrg } from '@/lib/api';
 import { safeServeMime } from '@/lib/screenshots/storage';
 import { getScreenshot, isNotFound } from '@/lib/storage';
+import { log, requestContext } from '@/lib/logger';
 
 // GET /api/screenshots/[id]/image
 // Serves the stored screenshot file. The global middleware already enforces
@@ -68,7 +69,7 @@ export async function GET(
       },
     });
   } catch (error) {
-    console.error('Screenshot image error:', error);
+    log.error('api.screenshots.id.image.', { error: String('Screenshot image error:') }, requestContext(req));
     return new NextResponse('Internal error', { status: 500 });
   }
 }

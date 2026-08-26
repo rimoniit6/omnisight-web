@@ -2,6 +2,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { authError, requireSessionOrg } from '@/lib/api';
+import { log, requestContext } from '@/lib/logger';
 
 export async function GET(req: NextRequest) {
   try {
@@ -166,7 +167,7 @@ export async function GET(req: NextRequest) {
       totalRecords: latestByEmployee.size,
     });
   } catch (error) {
-    console.error('Sentiment summary error:', error);
+    log.error('api.sentiment.summary.', { error: String('Sentiment summary error:') }, requestContext(req));
     return NextResponse.json(
       { error: 'Failed to fetch sentiment summary' },
       { status: 500 }

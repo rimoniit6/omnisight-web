@@ -2,6 +2,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { authError, requireSessionOrg } from '@/lib/api';
+import { log, requestContext } from '@/lib/logger';
 
 /**
  * Lightweight, org-scoped project search for selectors/comboboxes.
@@ -123,7 +124,7 @@ export async function GET(req: NextRequest) {
       offset,
     });
   } catch (error) {
-    console.error('Projects search error:', error);
+    log.error('api.projects.search.', { error: String('Projects search error:') }, requestContext(req));
     return NextResponse.json({ error: 'Failed to search projects' }, { status: 500 });
   }
 }

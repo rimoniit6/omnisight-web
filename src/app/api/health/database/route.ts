@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { db } from '@/lib/db';
+import { log, requestContext } from '@/lib/logger';
 
 // GET /api/health/database
 // Verifies the database is reachable and returns a simple latency measurement.

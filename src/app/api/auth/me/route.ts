@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { getRequestToken } from '@/lib/auth';
 import { verifySessionToken } from '@/lib/session';
+import { log, requestContext } from '@/lib/logger';
 
 export async function GET(req: NextRequest) {
   try {
@@ -71,7 +72,7 @@ export async function GET(req: NextRequest) {
         : null,
     });
   } catch (error) {
-    console.error('Auth/me error:', error);
+    log.error('api.auth.me.', { error: String('Auth/me error:') }, requestContext(req));
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }

@@ -4,6 +4,7 @@ import { authError, requireAdminOrg } from '@/lib/api';
 import { startBreak, endBreak, getCurrentBreak } from '@/lib/breaks/service';
 import { EMPLOYEE_ONLINE_THRESHOLD_MS, LIFECYCLE_PINNED_STATUSES } from '@/lib/presence';
 import { getClientIpFromHeaders, UNKNOWN_CLIENT_IP } from '@/lib/client-ip';
+import { log, requestContext } from '@/lib/logger';
 
 // POST /api/break-status/[id]/toggle
 // Admin force-starts / force-ends an employee's break mode.
@@ -88,7 +89,7 @@ export async function POST(
       message: `Break ${isEnd ? 'ended' : 'started'} for ${employee.firstName} ${employee.lastName}`,
     });
   } catch (error) {
-    console.error('Break toggle error:', error);
+    log.error('api.break-status.id.toggle.', { error: String('Break toggle error:') }, requestContext(req));
     return NextResponse.json({ error: 'Failed to toggle break mode' }, { status: 500 });
   }
 }

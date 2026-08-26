@@ -4,6 +4,7 @@ import { db } from '@/lib/db';
 import { authError, requireSessionOrg, validatePagination } from '@/lib/api';
 import { NON_INTERNAL_AGENT_ACTIVITY_FILTER } from '@/lib/agent-process';
 import { isValidTimezone, zonedDayStart, zonedDayEnd } from '@/lib/timezone';
+import { log, requestContext } from '@/lib/logger';
 
 // GET /api/activities
 // Organization-scoped activity feed with filters, pagination, search and
@@ -160,7 +161,7 @@ export async function GET(req: NextRequest) {
       },
     });
   } catch (error) {
-    console.error('Activities GET error:', error);
+    log.error('api.activities.', { error: String('Activities GET error:') }, requestContext(req));
     return NextResponse.json({ error: 'Failed to fetch activities' }, { status: 500 });
   }
 }

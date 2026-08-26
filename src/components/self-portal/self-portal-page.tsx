@@ -876,10 +876,10 @@ export function SelfPortalPage() {
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="all">All Statuses</SelectItem>
-              <SelectItem value="open">Open</SelectItem>
+              <SelectItem value="detected">Detected</SelectItem>
               <SelectItem value="investigating">Investigating</SelectItem>
               <SelectItem value="resolved">Resolved</SelectItem>
-              <SelectItem value="dismissed">Dismissed</SelectItem>
+              <SelectItem value="false_positive">False Positive</SelectItem>
             </SelectContent>
           </Select>
         </div>

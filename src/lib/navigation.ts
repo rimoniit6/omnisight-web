@@ -38,6 +38,8 @@ export const PAGE_MIN_ROLE: Record<PageType, NavMinRole> = {
   anomalies: 'viewer',
   projects: 'viewer',
   sentiment: 'viewer',
+  // admin+ — audio transcription management
+  audio: 'admin',
   // manager+ — consent exposes org-wide employee PII (matches /api/consent)
   consent: 'manager',
   // manager+
@@ -63,9 +65,4 @@ export function canAccessPage(role: string | null | undefined, page: PageType): 
   const minRole = PAGE_MIN_ROLE[page];
   if (!minRole) return false;
   return hasRolePermission(role, minRole);
-}
-
-/** Filter a list of pages down to those the role may access. */
-export function filterPagesByRole(role: string | null | undefined, pages: PageType[]): PageType[] {
-  return pages.filter((p) => canAccessPage(role, p));
 }

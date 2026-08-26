@@ -20,6 +20,8 @@ import { formatDistanceToNow, format, isThisMonth } from 'date-fns';
 import { toast } from 'sonner';
 import { exportToJSON } from '@/lib/csv-export';
 import { cn } from '@/lib/utils';
+import { localDayKey } from '@/lib/timezone';
+import { useAuthStore } from '@/lib/store';
 import { EmptyState } from '@/components/ui/empty-state';
 import { PdfDownloadButton } from '@/components/reports/pdf-download-button';
 
@@ -234,8 +236,9 @@ export function ReportsPage() {
       const body: Record<string, string> = { type: selectedType };
       if (selectedEmployee) body.employeeId = selectedEmployee;
       if (selectedDepartment) body.departmentId = selectedDepartment;
-      if (dateFrom) body.periodStart = dateFrom.toISOString().split('T')[0];
-      if (dateTo) body.periodEnd = dateTo.toISOString().split('T')[0];
+      const tz = useAuthStore.getState().organization?.timezone || 'UTC';
+      if (dateFrom) body.periodStart = localDayKey(dateFrom, tz);
+      if (dateTo) body.periodEnd = localDayKey(dateTo, tz);
 
       const res = await fetch('/api/reports/generate', {
         method: 'POST',

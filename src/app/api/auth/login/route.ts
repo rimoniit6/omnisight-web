@@ -18,15 +18,28 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Rate limit: per IP + email — protects against brute force. IP is
-    // resolved with the SAME canonical resolver the rate limiter and every
-    // other route use (right-most proxy-appended XFF entry / x-real-ip), so a
-    // spoofed prepended header can never rotate the bucket key.
+    // Rate limit: per IP + email AND per email-only — two layers of
+    // brute-force protection. The IP+email bucket catches distributed
+    // attempts; the email-only bucket catches IP-rotation attacks.
     const clientIp = getClientIpFromHeaders(req.headers);
-    const rlKey = `login:${clientIp}:${String(email).toLowerCase()}`;
+    const normalizedEmail = String(email).toLowerCase();
+
+    // Layer 1: per-email rate limit (defeats IP rotation)
+    const emailRlKey = `login:email:${normalizedEmail}`;
+    const emailRl = await checkRateLimit(emailRlKey, RATE_LIMITS.login.limit, RATE_LIMITS.login.windowMs);
+    if (!emailRl.allowed) {
+      log.warn('auth.login.rate_limited', { email: normalizedEmail, reason: 'email_throttle' }, requestContext(req));
+      return NextResponse.json(
+        { error: `Too many login attempts. Try again in ${emailRl.retryAfterSeconds} seconds.` },
+        { status: 429 }
+      );
+    }
+
+    // Layer 2: per IP+email rate limit (defeats distributed attacks)
+    const rlKey = `login:${clientIp}:${normalizedEmail}`;
     const rl = await checkRateLimit(rlKey, RATE_LIMITS.login.limit, RATE_LIMITS.login.windowMs);
     if (!rl.allowed) {
-      log.warn('auth.login.rate_limited', { email: String(email).toLowerCase() }, requestContext(req));
+      log.warn('auth.login.rate_limited', { email: normalizedEmail, reason: 'ip_throttle' }, requestContext(req));
       return NextResponse.json(
         { error: `Too many login attempts. Try again in ${rl.retryAfterSeconds} seconds.` },
         { status: 429 }

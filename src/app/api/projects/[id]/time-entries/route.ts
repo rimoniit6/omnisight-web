@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { Prisma } from '@prisma/client';
 import { authError, requireSessionOrg, requireAdminOrg, validatePagination } from '@/lib/api';
+import { log, requestContext } from '@/lib/logger';
 
 export async function GET(
   req: NextRequest,
@@ -121,7 +122,7 @@ export async function GET(
       },
     });
   } catch (error) {
-    console.error('Project time entries GET error:', error);
+    log.error('api.projects.id.time-entries.', { error: String('Project time entries GET error:') }, requestContext(req));
     return NextResponse.json({ error: 'Failed to fetch time entries' }, { status: 500 });
   }
 }
@@ -209,7 +210,7 @@ export async function POST(
 
     return NextResponse.json({ data: timeEntry }, { status: 201 });
   } catch (error) {
-    console.error('Project time entries POST error:', error);
+    log.error('api.projects.id.time-entries.', { error: String('Project time entries POST error:') }, requestContext(req));
     return NextResponse.json({ error: 'Failed to create time entry' }, { status: 500 });
   }
 }

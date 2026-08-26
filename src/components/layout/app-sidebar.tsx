@@ -32,6 +32,7 @@ import {
   UserPlus,
   FolderKanban,
   HeartPulse,
+  Mic,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import {
@@ -66,6 +67,7 @@ const navGroups: NavGroup[] = [
       { page: 'devices', label: 'Devices', icon: Monitor },
       { page: 'activities', label: 'Activities', icon: Activity },
       { page: 'screenshots', label: 'Screenshots', icon: Camera },
+      { page: 'audio', label: 'Audio Transcriptions', icon: Mic },
       { page: 'break-status', label: 'Break Monitor', icon: Pause },
       { page: 'live-monitor', label: 'Live Monitor', icon: Radio },
       { page: 'analytics', label: 'Analytics', icon: BarChart3 },
@@ -295,28 +297,8 @@ export function AppSidebar({ onNavigate }: AppSidebarProps) {
           ))}
         </nav>
 
-        {/* System Health Indicator — simplified */}
-        {sidebarOpen ? (
-          <div className="px-3 py-2">
-            <div className="flex items-center gap-2 px-3 py-1.5">
-              <span className="h-2 w-2 rounded-full bg-success shrink-0" />
-              <p className="text-[11px] text-muted-foreground truncate">
-                All systems operational
-              </p>
-            </div>
-          </div>
-        ) : (
-          <div className="px-2 py-1 flex justify-center">
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <span className="h-2.5 w-2.5 rounded-full bg-success cursor-default" />
-              </TooltipTrigger>
-              <TooltipContent side="right" className="text-sm font-medium">
-                All systems operational
-              </TooltipContent>
-            </Tooltip>
-          </div>
-        )}
+        {/* System Health Indicator — real health check */}
+        <SystemHealthIndicator sidebarOpen={sidebarOpen} />
 
         {/* User info block — from database */}
         {user && (
@@ -354,5 +336,49 @@ export function AppSidebar({ onNavigate }: AppSidebarProps) {
         </div>
       </aside>
     </TooltipProvider>
+  );
+}
+
+function SystemHealthIndicator({ sidebarOpen }: { sidebarOpen: boolean }) {
+  const { data: health, isLoading } = useQuery({
+    queryKey: ['system-health'],
+    queryFn: async () => {
+      const res = await fetch('/api/health');
+      if (!res.ok) return { status: 'unavailable' };
+      const json = await res.json();
+      return { status: json.status || 'ok' };
+    },
+    refetchInterval: 60_000,
+    staleTime: 30_000,
+  });
+
+  const status = isLoading ? 'ok' : (health?.status || 'unavailable');
+  const colorClass = status === 'ok' ? 'bg-success' : status === 'degraded' ? 'bg-warning' : 'bg-rose-500';
+  const label = status === 'ok' ? 'All systems operational' : status === 'degraded' ? 'System degraded' : 'System unavailable';
+
+  if (sidebarOpen) {
+    return (
+      <div className="px-3 py-2">
+        <div className="flex items-center gap-2 px-3 py-1.5">
+          <span className={`h-2 w-2 rounded-full ${colorClass} shrink-0`} />
+          <p className="text-[11px] text-muted-foreground truncate">
+            {label}
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="px-2 py-1 flex justify-center">
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <span className={`h-2.5 w-2.5 rounded-full ${colorClass} cursor-default`} />
+        </TooltipTrigger>
+        <TooltipContent side="right" className="text-sm font-medium">
+          {label}
+        </TooltipContent>
+      </Tooltip>
+    </div>
   );
 }

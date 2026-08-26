@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { Prisma } from '@prisma/client';
 import { authError, requireSessionOrg, requireAdminOrg } from '@/lib/api';
+import { log, requestContext } from '@/lib/logger';
 
 const EMPLOYEE_STATUSES = ['active', 'inactive', 'archived'] as const;
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -98,7 +99,7 @@ export async function GET(
     const { agentPassword: _agentPassword, ...safeEmployee } = employee;
     return NextResponse.json({ data: safeEmployee });
   } catch (error) {
-    console.error('Employee GET error:', error);
+    log.error('api.employees.id.', { error: String('Employee GET error:') }, requestContext(req));
     return NextResponse.json({ error: 'Failed to fetch employee' }, { status: 500 });
   }
 }
@@ -208,7 +209,7 @@ export async function PUT(
       throw error;
     }
   } catch (error) {
-    console.error('Employee PUT error:', error);
+    log.error('api.employees.id.', { error: String('Employee PUT error:') }, requestContext(req));
     return NextResponse.json({ error: 'Failed to update employee' }, { status: 500 });
   }
 }
@@ -234,7 +235,7 @@ export async function DELETE(
     });
     return NextResponse.json({ data: employee });
   } catch (error) {
-    console.error('Employee DELETE error:', error);
+    log.error('api.employees.id.', { error: String('Employee DELETE error:') }, requestContext(req));
     return NextResponse.json({ error: 'Failed to archive employee' }, { status: 500 });
   }
 }

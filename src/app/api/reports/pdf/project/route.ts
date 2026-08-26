@@ -4,6 +4,7 @@ import { generateProjectReport } from '@/lib/pdf-generator';
 import { format } from 'date-fns';
 import { authError, authenticateRequest, requireSessionOrg } from '@/lib/api';
 import { hasRolePermission as hasRole } from '@/lib/auth';
+import { log, requestContext } from '@/lib/logger';
 
 export async function POST(request: NextRequest) {
   try {
@@ -122,7 +123,7 @@ export async function POST(request: NextRequest) {
       },
     });
   } catch (error) {
-    console.error('PDF generation error:', error);
+    log.error('api.reports.pdf.project.', { error: String('PDF generation error:') }, requestContext(request));
     return NextResponse.json(
       { error: 'Failed to generate report' },
       { status: 500 },

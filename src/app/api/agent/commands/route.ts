@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { validateAgentToken } from '@/lib/agent/auth';
+import { log, requestContext } from '@/lib/logger';
 
 // GET /api/agent/commands
 // Secure server → agent command poll.
@@ -101,7 +102,7 @@ export async function GET(req: NextRequest) {
       })),
     });
   } catch (error) {
-    console.error('Agent commands GET error:', error);
+    log.error('api.agent.commands.', { error: String('Agent commands GET error:') }, requestContext(req));
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }

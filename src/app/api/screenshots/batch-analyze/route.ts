@@ -4,6 +4,7 @@ import { callAIProviderVision } from '@/lib/ai-provider-helper';
 import type { Prisma } from '@prisma/client';
 import { authError, requireAdminOrg } from '@/lib/api';
 import { screenshotAiInput } from '@/lib/storage';
+import { log, requestContext } from '@/lib/logger';
 
 // POST /api/screenshots/batch-analyze — Batch OCR + AI analysis (max 10)
 // No mock/fabricated fallbacks: items that cannot be analyzed return an honest
@@ -139,7 +140,7 @@ Respond in valid JSON:
         });
         analyzed++;
       } catch (err) {
-        console.error(`Error processing screenshot ${screenshot.id}:`, err);
+        log.error('api.screenshots.batch-analyze.', { error: String(`Error processing screenshot ${screenshot.id}:`) }, requestContext(req));log.error('api.screenshots\batch-analyze\route.ts.', { error: String(`Error processing screenshot ${screenshot.id}:`) }, requestContext(req));
         results.push({
           id: screenshot.id,
           ocrText: '',
@@ -158,7 +159,7 @@ Respond in valid JSON:
 
     return NextResponse.json({ results, analyzed, failed });
   } catch (error) {
-    console.error('Batch analyze error:', error);
+    log.error('api.screenshots.batch-analyze.', { error: String('Batch analyze error:') }, requestContext(req));
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }

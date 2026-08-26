@@ -5,6 +5,7 @@ import { authError, requireSessionOrg } from '@/lib/api';
 import { hasActiveConsent } from '@/lib/consent';
 import { resolveOrgMonitoring } from '@/lib/jobs/settings';
 import { effectiveDeviceStatus } from '@/lib/device-status';
+import { log, requestContext } from '@/lib/logger';
 
 // GET /api/employees/[id]/webcam
 // Admin status for the on-demand webcam control UI.
@@ -112,7 +113,7 @@ export async function GET(
       })),
     });
   } catch (error) {
-    console.error('Admin webcam status error:', error);
+    log.error('api.employees.id.webcam.', { error: String('Admin webcam status error:') }, requestContext(request));
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }

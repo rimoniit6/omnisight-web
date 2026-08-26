@@ -3,6 +3,7 @@ import { db } from '@/lib/db';
 import { getSessionOrg, authenticateRequest } from '@/lib/api';
 import { hasRolePermission } from '@/lib/auth';
 import { CONSENT_TYPES } from '@/lib/consent';
+import { log, requestContext } from '@/lib/logger';
 
 // GET /api/consent/summary — Get consent compliance summary
 //
@@ -166,7 +167,7 @@ export async function GET(req: NextRequest) {
       employees: employees.sort((a, b) => b.pct - a.pct),
     });
   } catch (error) {
-    console.error('Consent summary error:', error);
+    log.error('api.consent.summary.', { error: String('Consent summary error:') }, requestContext(req));
     return NextResponse.json({ error: 'Failed to get consent summary' }, { status: 500 });
   }
 }

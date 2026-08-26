@@ -16,7 +16,7 @@ export async function GET(req: NextRequest) {
     });
     return NextResponse.json({ data: insights });
   } catch (error) {
-    console.error('Insights GET error:', error);
+    log.error('api.insights.', { error: String('Insights GET error:') }, requestContext(req));
     return NextResponse.json({ error: 'Failed to fetch insights' }, { status: 500 });
   }
 }
@@ -204,7 +204,7 @@ export async function POST(req: NextRequest) {
       { status: isAi ? 201 : 201 }
     );
   } catch (error) {
-    console.error('Insights POST error:', error);
+    log.error('api.insights.', { error: String('Insights POST error:') }, requestContext(req));
     return NextResponse.json({ error: 'Failed to generate insight' }, { status: 500 });
   }
 }

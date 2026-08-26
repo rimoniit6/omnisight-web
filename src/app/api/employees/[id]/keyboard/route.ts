@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { authError, requireSessionOrg } from '@/lib/api';
 import { parseISO, startOfDay, subDays } from 'date-fns';
+import { log, requestContext } from '@/lib/logger';
 
 // GET /api/employees/[id]/keyboard?from&to&page&pageSize
 // Admin telemetry: AGGREGATE keyboard activity for one employee.
@@ -163,7 +164,7 @@ export async function GET(
       byApplication,
     });
   } catch (error) {
-    console.error('Admin keyboard telemetry error:', error);
+    log.error('api.employees.id.keyboard.', { error: String('Admin keyboard telemetry error:') }, requestContext(request));
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }

@@ -28,7 +28,8 @@ export type PageType =
   | 'consent'
   | 'self-portal'
   | 'projects'
-  | 'sentiment';
+  | 'sentiment'
+  | 'audio';
 
 function getInitialTourState(): boolean {
   if (typeof window === 'undefined') return false;

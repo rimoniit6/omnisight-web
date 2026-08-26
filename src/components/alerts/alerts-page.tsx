@@ -145,24 +145,30 @@ export function AlertsPage() {
   });
 
   const updateStatus = async (id: string, status: string) => {
-    await fetch('/api/alerts', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id, status }) });
-    queryClient.invalidateQueries({ queryKey: ['alerts'] });
-    toast.success(`Alert ${status}`);
+    try {
+      const res = await fetch('/api/alerts', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id, status }) });
+      if (!res.ok) throw new Error(`Failed to update alert`);
+      queryClient.invalidateQueries({ queryKey: ['alerts'] });
+      toast.success(`Alert ${status}`);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to update alert');
+    }
   };
 
   const escalateAlert = async (alert: AlertItem) => {
     const next = getNextSeverity(alert.severity);
     if (!next) return;
     try {
-      await fetch('/api/alerts', {
+      const res = await fetch('/api/alerts', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ id: alert.id, severity: next }),
       });
+      if (!res.ok) throw new Error('Failed to escalate alert');
       queryClient.invalidateQueries({ queryKey: ['alerts'] });
       toast.success(`Alert escalated to ${next}`);
-    } catch {
-      toast.error('Failed to escalate alert');
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to escalate alert');
     }
     setEscalateTarget(null);
   };
@@ -212,7 +218,7 @@ export function AlertsPage() {
   const handleBulkResolve = useCallback(async () => {
     try {
       const ids = Array.from(selectedIds);
-      await Promise.all(
+      const results = await Promise.allSettled(
         ids.map((id) =>
           fetch('/api/alerts', {
             method: 'PUT',
@@ -221,7 +227,13 @@ export function AlertsPage() {
           })
         )
       );
-      toast.success(`${ids.length} alert(s) resolved`);
+      const succeeded = results.filter((r) => r.status === 'fulfilled' && r.value.ok).length;
+      const failed = ids.length - succeeded;
+      if (failed > 0) {
+        toast.warning(`${succeeded} resolved, ${failed} failed`);
+      } else {
+        toast.success(`${succeeded} alert(s) resolved`);
+      }
       setSelectedIds(new Set());
       queryClient.invalidateQueries({ queryKey: ['alerts'] });
     } catch {
@@ -232,7 +244,7 @@ export function AlertsPage() {
   const handleBulkAcknowledge = useCallback(async () => {
     try {
       const ids = Array.from(selectedIds);
-      await Promise.all(
+      const results = await Promise.allSettled(
         ids.map((id) =>
           fetch('/api/alerts', {
             method: 'PUT',
@@ -241,7 +253,13 @@ export function AlertsPage() {
           })
         )
       );
-      toast.success(`${ids.length} alert(s) acknowledged`);
+      const succeeded = results.filter((r) => r.status === 'fulfilled' && r.value.ok).length;
+      const failed = ids.length - succeeded;
+      if (failed > 0) {
+        toast.warning(`${succeeded} acknowledged, ${failed} failed`);
+      } else {
+        toast.success(`${succeeded} alert(s) acknowledged`);
+      }
       setSelectedIds(new Set());
       queryClient.invalidateQueries({ queryKey: ['alerts'] });
     } catch {

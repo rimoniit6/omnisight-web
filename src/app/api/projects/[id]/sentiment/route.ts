@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { authError, requireSessionOrg } from '@/lib/api';
+import { log, requestContext } from '@/lib/logger';
 
 // GET /api/projects/[projectId]/sentiment
 // Project-scoped sentiment records for a project.
@@ -106,7 +107,7 @@ export async function GET(
       },
     });
   } catch (error) {
-    console.error('Project sentiment GET error:', error);
+    log.error('api.projects.id.sentiment.', { error: String('Project sentiment GET error:') }, requestContext(req));
     return NextResponse.json({ error: 'Failed to fetch project sentiment' }, { status: 500 });
   }
 }

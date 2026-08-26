@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { authError, requireSessionOrg } from '@/lib/api';
 import { localDayKey, zonedDayStart } from '@/lib/timezone';
+import { log, requestContext } from '@/lib/logger';
 
 // GET /api/live-monitor/event-stats?range=today|24h|7d
 //
@@ -127,7 +128,7 @@ export async function GET(req: NextRequest) {
       },
     });
   } catch (error) {
-    console.error('Event stats GET error:', error);
+    log.error('api.live-monitor.event-stats.', { error: String('Event stats GET error:') }, requestContext(req));
     return NextResponse.json({ error: 'Failed to fetch event statistics' }, { status: 500 });
   }
 }

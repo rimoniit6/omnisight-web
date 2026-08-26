@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { authError, requireManagerOrg } from '@/lib/api';
 import { excludeInternalAgentActivities } from '@/lib/agent-process';
+import { log, requestContext } from '@/lib/logger';
 
 export async function GET(
   req: NextRequest,
@@ -139,7 +140,7 @@ export async function GET(
 
     return NextResponse.json({ data: exportData, reportTitle: report.title, truncated });
   } catch (error) {
-    console.error('Report export GET error:', error);
+    log.error('api.reports.id.export.', { error: String('Report export GET error:') }, requestContext(req));
     return NextResponse.json({ error: 'Failed to export report' }, { status: 500 });
   }
 }

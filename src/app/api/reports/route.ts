@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { authError, getSessionOrg, requireManagerOrg, validatePagination, parseJsonBody, BodyParseError, isValidDate } from '@/lib/api';
 import { parseBoundedRange } from '@/lib/export';
+import { log, requestContext } from '@/lib/logger';
 
 // P3-3: report generation only accepts known types/formats — never free-form
 // values that could be stored as misleading report metadata.
@@ -73,7 +74,7 @@ export async function GET(req: NextRequest) {
       totalPages: Math.ceil(total / pagination.pageSize),
     });
   } catch (error) {
-    console.error('Reports GET error:', error);
+    log.error('api.reports.', { error: String('Reports GET error:') }, requestContext(req));
     return NextResponse.json({ error: 'Failed to fetch reports' }, { status: 500 });
   }
 }
@@ -156,7 +157,7 @@ export async function POST(req: NextRequest) {
     });
     return NextResponse.json({ data: report }, { status: 201 });
   } catch (error) {
-    console.error('Reports POST error:', error);
+    log.error('api.reports.', { error: String('Reports POST error:') }, requestContext(req));
     return NextResponse.json({ error: 'Failed to generate report' }, { status: 500 });
   }
 }

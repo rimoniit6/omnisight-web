@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { authError, requireSessionOrg } from '@/lib/api';
 import { parseISO, startOfDay, subDays } from 'date-fns';
+import { log, requestContext } from '@/lib/logger';
 
 // GET /api/employees/[id]/location?from&to&page&pageSize
 // Admin telemetry: geolocation history for one employee.
@@ -113,7 +114,7 @@ export async function GET(
       totalPages,
     });
   } catch (error) {
-    console.error('Admin location telemetry error:', error);
+    log.error('api.employees.id.location.', { error: String('Admin location telemetry error:') }, requestContext(request));
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }

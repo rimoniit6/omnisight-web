@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { getScopedEmployee } from '@/lib/self-guard';
+import { log, requestContext } from '@/lib/logger';
 
 // GET /api/self/devices?employeeId=xxx
 // Manager+ role (enforced by middleware); employee scoped to caller's org.
@@ -62,7 +63,7 @@ export async function GET(req: NextRequest) {
       total: devicesWithLatest.length,
     });
   } catch (error) {
-    console.error('Self Devices GET error:', error);
+    log.error('api.self.devices.', { error: String('Self Devices GET error:') }, requestContext(req));
     return NextResponse.json({ error: 'Failed to fetch devices' }, { status: 500 });
   }
 }

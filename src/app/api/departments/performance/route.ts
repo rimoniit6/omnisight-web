@@ -2,6 +2,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { authError, requireSessionOrg } from '@/lib/api';
+import { log, requestContext } from '@/lib/logger';
 
 export async function GET(req: NextRequest) {
   try {
@@ -84,7 +85,7 @@ export async function GET(req: NextRequest) {
 
     return NextResponse.json({ data: performance });
   } catch (error) {
-    console.error('Departments performance GET error:', error);
+    log.error('api.departments.performance.', { error: String('Departments performance GET error:') }, requestContext(req));
     return NextResponse.json({ error: 'Failed to fetch department performance' }, { status: 500 });
   }
 }

@@ -4,6 +4,7 @@ import { db } from '@/lib/db';
 import { authError, requireAdminOrg, SAFE_EMPLOYEE_SELECT } from '@/lib/api';
 import { checkRateLimit, RATE_LIMITS, getClientIpFromHeaders } from '@/lib/rate-limit';
 import { createOrgNotification } from '@/lib/notifications/service';
+import { log, requestContext } from '@/lib/logger';
 
 // POST /api/agent-registrations/[id]/reject
 // Reject a pending agent registration (admin-only, org-scoped).
@@ -103,7 +104,7 @@ export async function POST(
       data: updatedRegistration,
     });
   } catch (error) {
-    console.error('AgentRegistration reject error:', error);
+    log.error('api.agent-registrations.id.reject.', { error: String('AgentRegistration reject error:') }, requestContext(req));
     return NextResponse.json(
       { error: 'Failed to reject registration' },
       { status: 500 }

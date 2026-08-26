@@ -5,6 +5,7 @@ import { authError, requireAdminOrg, SAFE_EMPLOYEE_SELECT } from '@/lib/api';
 import { checkRateLimit, RATE_LIMITS, getClientIpFromHeaders } from '@/lib/rate-limit';
 import { DEVICE_ELIGIBLE_STATUSES, ActiveDeviceConflictError } from '@/lib/agent/activation';
 import { createOrgNotification } from '@/lib/notifications/service';
+import { log, requestContext } from '@/lib/logger';
 
 // POST /api/agent-registrations/[id]/approve
 // Approve a pending agent registration (admin-only, org-scoped).
@@ -164,7 +165,7 @@ export async function POST(
     if (error instanceof ActiveDeviceConflictError) {
       return NextResponse.json({ error: 'ACTIVE_DEVICE_EXISTS' }, { status: 409 });
     }
-    console.error('AgentRegistration approve error:', error);
+    log.error('api.agent-registrations.id.approve.', { error: String('AgentRegistration approve error:') }, requestContext(req));
     return NextResponse.json(
       { error: 'Failed to approve registration' },
       { status: 500 }

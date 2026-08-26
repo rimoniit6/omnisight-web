@@ -4,6 +4,7 @@ import { getSessionOrg, authenticateRequest, validatePagination } from '@/lib/ap
 import { hasRolePermission } from '@/lib/auth';
 import { isValidConsentType, CONSENT_TYPES, MAX_CONSENT_NOTES_LENGTH, applyConsentTransition } from '@/lib/consent';
 import type { ConsentStatus } from '@/lib/consent';
+import { log, requestContext } from '@/lib/logger';
 
 // GET /api/consent — List all consent records with filters
 // Manager+ (S-01): the UI gates the Consent page to manager and the proxy
@@ -85,7 +86,7 @@ export async function GET(req: NextRequest) {
 
     return NextResponse.json({ data: consents, total, page, pageSize, totalPages: Math.ceil(total / pageSize), stats });
   } catch (error) {
-    console.error('Consent GET error:', error);
+    log.error('api.consent.', { error: String('Consent GET error:') }, requestContext(req));
     return NextResponse.json({ error: 'Failed to fetch consents' }, { status: 500 });
   }
 }
@@ -195,11 +196,11 @@ export async function POST(req: NextRequest) {
       if (message.startsWith('Invalid consent transition')) {
         return NextResponse.json({ error: message }, { status: 409 });
       }
-      console.error('Consent POST error:', transitionError);
+      log.error('api.consent.', { error: String('Consent POST error:') }, requestContext(req));
       return NextResponse.json({ error: 'Failed to create consent' }, { status: 500 });
     }
   } catch (error) {
-    console.error('Consent POST error:', error);
+    log.error('api.consent.', { error: String('Consent POST error:') }, requestContext(req));
     return NextResponse.json({ error: 'Failed to create consent' }, { status: 500 });
   }
 }

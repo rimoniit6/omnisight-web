@@ -2,6 +2,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { authError, requireAdminOrg } from '@/lib/api';
+import { log, requestContext } from '@/lib/logger';
 
 /**
  * Admin-controlled Active Tracking Project — single authoritative control.
@@ -167,7 +168,7 @@ export async function PUT(
         : 'Active tracking project updated',
     });
   } catch (error) {
-    console.error('Active project PUT error:', error);
+    log.error('api.employees.id.active-project.', { error: String('Active project PUT error:') }, requestContext(req));
     return NextResponse.json({ error: 'Failed to update active tracking project' }, { status: 500 });
   }
 }

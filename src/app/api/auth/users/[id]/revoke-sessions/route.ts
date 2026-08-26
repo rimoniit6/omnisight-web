@@ -3,6 +3,7 @@ import { db } from '@/lib/db';
 import { authenticateRequest } from '@/lib/api';
 import { hasRolePermission } from '@/lib/auth';
 import { revokeAllUserSessions, getUserAgent } from '@/lib/session';
+import { log, requestContext } from '@/lib/logger';
 
 // POST /api/auth/users/[id]/revoke-sessions
 // Admin+ force-logout: revoke EVERY live session of the target user (S-04).
@@ -52,7 +53,7 @@ export async function POST(
 
     return NextResponse.json({ success: true, revoked });
   } catch (error) {
-    console.error('Revoke user sessions error:', error);
+    log.error('api.auth.users.id.revoke-sessions.', { error: String('Revoke user sessions error:') }, requestContext(req));
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }

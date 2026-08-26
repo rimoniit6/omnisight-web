@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { NOTIFICATION_TYPE_REGISTRY } from '@/lib/notifications/constants';
+import { log, requestContext } from '@/lib/logger';
 
 export async function GET() {
   // Honest registry (N-6): `active: true` means a REAL producer exists in the

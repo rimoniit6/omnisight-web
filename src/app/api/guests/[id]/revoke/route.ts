@@ -2,6 +2,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { findOrgGuest, requireGuestWriteScope } from '@/lib/guests';
+import { log, requestContext } from '@/lib/logger';
 
 // POST /api/guests/[id]/revoke
 // Revoke an ACTIVE/SUSPENDED guest (admin-only, org-scoped). Terminal state:
@@ -65,7 +66,7 @@ export async function POST(
 
     return NextResponse.json({ success: true, data: result });
   } catch (error) {
-    console.error('Guest revoke error:', error);
+    log.error('api.guests.id.revoke.', { error: String('Guest revoke error:') }, requestContext(req));
     return NextResponse.json({ error: 'Failed to revoke guest' }, { status: 500 });
   }
 }

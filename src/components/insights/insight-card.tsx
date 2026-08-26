@@ -244,9 +244,25 @@ export function InsightCard({ insight, onUpdate, index }: InsightCardProps) {
                       size="sm"
                       variant="ghost"
                       className="h-7 text-[11px] text-amber-600 hover:text-amber-700 hover:bg-amber-500/10 px-2"
-                      onClick={() => {
-                        toast.success('Alert created for this insight');
-                        onUpdate(insight.id, 'acknowledged');
+                      onClick={async () => {
+                        try {
+                          const res = await fetch('/api/alerts', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                              title: `Insight: ${insight.title}`,
+                              description: insight.content,
+                              type: insight.type === 'risk' || insight.type === 'anomaly' ? 'security' : 'system',
+                              severity: insight.type === 'risk' || insight.type === 'anomaly' ? 'warning' : 'info',
+                              source: 'insight',
+                            }),
+                          });
+                          if (!res.ok) throw new Error('Failed to create alert');
+                          toast.success('Alert created for this insight');
+                          onUpdate(insight.id, 'acknowledged');
+                        } catch (err) {
+                          toast.error(err instanceof Error ? err.message : 'Failed to create alert');
+                        }
                       }}
                     >
                       <Bell className="w-3 h-3 mr-1" /> Create Alert

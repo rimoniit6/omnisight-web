@@ -4,6 +4,7 @@ import { db } from '@/lib/db';
 import { authError, requireAdminOrg } from '@/lib/api';
 import { checkRateLimit, RATE_LIMITS, getClientIpFromHeaders } from '@/lib/rate-limit';
 import { resetAgentAccountPassword, toPublicAccount } from '@/lib/agent-account';
+import { log, requestContext } from '@/lib/logger';
 
 // POST /api/employees/[id]/agent-account/reset-password
 // Admin can reset an AgentAccount's password. Body: { "password": "..." }
@@ -76,7 +77,7 @@ export async function POST(
     if (err instanceof Error && (err as Error & { code?: string }).code === 'INVALID_PASSWORD') {
       return NextResponse.json({ error: err.message }, { status: 400 });
     }
-    console.error('AgentAccount reset-password error:', err);
+    log.error('api.employees.id.agent-account.reset-password.', { error: String('AgentAccount reset-password error:') }, requestContext(req));
     return NextResponse.json({ error: 'Failed to reset password' }, { status: 500 });
   }
 }

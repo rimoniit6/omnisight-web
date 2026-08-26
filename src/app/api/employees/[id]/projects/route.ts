@@ -2,6 +2,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { authError, requireSessionOrg, requireAdminOrg } from '@/lib/api';
+import { log, requestContext } from '@/lib/logger';
 
 /**
  * Employee ↔ Project memberships.
@@ -71,7 +72,7 @@ export async function GET(
 
     return NextResponse.json({ data, total: data.length });
   } catch (error) {
-    console.error('Employee projects GET error:', error);
+    log.error('api.employees.id.projects.', { error: String('Employee projects GET error:') }, requestContext(req));
     return NextResponse.json({ error: 'Failed to fetch employee projects' }, { status: 500 });
   }
 }
@@ -207,7 +208,7 @@ export async function PUT(
 
     return NextResponse.json({ data: result, message: 'Project assignments updated' });
   } catch (error: unknown) {
-    console.error('Employee projects PUT error:', error);
+    log.error('api.employees.id.projects.', { error: String('Employee projects PUT error:') }, requestContext(req));
     return NextResponse.json({ error: 'Failed to update project assignments' }, { status: 500 });
   }
 }

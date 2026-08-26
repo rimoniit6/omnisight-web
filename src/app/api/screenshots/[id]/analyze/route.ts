@@ -3,6 +3,7 @@ import { db } from '@/lib/db';
 import { callAIProviderVision } from '@/lib/ai-provider-helper';
 import { authError, requireAdminOrg } from '@/lib/api';
 import { screenshotAiInput } from '@/lib/storage';
+import { log, requestContext } from '@/lib/logger';
 
 // POST /api/screenshots/[id]/analyze — AI-powered OCR + analysis
 // Only real data is ever persisted: if the image file is missing, unreadable,
@@ -67,7 +68,7 @@ export async function POST(
       );
       ocrText = ocrResult?.text || '';
     } catch (ocrError) {
-      console.error('OCR failed:', ocrError);
+      log.error('api.screenshots.id.analyze.', { error: String('OCR failed:') }, requestContext(req));
       return NextResponse.json(
         { error: 'OCR failed. No analysis was saved.' },
         { status: 502 }
@@ -105,11 +106,11 @@ Respond in valid JSON:
         }
         return parsed;
       } catch {
-        console.error('Analysis response was not valid JSON:', rawAnalysis);
+        log.error('api.screenshots.id.analyze.', { error: String('Analysis response was not valid JSON:') }, requestContext(req));
         throw new Error('AI analysis returned invalid output');
       }
     } catch (analysisError) {
-      console.error('VLM analysis failed:', analysisError);
+      log.error('api.screenshots.id.analyze.', { error: String('VLM analysis failed:') }, requestContext(req));
       throw new Error('AI analysis failed');
     }
   })();
@@ -135,7 +136,7 @@ Respond in valid JSON:
       message === 'AI analysis returned invalid output' || message === 'AI analysis failed' || message === 'OCR failed'
         ? 502
         : 500;
-    console.error('Screenshot analyze error:', error);
+    log.error('api.screenshots.id.analyze.', { error: String('Screenshot analyze error:') }, requestContext(req));
     return NextResponse.json({ error: message === 'Internal server error' ? message : `Screenshot analysis failed. No analysis was saved.` }, { status });
   }
 }

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { authenticateRequest, getSessionOrg } from '@/lib/api';
 import { hasRolePermission } from '@/lib/auth';
+import { log, requestContext } from '@/lib/logger';
 
 // POST /api/anomalies/batch — Batch update anomaly statuses (manager+)
 // All ids are verified against the caller's organization before updating —
@@ -87,7 +88,7 @@ export async function POST(req: NextRequest) {
       excluded: ids.length - scopedIds.length,
     });
   } catch (error) {
-    console.error('Anomaly batch update error:', error);
+    log.error('api.anomalies.batch.', { error: String('Anomaly batch update error:') }, requestContext(req));
     return NextResponse.json({ error: 'Failed to batch update anomalies' }, { status: 500 });
   }
 }

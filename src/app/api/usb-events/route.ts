@@ -3,6 +3,7 @@ import { db } from '@/lib/db';
 import type { Prisma } from '@prisma/client';
 import { authError, requireSessionOrg, validatePagination, parseOptionalDate } from '@/lib/api';
 import { isValidUsbEventType } from '@/lib/policies/constants';
+import { log, requestContext } from '@/lib/logger';
 
 // GET /api/usb-events — List USB monitoring events.
 // Tenant isolation: USB events are organization-scoped from the verified
@@ -113,7 +114,7 @@ export async function GET(req: NextRequest) {
       summary: { total: eventCount, blocked: blockedCount, inserts: insertCount, removes: removeCount },
     });
   } catch (error) {
-    console.error('USB events GET error:', error);
+    log.error('api.usb-events.', { error: String('USB events GET error:') }, requestContext(req));
     return NextResponse.json({ error: 'Failed to fetch USB events' }, { status: 500 });
   }
 }

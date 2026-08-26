@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { getSessionOrg, authenticateRequest, validatePagination } from '@/lib/api';
 import { hasRolePermission } from '@/lib/auth';
+import { log, requestContext } from '@/lib/logger';
 
 // GET /api/consent/logs — Get consent audit logs (scoped to caller's org)
 // Manager+ (S-01): consent audit history is privacy-relevant — same gate as
@@ -55,7 +56,7 @@ export async function GET(req: NextRequest) {
 
     return NextResponse.json({ data: logs, total, page, pageSize, totalPages: Math.ceil(total / pageSize) });
   } catch (error) {
-    console.error('Consent logs GET error:', error);
+    log.error('api.consent.logs.', { error: String('Consent logs GET error:') }, requestContext(req));
     return NextResponse.json({ error: 'Failed to fetch consent logs' }, { status: 500 });
   }
 }

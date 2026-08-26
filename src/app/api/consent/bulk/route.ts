@@ -5,6 +5,7 @@ import { hasRolePermission } from '@/lib/auth';
 import { CONSENT_TYPES, applyConsentTransition } from '@/lib/consent';
 import type { ConsentStatus, ConsentType } from '@/lib/consent';
 import { endWebcamSessionsOnRevoke } from '@/lib/webcam-session-cleanup';
+import { log, requestContext } from '@/lib/logger';
 
 // POST /api/consent/bulk — Bulk grant or revoke consents for an employee (admin only)
 export async function POST(req: NextRequest) {
@@ -129,7 +130,7 @@ export async function POST(req: NextRequest) {
     if (message.startsWith('Invalid consent transition')) {
       return NextResponse.json({ error: message }, { status: 409 });
     }
-    console.error('Consent bulk error:', error);
+    log.error('api.consent.bulk.', { error: String('Consent bulk error:') }, requestContext(req));
     return NextResponse.json({ error: 'Failed to bulk update consents' }, { status: 500 });
   }
 }

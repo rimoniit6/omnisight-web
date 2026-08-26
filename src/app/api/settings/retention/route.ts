@@ -4,6 +4,7 @@ import { authenticateRequest, getSessionOrg } from '@/lib/api';
 import { hasRolePermission } from '@/lib/auth';
 import { RETENTION_KEYS } from '@/lib/jobs/settings';
 import type { RetentionKey } from '@/lib/jobs/settings';
+import { log, requestContext } from '@/lib/logger';
 
 // Org-scoped data-retention configuration. Values are persisted in the
 // OrganizationSetting table (one row per org + key) and consumed by the
@@ -55,7 +56,7 @@ export async function GET(req: NextRequest) {
 
     return NextResponse.json({ data: settings });
   } catch (error) {
-    console.error('Retention settings GET error:', error);
+    log.error('api.settings.retention.', { error: String('Retention settings GET error:') }, requestContext(req));
     return NextResponse.json({ error: 'Failed to fetch retention settings' }, { status: 500 });
   }
 }
@@ -112,7 +113,7 @@ export async function PUT(req: NextRequest) {
 
     return NextResponse.json({ data: { key, days }, setting });
   } catch (error) {
-    console.error('Retention settings PUT error:', error);
+    log.error('api.settings.retention.', { error: String('Retention settings PUT error:') }, requestContext(req));
     return NextResponse.json({ error: 'Failed to update retention setting' }, { status: 500 });
   }
 }

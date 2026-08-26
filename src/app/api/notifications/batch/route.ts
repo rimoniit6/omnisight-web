@@ -2,6 +2,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { authError, requireAdminOrg } from '@/lib/api';
+import { log, requestContext } from '@/lib/logger';
 
 export async function POST(req: NextRequest) {
   try {
@@ -69,7 +70,7 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({ error: 'Unknown action' }, { status: 400 });
   } catch (error) {
-    console.error('Notifications batch error:', error);
+    log.error('api.notifications.batch.', { error: String('Notifications batch error:') }, requestContext(req));
     return NextResponse.json({ error: 'Failed to perform batch operation' }, { status: 500 });
   }
 }

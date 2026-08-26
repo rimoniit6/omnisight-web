@@ -4,6 +4,7 @@ import { db } from '@/lib/db';
 import { authError, requireAdminOrg, SAFE_EMPLOYEE_SELECT } from '@/lib/api';
 import { checkRateLimit, RATE_LIMITS, getClientIpFromHeaders } from '@/lib/rate-limit';
 import { createOrgNotification } from '@/lib/notifications/service';
+import { log, requestContext } from '@/lib/logger';
 import {
   createGuestBackedEmployee,
   grantGuestMonitoringConsents,
@@ -426,7 +427,7 @@ export async function POST(
         { status: 422 }
       );
     }
-    console.error('DeviceClaim approve error:', error);
+    log.error('api.device-claims.id.approve.', { error: String('DeviceClaim approve error:') }, requestContext(req));
     return NextResponse.json({ error: 'Failed to approve device' }, { status: 500 });
   }
 }

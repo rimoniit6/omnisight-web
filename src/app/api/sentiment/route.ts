@@ -2,6 +2,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { authError, requireSessionOrg } from '@/lib/api';
+import { log, requestContext } from '@/lib/logger';
 
 const ALLOWED_MOODS = ['positive', 'neutral', 'negative', 'critical', 'no-data'];
 const ALLOWED_SORTS = ['score_desc', 'score_asc', 'name_asc', 'newest'];
@@ -200,7 +201,7 @@ export async function GET(req: NextRequest) {
       departments,
     });
   } catch (error) {
-    console.error('Sentiment GET error:', error);
+    log.error('api.sentiment.', { error: String('Sentiment GET error:') }, requestContext(req));
     return NextResponse.json(
       { error: 'Failed to fetch sentiment records' },
       { status: 500 }

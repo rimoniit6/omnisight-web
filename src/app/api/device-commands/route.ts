@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { requireAdminOrg } from '@/lib/api';
 import { AGENT_COMMAND_ALLOWLIST } from '@/app/api/agent/commands/route';
+import { log, requestContext } from '@/lib/logger';
 
 // POST /api/device-commands
 // Admin enqueues a command for a specific device (the minimal contract the
@@ -125,7 +126,7 @@ export async function POST(req: NextRequest) {
       expiresAt: command.expiresAt.toISOString(),
     });
   } catch (error) {
-    console.error('Device command create error:', error);
+    log.error('api.device-commands.', { error: String('Device command create error:') }, requestContext(req));
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }

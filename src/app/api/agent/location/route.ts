@@ -3,6 +3,7 @@ import { db } from '@/lib/db';
 import { validateAgentToken } from '@/lib/agent/auth';
 import { hasActiveConsent } from '@/lib/consent';
 import { resolveOrgMonitoring } from '@/lib/jobs/settings';
+import { log, requestContext } from '@/lib/logger';
 
 // POST /api/agent/location
 // One geolocation fix from the desktop agent's native geolocation module.
@@ -98,7 +99,7 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({ success: true, id: created.id, message: 'Location recorded' });
   } catch (error) {
-    console.error('Agent location error:', error);
+    log.error('api.agent.location.', { error: String('Agent location error:') }, requestContext(req));
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }

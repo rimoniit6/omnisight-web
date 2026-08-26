@@ -5,6 +5,7 @@ import { validateAgentToken } from '@/lib/agent/auth';
 import { hasActiveConsent } from '@/lib/consent';
 import { resolveOrgMonitoring } from '@/lib/jobs/settings';
 import { validateUsbEventInput, usbDedupeKey } from '@/lib/policies/validation';
+import { log, requestContext } from '@/lib/logger';
 
 // POST /api/agent/usb
 // Agent reports a real USB device arrival/removal observation.
@@ -102,7 +103,7 @@ export async function POST(req: NextRequest) {
       throw error;
     }
   } catch (error) {
-    console.error('Agent USB POST error:', error);
+    log.error('api.agent.usb.', { error: String('Agent USB POST error:') }, requestContext(req));
     return NextResponse.json({ error: 'Failed to record USB event' }, { status: 500 });
   }
 }

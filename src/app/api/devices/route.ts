@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { authError, requireSessionOrg, requireAdminOrg, validatePagination } from '@/lib/api';
 import { effectiveDeviceStatus } from '@/lib/device-status';
+import { log, requestContext } from '@/lib/logger';
 
 export async function GET(req: NextRequest) {
   try {
@@ -54,7 +55,7 @@ export async function GET(req: NextRequest) {
     const totalPages = Math.ceil(total / pageSize);
     return NextResponse.json({ data: devices, total, page, pageSize, totalPages });
   } catch (error) {
-    console.error('Devices GET error:', error);
+    log.error('api.devices.', { error: String('Devices GET error:') }, requestContext(req));
     return NextResponse.json({ error: 'Failed to fetch devices' }, { status: 500 });
   }
 }
@@ -90,7 +91,7 @@ export async function POST(req: NextRequest) {
     });
     return NextResponse.json({ data: device }, { status: 201 });
   } catch (error) {
-    console.error('Devices POST error:', error);
+    log.error('api.devices.', { error: String('Devices POST error:') }, requestContext(req));
     return NextResponse.json({ error: 'Failed to create device' }, { status: 500 });
   }
 }

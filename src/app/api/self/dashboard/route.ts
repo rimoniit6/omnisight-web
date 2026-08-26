@@ -4,6 +4,7 @@ import { getScopedEmployee } from '@/lib/self-guard';
 import { excludeInternalAgentActivities } from '@/lib/agent-process';
 import { effectiveDeviceStatus } from '@/lib/device-status';
 import { safeTimezone, orgDayWindow, localDayKey, zonedDayStart, addDaysToKey, zonedDayOfWeek } from '@/lib/timezone';
+import { log, requestContext } from '@/lib/logger';
 
 // GET /api/self/dashboard?employeeId=xxx
 // Manager+ role (enforced by middleware); employee scoped to caller's org.
@@ -210,7 +211,7 @@ export async function GET(req: NextRequest) {
       },
     });
   } catch (error) {
-    console.error('Self Dashboard GET error:', error);
+    log.error('api.self.dashboard.', { error: String('Self Dashboard GET error:') }, requestContext(req));
     return NextResponse.json({ error: 'Failed to fetch self dashboard' }, { status: 500 });
   }
 }

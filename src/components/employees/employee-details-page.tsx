@@ -74,6 +74,7 @@ import {
 import { formatDistanceToNow } from 'date-fns';
 import { useAppStore } from '@/lib/store';
 import { toast } from 'sonner';
+import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { motion } from 'framer-motion';
 import { useTheme } from 'next-themes';
 import { exportToCSV } from '@/lib/csv-export';
@@ -358,46 +359,82 @@ export function EmployeeDetailsPage() {
   const chartTextColor = isDark ? '#a1a1aa' : '#71717a';
   const chartGridColor = isDark ? '#27272a' : '#e4e4e7';
 
+  const [exporting, setExporting] = useState(false);
+
   const handleExport = async () => {
-    if (!emp) return;
-    // Export the COMPLETE selected dataset — loop every page of the paginated
-    // timeline endpoint (never just the loaded pages / a hardcoded slice).
-    const collected: Array<Record<string, unknown>> = [];
-    let page = 1;
-    let totalPages = 1;
-    while (page <= totalPages && page <= 500) {
-      const params = new URLSearchParams({ page: String(page), pageSize: '100' });
-      if (fromStr) params.set('from', fromStr);
-      if (toStr) params.set('to', toStr);
-      const res = await fetch(`/api/employees/${emp.id}/activities?${params}`);
-      if (!res.ok) break;
-      const body = await res.json();
-      collected.push(...(body.data ?? []));
-      totalPages = body.totalPages ?? 1;
-      page += 1;
+    if (!emp || exporting) return;
+    setExporting(true);
+    try {
+      // Export the COMPLETE selected dataset — loop every page of the paginated
+      // timeline endpoint (never just the loaded pages / a hardcoded slice).
+      const collected: Array<Record<string, unknown>> = [];
+      let page = 1;
+      let totalPages = 1;
+      let failed = false;
+      while (page <= totalPages && page <= 500) {
+        const params = new URLSearchParams({ page: String(page), pageSize: '100' });
+        if (fromStr) params.set('from', fromStr);
+        if (toStr) params.set('to', toStr);
+        const res = await fetch(`/api/employees/${emp.id}/activities?${params}`);
+        if (!res.ok) {
+          failed = true;
+          break;
+        }
+        const body = await res.json();
+        collected.push(...(body.data ?? []));
+        totalPages = body.totalPages ?? 1;
+        page += 1;
+      }
+      if (failed && collected.length === 0) {
+        throw new Error('Failed to export activities');
+      }
+      const exportData = collected.map((a: Record<string, unknown>) => ({
+        'Timestamp': a.timestamp ? format(new Date(a.timestamp as string), 'yyyy-MM-dd HH:mm') : '',
+        'Type': a.type || '',
+        'Application': a.applicationName || '',
+        'Title': a.title || '',
+        'URL': a.url || '',
+        'Category': a.category || '',
+        'Duration (minutes)': Math.round((a.duration as number) / 60),
+        'Device': (a.device as Record<string, string>)?.name || '',
+      }));
+      exportToCSV(exportData, `employee-${emp.firstName}-${emp.lastName}-activities`);
+      if (failed) {
+        toast.warning(`Partial export: ${exportData.length} rows (some pages failed)`);
+      } else {
+        toast.success(`Activity data exported (${exportData.length} rows)`);
+      }
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to export activities');
+    } finally {
+      setExporting(false);
     }
-    const exportData = collected.map((a: Record<string, unknown>) => ({
-      'Timestamp': a.timestamp ? format(new Date(a.timestamp as string), 'yyyy-MM-dd HH:mm') : '',
-      'Type': a.type || '',
-      'Application': a.applicationName || '',
-      'Title': a.title || '',
-      'URL': a.url || '',
-      'Category': a.category || '',
-      'Duration (minutes)': Math.round((a.duration as number) / 60),
-      'Device': (a.device as Record<string, string>)?.name || '',
-    }));
-    exportToCSV(exportData, `employee-${emp.firstName}-${emp.lastName}-activities`);
-    toast.success(`Activity data exported (${exportData.length} rows)`);
   };
 
+  const [archiving, setArchiving] = useState(false);
+  const [archiveDialogOpen, setArchiveDialogOpen] = useState(false);
+
   const handleArchive = async () => {
-    if (!emp) return;
+    setArchiveDialogOpen(false);
+    if (!emp || archiving) return;
+    setArchiving(true);
     try {
-      await fetch(`/api/employees/${emp.id}`, { method: 'DELETE' });
+      const res = await fetch(`/api/employees/${emp.id}`, { method: 'DELETE' });
+      if (!res.ok) {
+        let msg = 'Failed to archive employee';
+        try { const j = await res.json(); if (j?.error) msg = j.error; } catch { /* keep default */ }
+        throw new Error(msg);
+      }
       toast.success('Employee archived');
+      // M-22: invalidate all employee-related caches
+      queryClient.invalidateQueries({ queryKey: ['employees'] });
+      queryClient.invalidateQueries({ queryKey: ['employee-statistics'] });
+      queryClient.invalidateQueries({ queryKey: ['dashboard'] });
       setCurrentPage('employees');
-    } catch {
-      toast.error('Failed to archive employee');
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to archive employee');
+    } finally {
+      setArchiving(false);
     }
   };
 
@@ -542,7 +579,7 @@ export function EmployeeDetailsPage() {
                     filename={`employee-report-${emp.firstName}-${emp.lastName}-${format(new Date(), 'yyyy-MM-dd')}.pdf`}
                     label="PDF Report"
                   />
-                  <Button variant="outline" size="sm" className="text-destructive hover:text-destructive" onClick={handleArchive}>
+                  <Button variant="outline" size="sm" className="text-destructive hover:text-destructive" onClick={() => setArchiveDialogOpen(true)} disabled={archiving}>
                     <Archive className="w-3.5 h-3.5 mr-1.5" /> Archive
                   </Button>
                 </div>
@@ -1264,6 +1301,16 @@ export function EmployeeDetailsPage() {
           onSaved={handleProjectsSaved}
         />
       )}
+
+      <ConfirmDialog
+        open={archiveDialogOpen}
+        onOpenChange={setArchiveDialogOpen}
+        title="Archive Employee"
+        description={`Are you sure you want to archive ${emp ? `${emp.firstName} ${emp.lastName}` : 'this employee'}? They will be deactivated and removed from active listings.`}
+        confirmLabel="Archive"
+        onConfirm={handleArchive}
+        disabled={archiving}
+      />
     </div>
   );
 }

@@ -5,6 +5,7 @@ import { authError, requireSessionOrg } from '@/lib/api';
 import { NON_INTERNAL_AGENT_ACTIVITY_FILTER } from '@/lib/agent-process';
 import { safeTimezone, zonedDayStart, zonedDayEnd, localDayKey } from '@/lib/timezone';
 import { subDays } from 'date-fns';
+import { log, requestContext } from '@/lib/logger';
 
 // GET /api/employees/[id]/activities?from&to&page&pageSize
 // Paginated, org-scoped activity timeline for a single employee.
@@ -124,7 +125,7 @@ export async function GET(
       totalPages: Math.ceil(total / pageSize),
     });
   } catch (error) {
-    console.error('Employee activities error:', error);
+    log.error('api.employees.id.activities.', { error: String('Employee activities error:') }, requestContext(request));
     return NextResponse.json({ error: 'Failed to fetch employee activities' }, { status: 500 });
   }
 }

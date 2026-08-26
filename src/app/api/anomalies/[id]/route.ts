@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { authenticateRequest, getSessionOrg } from '@/lib/api';
 import { hasRolePermission } from '@/lib/auth';
+import { log, requestContext } from '@/lib/logger';
 
 // GET /api/anomalies/[id] — Get single anomaly (org-scoped)
 export async function GET(
@@ -32,7 +33,7 @@ export async function GET(
 
     return NextResponse.json(anomaly);
   } catch (error) {
-    console.error('Anomaly GET by ID error:', error);
+    log.error('api.anomalies.id.', { error: String('Anomaly GET by ID error:') }, requestContext(req));
     return NextResponse.json({ error: 'Failed to fetch anomaly' }, { status: 500 });
   }
 }
@@ -104,7 +105,7 @@ export async function PUT(
 
     return NextResponse.json(updated);
   } catch (error) {
-    console.error('Anomaly PUT error:', error);
+    log.error('api.anomalies.id.', { error: String('Anomaly PUT error:') }, requestContext(req));
     return NextResponse.json({ error: 'Failed to update anomaly' }, { status: 500 });
   }
 }

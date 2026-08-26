@@ -4,6 +4,7 @@ import { db } from '@/lib/db';
 import { authError, requireAdminOrg } from '@/lib/api';
 import { checkRateLimit, RATE_LIMITS, getClientIpFromHeaders } from '@/lib/rate-limit';
 import { Prisma } from '@prisma/client';
+import { log, requestContext } from '@/lib/logger';
 import {
   createAgentAccount,
   setAgentAccountStatus,
@@ -114,7 +115,7 @@ export async function POST(
       }
       return NextResponse.json({ error: 'Agent account already exists for this employee' }, { status: 409 });
     }
-    console.error('AgentAccount POST error:', err);
+    log.error('api.employees.id.agent-account.', { error: String('AgentAccount POST error:') }, requestContext(req));
     return NextResponse.json({ error: 'Failed to create agent account' }, { status: 500 });
   }
 }

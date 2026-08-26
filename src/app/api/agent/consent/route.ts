@@ -3,6 +3,7 @@ import { db } from '@/lib/db';
 import { validateAgentToken } from '@/lib/agent/auth';
 import { getConsentState, applyConsentTransition } from '@/lib/consent';
 import type { ConsentStatus } from '@/lib/consent';
+import { log, requestContext } from '@/lib/logger';
 
 // GET /api/agent/consent — Agent checks if employee has granted consent for specific types
 // Version-aware: uses the same enforcement semantics as the upload endpoints
@@ -44,7 +45,7 @@ export async function GET(req: NextRequest) {
       missing: requested.filter((t) => !consents[t]),
     });
   } catch (error) {
-    console.error('Agent consent check error:', error);
+    log.error('api.agent.consent.', { error: String('Agent consent check error:') }, requestContext(req));
     return NextResponse.json({ error: 'Failed to check consent' }, { status: 500 });
   }
 }
@@ -139,7 +140,7 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({ success: true, action, consentType });
   } catch (error) {
-    console.error('Agent consent POST error:', error);
+    log.error('api.agent.consent.', { error: String('Agent consent POST error:') }, requestContext(req));
     return NextResponse.json({ error: 'Failed to update consent' }, { status: 500 });
   }
 }

@@ -29,6 +29,10 @@ export interface RetentionResult {
   /** Paths whose physical artifact could NOT be deleted this run — the DB row
    * is deliberately retained so a later run can retry the unlink. */
   fileErrors: string[];
+  /** Audio recordings and transcriptions purged past retention. */
+  audioRecordings: number;
+  audioTranscriptions: number;
+  audioFileErrors: string[];
   /** Organization-level failures (continue-on-error isolation in runRetention). */
   errors: string[];
 }
@@ -47,6 +51,9 @@ const EMPTY: RetentionResult = {
   alerts: 0,
   breakSessions: 0,
   breakActivityRows: 0,
+  audioRecordings: 0,
+  audioTranscriptions: 0,
+  audioFileErrors: [],
   orphanScreenshotsRemoved: 0,
   fileErrors: [],
   errors: [],
@@ -54,7 +61,7 @@ const EMPTY: RetentionResult = {
 
 function mergeInto(target: RetentionResult, other: RetentionResult): RetentionResult {
   for (const key of Object.keys(EMPTY) as (keyof RetentionResult)[]) {
-    if (key === 'fileErrors' || key === 'errors') {
+    if (key === 'fileErrors' || key === 'errors' || key === 'audioFileErrors') {
       target[key] = [...target[key], ...other[key]];
     } else {
       target[key] += other[key];
@@ -309,6 +316,44 @@ export async function runRetentionForOrg(
       if (stale.length < limit) break;
     }
     result.alerts = purged;
+  }
+
+  // Audio recordings & transcriptions: use screenshot_retention_days as the
+  // default window (audio is a closely related capture artifact). Older
+  // completed or failed recordings are purged; in-progress recordings are
+  // never deleted. Physical audio files are removed through the storage driver
+  // before the DB row — a file that cannot be deleted keeps its row.
+  const audioDays = await resolveRetentionDays(orgId, 'screenshot_retention_days');
+  if (audioDays > 0) {
+    const staleAudio = await db.audioRecording.findMany({
+      where: {
+        organizationId: orgId,
+        status: { in: ['completed', 'failed'] },
+        createdAt: { lt: retentionCutoff(audioDays, now) },
+      },
+      take: limit,
+      select: { id: true, filePath: true },
+    });
+    if (staleAudio.length > 0) {
+      const removableIds: string[] = [];
+      for (const row of staleAudio) {
+        if (!row.filePath) {
+          removableIds.push(row.id);
+          continue;
+        }
+        try {
+          await removeArtifactByPath(orgId, row.filePath, 'legacy');
+          removableIds.push(row.id);
+        } catch {
+          result.audioFileErrors.push(`audio ${row.id} (${row.filePath})`);
+        }
+      }
+      if (removableIds.length > 0) {
+        // Transcriptions are cascade-deleted with the recording.
+        const del = await db.audioRecording.deleteMany({ where: { id: { in: removableIds } } });
+        result.audioRecordings = del.count;
+      }
+    }
   }
 
   return result;

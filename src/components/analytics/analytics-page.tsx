@@ -13,7 +13,7 @@ import { Label } from '@/components/ui/label';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Calendar } from '@/components/ui/calendar';
 import { Skeleton } from '@/components/ui/skeleton';
-import { CalendarIcon, TrendingUp, Clock, Users, Activity, GitCompareArrows, X } from 'lucide-react';
+import { CalendarIcon, TrendingUp, Clock, Users, Activity, GitCompareArrows, X, AlertTriangle } from 'lucide-react';
 import { format } from 'date-fns';
 import { cn } from '@/lib/utils';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -112,10 +112,15 @@ export function AnalyticsPage() {
     return p.toString();
   }, [customRangeInvalid, dateRange]);
 
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isError, refetch } = useQuery({
     queryKey: ['analytics', params ?? 'invalid-range'],
     queryFn: async () => {
       const res = await fetch(`/api/analytics?${params}`);
+      if (!res.ok) {
+        let message = `Request failed (${res.status})`;
+        try { const j = await res.json(); if (j?.error) message = j.error; } catch { /* keep default */ }
+        throw new Error(message);
+      }
       const json = await res.json();
       return json.data;
     },
@@ -155,6 +160,22 @@ export function AnalyticsPage() {
   ];
 
   const workload = data?.summary?.workloadDistribution;
+
+  // M-8: Error state — API failure must never render as "no data"
+  if (isError && !isLoading) {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-[400px] p-8">
+        <div className="text-center max-w-md">
+          <AlertTriangle className="w-12 h-12 mx-auto mb-4 text-destructive" />
+          <h3 className="text-lg font-semibold mb-2">Unable to Load Analytics</h3>
+          <p className="text-sm text-muted-foreground mb-4">
+            Something went wrong while loading analytics data.
+          </p>
+          <Button variant="outline" size="sm" onClick={() => refetch()}>Retry</Button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className='space-y-5' role='region' aria-label='Analytics'>

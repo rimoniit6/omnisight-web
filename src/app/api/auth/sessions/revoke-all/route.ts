@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { authenticateRequest } from '@/lib/api';
 import { revokeAllUserSessions } from '@/lib/session';
+import { log, requestContext } from '@/lib/logger';
 
 // POST /api/auth/sessions/revoke-all
 // Force-logout of EVERY session for the authenticated user — including the
@@ -17,7 +18,7 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({ success: true, revoked });
   } catch (error) {
-    console.error('Revoke-all sessions error:', error);
+    log.error('api.auth.sessions.revoke-all.', { error: String('Revoke-all sessions error:') }, requestContext(req));
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }

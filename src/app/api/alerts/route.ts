@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { authError, requireSessionOrg, requireAdminOrg, validatePagination } from '@/lib/api';
 import { isAlertStatus, isAlertSeverity } from '@/lib/notifications/constants';
+import { log, requestContext } from '@/lib/logger';
 
 export async function GET(req: NextRequest) {
   try {
@@ -87,8 +88,72 @@ export async function GET(req: NextRequest) {
       stats: { byStatus, bySeverity },
     });
   } catch (error) {
-    console.error('Alerts GET error:', error);
+    log.error('api.alerts.', { error: String('Alerts GET error:') }, requestContext(req));
     return NextResponse.json({ error: 'Failed to fetch alerts' }, { status: 500 });
+  }
+}
+
+export async function POST(req: NextRequest) {
+  try {
+    const admin = await requireAdminOrg(req);
+    if (!admin.ok) return authError(admin);
+
+    let body: Record<string, unknown>;
+    try {
+      body = await req.json();
+    } catch {
+      return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 });
+    }
+
+    const { title, description, type, severity, source, employeeId, deviceId } = body as {
+      title?: string;
+      description?: string;
+      type?: string;
+      severity?: string;
+      source?: string;
+      employeeId?: string;
+      deviceId?: string;
+    };
+
+    if (!title || typeof title !== 'string') {
+      return NextResponse.json({ error: 'title is required' }, { status: 400 });
+    }
+    if (!description || typeof description !== 'string') {
+      return NextResponse.json({ error: 'description is required' }, { status: 400 });
+    }
+
+    const alertType = type || 'system';
+    const alertSeverity = isAlertSeverity(severity) ? severity : 'warning';
+
+    const alert = await db.alert.create({
+      data: {
+        title,
+        description,
+        type: alertType,
+        severity: alertSeverity,
+        status: 'pending',
+        source: source || 'insight',
+        employeeId: employeeId || null,
+        deviceId: deviceId || null,
+        organizationId: admin.organizationId,
+      },
+    });
+
+    await db.auditLog.create({
+      data: {
+        action: 'create',
+        resource: 'alert',
+        resourceId: alert.id,
+        description: `Alert created: ${title}`,
+        userId: admin.userId,
+        organizationId: admin.organizationId,
+      },
+    });
+
+    return NextResponse.json({ data: alert }, { status: 201 });
+  } catch (error) {
+    log.error('api.alerts.', { error: String('Alerts POST error:') }, requestContext(req));
+    return NextResponse.json({ error: 'Failed to create alert' }, { status: 500 });
   }
 }
 
@@ -157,7 +222,7 @@ export async function PUT(req: NextRequest) {
 
     return NextResponse.json({ data: alert });
   } catch (error) {
-    console.error('Alerts PUT error:', error);
+    log.error('api.alerts.', { error: String('Alerts PUT error:') }, requestContext(req));
     return NextResponse.json({ error: 'Failed to update alert' }, { status: 500 });
   }
 }

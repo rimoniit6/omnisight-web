@@ -2,6 +2,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { findOrgGuest, requireGuestWriteScope } from '@/lib/guests';
+import { log, requestContext } from '@/lib/logger';
 
 // POST /api/guests/[id]/convert
 // Convert a guest to a normal employee (admin-only, org-scoped, explicit).
@@ -141,7 +142,7 @@ export async function POST(
 
     return NextResponse.json({ success: true, data: result });
   } catch (error) {
-    console.error('Guest convert error:', error);
+    log.error('api.guests.id.convert.', { error: String('Guest convert error:') }, requestContext(req));
     return NextResponse.json({ error: 'Failed to convert guest' }, { status: 500 });
   }
 }

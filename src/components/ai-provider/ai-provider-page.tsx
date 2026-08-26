@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useRef, useCallback } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -215,9 +215,15 @@ export function AiProviderPage() {
   const responseCaching = settings?.ai_response_caching === 'true';
   const systemPrompt = settings?.ai_system_prompt || '';
 
-  // Save handler — global AI configuration is super_admin-only (P1-7); org
-  // admins can view it but receive a clear 403 on write, never a silent fail.
-  const handleSave = async (key: string, value: string) => {
+  // M-7: Debounced save to prevent request storms on slider/input changes.
+  // Uses a ref-based debounce so rapid changes coalesce into a single API call.
+  const saveTimersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
+  const latestValuesRef = useRef<Map<string, string>>(new Map());
+
+  const flushSave = useCallback(async (key: string) => {
+    const value = latestValuesRef.current.get(key);
+    if (value === undefined) return;
+    latestValuesRef.current.delete(key);
     try {
       const res = await fetch('/api/settings', {
         method: 'PUT',
@@ -229,12 +235,48 @@ export function AiProviderPage() {
         toast.error(json.error || 'Failed to update setting');
         return;
       }
-      toast.success('Setting updated');
       queryClient.invalidateQueries({ queryKey: ['settings'] });
     } catch {
       toast.error('Failed to update setting');
     }
-  };
+  }, [queryClient]);
+
+  // Immediate save — used for explicit Save buttons and non-stormy actions.
+  const handleSaveImmediate = useCallback(async (key: string, value: string): Promise<boolean> => {
+    // Clear any pending debounced save for this key.
+    const timer = saveTimersRef.current.get(key);
+    if (timer) { clearTimeout(timer); saveTimersRef.current.delete(key); }
+    latestValuesRef.current.delete(key);
+    try {
+      const res = await fetch('/api/settings', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ key, value }),
+      });
+      if (!res.ok) {
+        const json = (await res.json().catch(() => ({}))) as { error?: string };
+        toast.error(json.error || 'Failed to update setting');
+        return false;
+      }
+      toast.success('Setting updated');
+      queryClient.invalidateQueries({ queryKey: ['settings'] });
+      return true;
+    } catch {
+      toast.error('Failed to update setting');
+      return false;
+    }
+  }, [queryClient]);
+
+  // Debounced save — used for sliders and continuous input changes.
+  const handleSaveDebounced = useCallback((key: string, value: string, delay = 500) => {
+    latestValuesRef.current.set(key, value);
+    const existing = saveTimersRef.current.get(key);
+    if (existing) clearTimeout(existing);
+    saveTimersRef.current.set(key, setTimeout(() => flushSave(key), delay));
+  }, [flushSave]);
+
+  // Legacy alias for backward compatibility with existing callers.
+  const handleSave = handleSaveImmediate;
 
   const handleTestConnection = async (providerId: string) => {
     setTestLoading(providerId);
@@ -290,9 +332,10 @@ export function AiProviderPage() {
       toast.error('API key is required');
       return;
     }
-    await handleSave('ai_api_key', localApiKey);
-    await handleSave('ai_base_url', localBaseUrl);
-    toast.success('Configuration saved');
+    const keySaved = await handleSave('ai_api_key', localApiKey);
+    if (keySaved) {
+      await handleSave('ai_base_url', localBaseUrl);
+    }
   };
 
   const currentProviderConfig = PROVIDERS.find((p) => p.id === activeProvider);
@@ -682,7 +725,7 @@ export function AiProviderPage() {
             max={max}
             step={step}
             value={value}
-            onChange={(e) => handleSave(settingKey, e.target.value)}
+            onChange={(e) => handleSaveDebounced(settingKey, e.target.value)}
             className="w-full h-2 rounded-full appearance-none cursor-pointer bg-muted accent-[oklch(0.555_0.163_163.5)] [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-[oklch(0.555_0.163_163.5)] [&::-webkit-slider-thumb]:shadow-md [&::-webkit-slider-thumb]:cursor-pointer [&::-webkit-slider-thumb]:transition-transform [&::-webkit-slider-thumb]:hover:scale-110 [&::-moz-range-thumb]:h-4 [&::-moz-range-thumb]:w-4 [&::-moz-range-thumb]:rounded-full [&::-moz-range-thumb]:bg-[oklch(0.555_0.163_163.5)] [&::-moz-range-thumb]:border-0 [&::-moz-range-thumb]:shadow-md [&::-moz-range-thumb]:cursor-pointer"
           />
           <div className="flex justify-between mt-1">

@@ -5,7 +5,7 @@ import { validateAgentToken, getClientIp } from '@/lib/agent/auth';
 import { hasActiveConsent } from '@/lib/consent';
 import { validateScreenshotUpload, extensionForMime, sanitizeFilenameSegment, sanitizeDisplayFilename, parsePngDimensions } from '@/lib/screenshots/storage';
 import { putScreenshot, deleteScreenshot, isNotFound } from '@/lib/storage';
-import { log } from '@/lib/logger';
+import { log, requestContext } from '@/lib/logger';
 
 const MAX_SCREENSHOT_BYTES = 5 * 1024 * 1024; // 5 MB
 
@@ -166,7 +166,7 @@ export async function POST(req: NextRequest) {
       appWindow: appWindow || null,
     });
   } catch (error) {
-    console.error('Agent screenshot error:', error);
+    log.error('api.agent.screenshot.', { error: String('Agent screenshot error:') }, requestContext(req));
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }

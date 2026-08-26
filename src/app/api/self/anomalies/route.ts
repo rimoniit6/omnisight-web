@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { getScopedEmployee } from '@/lib/self-guard';
 import { validatePagination } from '@/lib/api';
+import { log, requestContext } from '@/lib/logger';
 
 // GET /api/self/anomalies?employeeId=xxx&status=&severity=
 // Manager+ role (enforced by middleware); employee scoped to caller's org.
@@ -68,7 +69,7 @@ export async function GET(req: NextRequest) {
       totalPages,
     });
   } catch (error) {
-    console.error('Self Anomalies GET error:', error);
+    log.error('api.self.anomalies.', { error: String('Self Anomalies GET error:') }, requestContext(req));
     return NextResponse.json({ error: 'Failed to fetch anomalies' }, { status: 500 });
   }
 }

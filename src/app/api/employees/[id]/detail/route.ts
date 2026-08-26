@@ -6,6 +6,7 @@ import { format, subDays } from 'date-fns';
 import { authError, requireSessionOrg } from '@/lib/api';
 import { NON_INTERNAL_AGENT_ACTIVITY_FILTER, excludeInternalAgentActivities } from '@/lib/agent-process';
 import { safeTimezone, zonedDayStart, zonedDayEnd, localDayKey, hourInTimezone } from '@/lib/timezone';
+import { log, requestContext } from '@/lib/logger';
 
 /** Defensive normalization of a stored website value to a bare lowercase domain. */
 function toDomain(raw: string): string {
@@ -369,7 +370,7 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
       notifications: empNotifications,
     });
   } catch (error) {
-    console.error('Employee detail error:', error);
+    log.error('api.employees.id.detail.', { error: String('Employee detail error:') }, requestContext(request));
     return NextResponse.json({ error: 'Failed to fetch employee details' }, { status: 500 });
   }
 }

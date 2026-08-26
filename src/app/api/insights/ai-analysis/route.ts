@@ -6,6 +6,7 @@ import { isHeartbeatFresh } from '@/lib/presence';
 import { runAiInsightsAnalysis } from '@/lib/ai-insights/engine';
 import { parseInsightFilters } from '@/lib/ai-insights/filters';
 import { safeTimezone } from '@/lib/timezone';
+import { log, requestContext } from '@/lib/logger';
 
 interface AnalysisInsight {
   title: string;
@@ -246,7 +247,7 @@ export async function GET(req: NextRequest) {
       },
     });
   } catch (error) {
-    console.error('AI Analysis GET error:', error);
+    log.error('api.insights.ai-analysis.', { error: String('AI Analysis GET error:') }, requestContext(req));
     return NextResponse.json({ error: 'Failed to generate AI analysis' }, { status: 500 });
   }
 }

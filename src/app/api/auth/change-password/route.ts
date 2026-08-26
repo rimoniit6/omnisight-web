@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { getRequestToken, verifyPassword, hashPassword } from '@/lib/auth';
 import { verifySessionToken, revokeAllUserSessions, getUserAgent } from '@/lib/session';
+import { log, requestContext } from '@/lib/logger';
 
 /**
  * POST /api/auth/change-password
@@ -103,7 +104,7 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({ message: 'Password changed successfully' });
   } catch (error) {
-    console.error('Change password error:', error);
+    log.error('api.auth.change-password.', { error: String('Change password error:') }, requestContext(req));
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }

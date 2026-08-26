@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { authError, requireSessionOrg } from '@/lib/api';
+import { log, requestContext } from '@/lib/logger';
 
 // GET /api/ai-provider/usage — AI usage statistics derived entirely from the
 // database (no mock values). Counts actual AI-generated outputs recorded in
@@ -116,7 +117,7 @@ export async function GET(req: NextRequest) {
       })),
     });
   } catch (error) {
-    console.error('AI provider usage error:', error);
+    log.error('api.ai-provider.usage.', { error: String('AI provider usage error:') }, requestContext(req));
     return NextResponse.json({ error: 'Failed to fetch AI usage' }, { status: 500 });
   }
 }

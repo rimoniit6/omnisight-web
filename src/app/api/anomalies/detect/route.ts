@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { authenticateRequest, getSessionOrg } from '@/lib/api';
 import { hasRolePermission } from '@/lib/auth';
 import { runAnomalyDetection } from '@/lib/anomalies/service';
+import { log, requestContext } from '@/lib/logger';
 
 // POST /api/anomalies/detect — Run anomaly detection on current data (manager+)
 // All per-employee data is loaded in batched queries (no N+1); detections are
@@ -47,7 +48,7 @@ export async function POST(req: NextRequest) {
       skippedReasons: result.skippedReasons,
     });
   } catch (error) {
-    console.error('Anomaly detection error:', error);
+    log.error('api.anomalies.detect.', { error: String('Anomaly detection error:') }, requestContext(req));
     return NextResponse.json({ error: 'Failed to run anomaly detection' }, { status: 500 });
   }
 }

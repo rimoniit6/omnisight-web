@@ -5,6 +5,7 @@ import { db } from '@/lib/db';
 import { authError, requireSessionOrg } from '@/lib/api';
 import { NON_INTERNAL_AGENT_ACTIVITY_FILTER, INTERNAL_AGENT_PROCESS_NAMES } from '@/lib/agent-process';
 import { zonedDayStart, zonedDayEnd, dayKeysBetween, lastNDayKeys } from '@/lib/timezone';
+import { log, requestContext } from '@/lib/logger';
 
 /**
  * P2-1 — analytics aggregation is now DATABASE-SIDE.
@@ -326,7 +327,7 @@ export async function GET(req: NextRequest) {
       },
     });
   } catch (error) {
-    console.error('Analytics GET error:', error);
+    log.error('api.analytics.', { error: String('Analytics GET error:') }, requestContext(req));
     return NextResponse.json({ error: 'Failed to fetch analytics' }, { status: 500 });
   }
 }

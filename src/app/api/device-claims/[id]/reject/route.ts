@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { authError, requireAdminOrg } from '@/lib/api';
 import { checkRateLimit, RATE_LIMITS, getClientIpFromHeaders } from '@/lib/rate-limit';
+import { log, requestContext } from '@/lib/logger';
 
 // POST /api/device-claims/[id]/reject
 // Reject a pending zero-touch device claim (admin-only, org-scoped).
@@ -76,7 +77,7 @@ export async function POST(
 
     return NextResponse.json({ success: true, data: result });
   } catch (error) {
-    console.error('DeviceClaim reject error:', error);
+    log.error('api.device-claims.id.reject.', { error: String('DeviceClaim reject error:') }, requestContext(req));
     return NextResponse.json({ error: 'Failed to reject device' }, { status: 500 });
   }
 }

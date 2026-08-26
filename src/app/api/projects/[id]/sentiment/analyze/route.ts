@@ -4,6 +4,7 @@ import { callAIProvider } from '@/lib/ai-provider-helper';
 import { requireManagerOrg, authError } from '@/lib/api';
 import { hasActiveConsent } from '@/lib/consent';
 import { checkRateLimit, getClientIpFromHeaders, RATE_LIMITS } from '@/lib/rate-limit';
+import { log, requestContext } from '@/lib/logger';
 import {
   calculateProjectSignals,
   calculateProjectScore,
@@ -351,7 +352,7 @@ export async function POST(
           },
         };
       } catch (err) {
-        console.error(`Failed to analyze project sentiment for employee ${member.id}:`, err);
+        log.error('api.projects.id.sentiment.analyze.', { error: String(`Failed to analyze project sentiment for employee ${member.id}:`) }, requestContext(req));log.error('api.projects\id\sentiment\analyze\route.ts.', { error: String(`Failed to analyze project sentiment for employee ${member.id}:`) }, requestContext(req));
         return { ok: false as const, employeeId: member.id, reason: String(err) };
       }
     });
@@ -425,7 +426,7 @@ export async function POST(
       project: { id: project.id, name: project.name },
     });
   } catch (error) {
-    console.error('Project sentiment analyze error:', error);
+    log.error('api.projects.id.sentiment.analyze.', { error: String('Project sentiment analyze error:') }, requestContext(req));
     return NextResponse.json({ error: 'Failed to analyze project sentiment' }, { status: 500 });
   } finally {
     runningProjectAnalyses.delete(runKey);

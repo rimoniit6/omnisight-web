@@ -2,6 +2,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { authError, requireSessionOrg, requireAdminOrg } from '@/lib/api';
+import { log, requestContext } from '@/lib/logger';
 
 export async function GET(
   req: NextRequest,
@@ -23,7 +24,7 @@ export async function GET(
     if (!dept) return NextResponse.json({ error: 'Department not found' }, { status: 404 });
     return NextResponse.json({ data: dept });
   } catch (error) {
-    console.error('Department GET error:', error);
+    log.error('api.departments.id.', { error: String('Department GET error:') }, requestContext(req));
     return NextResponse.json({ error: 'Failed to fetch department' }, { status: 500 });
   }
 }
@@ -63,7 +64,7 @@ export async function PUT(
     });
     return NextResponse.json({ data: dept });
   } catch (error) {
-    console.error('Department PUT error:', error);
+    log.error('api.departments.id.', { error: String('Department PUT error:') }, requestContext(req));
     return NextResponse.json({ error: 'Failed to update department' }, { status: 500 });
   }
 }
@@ -87,7 +88,7 @@ export async function DELETE(
     await db.department.delete({ where: { id } });
     return NextResponse.json({ success: true });
   } catch (error) {
-    console.error('Department DELETE error:', error);
+    log.error('api.departments.id.', { error: String('Department DELETE error:') }, requestContext(req));
     return NextResponse.json({ error: 'Failed to delete department' }, { status: 500 });
   }
 }

@@ -45,14 +45,6 @@ export function apiSuccess<T>(data: T, status: number = 200) {
   return NextResponse.json(data, { status });
 }
 
-export function apiCreated<T>(data: T) {
-  return NextResponse.json(data, { status: 201 });
-}
-
-export function apiNoContent() {
-  return new NextResponse(null, { status: 204 });
-}
-
 // ─── Auth Middleware ───────────────────────────────────────────────────────
 
 /**
@@ -81,44 +73,6 @@ export async function authenticateRequest(req: NextRequest): Promise<AuthContext
   } catch {
     return null;
   }
-}
-
-/**
- * Higher-order function: wraps a handler with JWT authentication.
- * If auth fails, returns 401 automatically.
- */
-export function withAuth(
-  handler: (req: NextRequest, auth: AuthContext) => Promise<NextResponse>
-) {
-  return async (req: NextRequest): Promise<NextResponse> => {
-    const auth = await authenticateRequest(req);
-    if (!auth) {
-      return apiError('Unauthorized. Please sign in.', 401);
-    }
-    return handler(req, auth);
-  };
-}
-
-/**
- * Higher-order function: wraps a handler with JWT auth + role check.
- * If auth fails or role is insufficient, returns 401/403.
- */
-export function withAuthAndRole(
-  requiredRole: string,
-  handler: (req: NextRequest, auth: AuthContext) => Promise<NextResponse>
-) {
-  return async (req: NextRequest): Promise<NextResponse> => {
-    const auth = await authenticateRequest(req);
-    if (!auth) {
-      return apiError('Unauthorized. Please sign in.', 401);
-    }
-
-    if (!hasRolePermission(auth.role, requiredRole)) {
-      return apiError('Insufficient permissions', 403);
-    }
-
-    return handler(req, auth);
-  };
 }
 
 // ─── Query Helpers ─────────────────────────────────────────────────────────
@@ -156,22 +110,6 @@ export function validatePagination(
   }
 
   return { ok: true, page, pageSize, skip: (page - 1) * pageSize };
-}
-
-/**
- * Get search query from URL search params
- */
-export function getSearchQuery(req: NextRequest): string {
-  const url = new URL(req.url);
-  return url.searchParams.get('search') || '';
-}
-
-/**
- * Get organization ID from auth context or query param
- */
-export function getOrgId(req: NextRequest, auth: AuthContext): string {
-  const url = new URL(req.url);
-  return url.searchParams.get('organizationId') || auth.organizationId || '';
 }
 
 /**

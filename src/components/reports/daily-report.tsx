@@ -38,6 +38,8 @@ import { Separator } from '@/components/ui/separator';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
+import { localDayKey } from '@/lib/timezone';
+import { useAuthStore } from '@/lib/store';
 
 // ==================== Types ====================
 
@@ -530,7 +532,8 @@ export function DailyReportPage() {
   const handleGenerate = useCallback(() => {
     setGenerating(true);
     setShowAiSummary(false);
-    generateReport.mutate(selectedDate.toISOString().split('T')[0], {
+    const tz = useAuthStore.getState().organization?.timezone || 'UTC';
+    generateReport.mutate(localDayKey(selectedDate, tz), {
       onSettled: () => setGenerating(false),
     });
   }, [generateReport, selectedDate]);
@@ -540,7 +543,8 @@ export function DailyReportPage() {
   useEffect(() => {
     if (!initialized.current) {
       initialized.current = true;
-      generateReport.mutate(selectedDate.toISOString().split('T')[0]);
+      const tz = useAuthStore.getState().organization?.timezone || 'UTC';
+      generateReport.mutate(localDayKey(selectedDate, tz));
     }
   }, [generateReport, selectedDate]);
 

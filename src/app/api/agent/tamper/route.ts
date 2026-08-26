@@ -4,6 +4,7 @@ import { validateAgentToken, getClientIp } from '@/lib/agent/auth';
 import { createOrgNotification, createOrgAlert, NotificationValidationError } from '@/lib/notifications/service';
 import { ALERT_SEVERITIES } from '@/lib/notifications/constants';
 import { serializeMetadata, validateDescription } from '@/lib/notifications/validation';
+import { log, requestContext } from '@/lib/logger';
 
 // POST /api/agent/tamper
 // Agent reports tamper detection events
@@ -107,7 +108,7 @@ export async function POST(req: NextRequest) {
     if (error instanceof NotificationValidationError) {
       return NextResponse.json({ error: error.message }, { status: 422 });
     }
-    console.error('Tamper detection error:', error);
+    log.error('api.agent.tamper.', { error: String('Tamper detection error:') }, requestContext(req));
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }

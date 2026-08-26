@@ -5,6 +5,7 @@ import { hasActiveConsent } from '@/lib/consent';
 import { isInternalAgentProcess } from '@/lib/agent-process';
 import { resolveOrgMonitoring } from '@/lib/jobs/settings';
 import { normalizeWebsiteDomain, sanitizeWebsiteTitle } from '@/lib/domain';
+import { log, requestContext } from '@/lib/logger';
 
 // POST /api/agent/activity
 // Agent sends activity data (app usage, website visits, idle time, etc.)
@@ -264,7 +265,7 @@ export async function POST(req: NextRequest) {
       message: `${created.count} activities recorded`,
     });
   } catch (error) {
-    console.error('Agent activity error:', error);
+    log.error('api.agent.activity.', { error: String('Agent activity error:') }, requestContext(req));
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }

@@ -44,6 +44,7 @@ const ConsentPage = dynamic(() => import('@/components/consent/consent-page').th
 const SelfPortalPage = dynamic(() => import('@/components/self-portal/self-portal-page').then(m => ({ default: m.SelfPortalPage })), { ssr: false });
 const ProjectsPage = dynamic(() => import('@/components/projects/projects-page').then(m => ({ default: m.ProjectsPage })), { ssr: false });
 const SentimentPage = dynamic(() => import('@/components/sentiment/sentiment-page').then(m => ({ default: m.SentimentPage })), { ssr: false });
+const AudioPage = dynamic(() => import('@/components/audio/audio-page').then(m => ({ default: m.AudioPage })), { ssr: false });
 
 const pageComponents: Record<string, React.ComponentType> = {
   dashboard: DashboardPage,
@@ -74,6 +75,7 @@ const pageComponents: Record<string, React.ComponentType> = {
   'self-portal': SelfPortalPage,
   projects: ProjectsPage,
   sentiment: SentimentPage,
+  audio: AudioPage,
 };
 
 function AppLayout() {

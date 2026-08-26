@@ -4,6 +4,7 @@ import { db } from '@/lib/db';
 import { getSessionOrg, authenticateRequest } from '@/lib/api';
 import { hasRolePermission } from '@/lib/auth';
 import { isValidTimezone } from '@/lib/timezone';
+import { log, requestContext } from '@/lib/logger';
 
 export async function GET(req: NextRequest) {
   try {
@@ -47,7 +48,7 @@ export async function GET(req: NextRequest) {
       activeAlertsCount,
     });
   } catch (error) {
-    console.error('Organization GET error:', error);
+    log.error('api.organization.', { error: String('Organization GET error:') }, requestContext(req));
     return NextResponse.json({ error: 'Failed to fetch organization' }, { status: 500 });
   }
 }
@@ -100,7 +101,7 @@ export async function PATCH(req: NextRequest) {
 
     return NextResponse.json({ data: updated });
   } catch (error) {
-    console.error('Organization PATCH error:', error);
+    log.error('api.organization.', { error: String('Organization PATCH error:') }, requestContext(req));
     return NextResponse.json({ error: 'Failed to update organization' }, { status: 500 });
   }
 }

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { Prisma } from '@prisma/client';
 import { authError, requireSessionOrg, requireAdminOrg, validatePagination } from '@/lib/api';
+import { log, requestContext } from '@/lib/logger';
 
 // Authoritative value sets (mirror of the Project model comments). The UI and
 // every mutation must agree with these — never invent new enum values.
@@ -293,7 +294,7 @@ export async function GET(req: NextRequest) {
       },
     });
   } catch (error) {
-    console.error('Projects GET error:', error);
+    log.error('api.projects.', { error: String('Projects GET error:') }, requestContext(req));
     return NextResponse.json({ error: 'Failed to fetch projects' }, { status: 500 });
   }
 }
@@ -382,7 +383,7 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({ data: project }, { status: 201 });
   } catch (error: unknown) {
-    console.error('Projects POST error:', error);
+    log.error('api.projects.', { error: String('Projects POST error:') }, requestContext(req));
     return NextResponse.json({ error: 'Failed to create project' }, { status: 500 });
   }
 }

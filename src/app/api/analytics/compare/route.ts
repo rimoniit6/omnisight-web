@@ -5,6 +5,7 @@ import { db } from '@/lib/db';
 import { authError, requireSessionOrg } from '@/lib/api';
 import { NON_INTERNAL_AGENT_ACTIVITY_FILTER, INTERNAL_AGENT_PROCESS_NAMES } from '@/lib/agent-process';
 import { zonedDayStart, zonedDayEnd } from '@/lib/timezone';
+import { log, requestContext } from '@/lib/logger';
 
 const DAY_KEY_RE = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -336,7 +337,7 @@ export async function GET(req: NextRequest) {
     if (error instanceof OrgScopeError) {
       return NextResponse.json({ error: 'Department not found' }, { status: 404 });
     }
-    console.error('Analytics compare error:', error);
+    log.error('api.analytics.compare.', { error: String('Analytics compare error:') }, requestContext(req));
     return NextResponse.json({ error: 'Failed to fetch comparison data' }, { status: 500 });
   }
 }

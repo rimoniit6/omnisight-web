@@ -3,6 +3,7 @@ import { db } from '@/lib/db';
 import { authError, requireSessionOrg } from '@/lib/api';
 import { excludeInternalAgentActivities } from '@/lib/agent-process';
 import { isValidTimezone, localDayKey, lastNDayKeys } from '@/lib/timezone';
+import { log, requestContext } from '@/lib/logger';
 
 const MAX_DAYS = 365;
 
@@ -143,7 +144,7 @@ export async function GET(req: NextRequest) {
       },
     });
   } catch (error) {
-    console.error('Daily activities error:', error);
+    log.error('api.activities.daily.', { error: String('Daily activities error:') }, requestContext(req));
     return NextResponse.json({ error: 'Failed to fetch daily activities' }, { status: 500 });
   }
 }

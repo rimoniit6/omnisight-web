@@ -6,6 +6,7 @@ import { format, subMonths, endOfMonth, getDay } from 'date-fns';
 import { authError, authenticateRequest, getSessionOrg } from '@/lib/api';
 import { hasRolePermission } from '@/lib/auth';
 import { excludeInternalAgentActivities } from '@/lib/agent-process';
+import { log, requestContext } from '@/lib/logger';
 
 export async function GET(req: NextRequest) {
   try {
@@ -189,7 +190,7 @@ export async function GET(req: NextRequest) {
       recentHires,
     });
   } catch (error) {
-    console.error('Team data GET error:', error);
+    log.error('api.organization.team-data.', { error: String('Team data GET error:') }, requestContext(req));
     return NextResponse.json({ error: 'Failed to fetch team data' }, { status: 500 });
   }
 }

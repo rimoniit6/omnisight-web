@@ -1,6 +1,7 @@
 import { NextRequest } from 'next/server';
 import { db } from '@/lib/db';
-import { verifyJWT, getRequestToken } from '@/lib/auth';
+import { getRequestToken } from '@/lib/auth';
+import { verifySessionToken } from '@/lib/session';
 
 // Guard helper for /api/self/* routes.
 // The JWT (validated by middleware) supplies role + organization; the
@@ -18,7 +19,7 @@ export async function getScopedEmployee(
   employeeRef: string
 ): Promise<{ employee: { id: string; organizationId: string } | null; error: string | null }> {
   const token = getRequestToken(req);
-  const payload = token ? await verifyJWT(token) : null;
+  const payload = token ? await verifySessionToken(token) : null;
   if (!payload) {
     return { employee: null, error: 'Invalid or expired token' };
   }

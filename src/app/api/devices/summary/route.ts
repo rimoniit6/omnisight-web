@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { authError, requireSessionOrg } from '@/lib/api';
 import { effectiveDeviceStatus } from '@/lib/device-status';
+import { log, requestContext } from '@/lib/logger';
 
 export async function GET(req: NextRequest) {
   try {
@@ -39,7 +40,7 @@ export async function GET(req: NextRequest) {
       healthPercent: total > 0 ? Math.round((online / total) * 100) : 0,
     });
   } catch (error) {
-    console.error('Device summary GET error:', error);
+    log.error('api.devices.summary.', { error: String('Device summary GET error:') }, requestContext(req));
     return NextResponse.json({ error: 'Failed to fetch device summary' }, { status: 500 });
   }
 }

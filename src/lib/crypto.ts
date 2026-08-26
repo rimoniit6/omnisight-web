@@ -15,6 +15,7 @@
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'crypto';
 import { mkdirSync, existsSync, readFileSync, writeFileSync } from 'fs';
 import path from 'path';
+import { assertProductionSecret } from '@/lib/auth';
 
 const ALGORITHM = 'aes-256-gcm';
 const IV_LENGTH = 12;
@@ -24,14 +25,9 @@ const PREFIX = 'v1:';
 // misconfiguration is caught at startup rather than at first secret use.
 function requireProductionKey(): Buffer {
   const raw = process.env.ENCRYPTION_KEY;
-  if (!raw || raw.length < 16) {
-    throw new Error(
-      'ENCRYPTION_KEY is required in production (>= 16 characters). Generate one with: ' +
-        'node -e "console.log(require(\'crypto\').randomBytes(32).toString(\'hex\'))" ' +
-        'and add it to .env. It must be independent from JWT_SECRET.'
-    );
-  }
-  return createHash('sha256').update(raw).digest();
+  // C-3: Reject known placeholder values; enforce minimum length + no placeholder patterns.
+  assertProductionSecret(raw || '', 'ENCRYPTION_KEY', 16);
+  return createHash('sha256').update(raw!).digest();
 }
 
 // Development: derive a stable per-machine key persisted in .worklens/dev.key

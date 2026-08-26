@@ -4,6 +4,7 @@ import { validateAgentToken } from '@/lib/agent/auth';
 import { hasActiveConsent } from '@/lib/consent';
 import { resolveOrgMonitoring } from '@/lib/jobs/settings';
 import { requireAdminOrg } from '@/lib/api';
+import { log, requestContext } from '@/lib/logger';
 import {
   setLatestFrame,
   getLatestFrame,
@@ -92,7 +93,7 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({ success: true, received: bytes.length });
   } catch (error) {
-    console.error('Agent webcam frame error:', error);
+    log.error('api.agent.webcam.frame.', { error: String('Agent webcam frame error:') }, requestContext(req));
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }
@@ -130,7 +131,7 @@ export async function GET(req: NextRequest) {
       },
     });
   } catch (error) {
-    console.error('Webcam frame GET error:', error);
+    log.error('api.agent.webcam.frame.', { error: String('Webcam frame GET error:') }, requestContext(req));
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }

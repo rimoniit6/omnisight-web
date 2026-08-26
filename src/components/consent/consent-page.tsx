@@ -57,6 +57,16 @@ import {
 import { EmptyState } from '@/components/ui/empty-state';
 import { PresenceDot } from '@/components/ui/presence-dot';
 import { toast } from 'sonner';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 
 // ==================== Types ====================
 
@@ -592,6 +602,9 @@ function PoliciesPanel({
   const queryClient = useQueryClient();
   const [createOpen, setCreateOpen] = useState(false);
   const [editing, setEditing] = useState<ConsentPolicy | null>(null);
+  // Confirmation state for destructive policy actions (H-2)
+  const [publishTarget, setPublishTarget] = useState<ConsentPolicy | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<ConsentPolicy | null>(null);
 
   const invalidate = () => {
     queryClient.invalidateQueries({ queryKey: ['consent-policies'] });
@@ -694,10 +707,10 @@ function PoliciesPanel({
                         <Button size="sm" variant="ghost" className="h-6 w-6 p-0" title="Edit" onClick={() => { setEditing(d); setCreateOpen(true); }}>
                           <Pencil className="h-3 w-3" />
                         </Button>
-                        <Button size="sm" variant="ghost" className="h-6 w-6 p-0 text-emerald-600" title="Publish" disabled={policyMutation.isPending} onClick={() => policyMutation.mutate({ id: d.id, action: 'publish' })}>
+                        <Button size="sm" variant="ghost" className="h-6 w-6 p-0 text-emerald-600" title="Publish" disabled={policyMutation.isPending} onClick={() => setPublishTarget(d)}>
                           <Send className="h-3 w-3" />
                         </Button>
-                        <Button size="sm" variant="ghost" className="h-6 w-6 p-0 text-rose-600" title="Delete draft" disabled={policyMutation.isPending} onClick={() => policyMutation.mutate({ id: d.id, action: 'delete' })}>
+                        <Button size="sm" variant="ghost" className="h-6 w-6 p-0 text-rose-600" title="Delete draft" disabled={policyMutation.isPending} onClick={() => setDeleteTarget(d)}>
                           <Trash2 className="h-3 w-3" />
                         </Button>
                       </div>
@@ -738,6 +751,38 @@ function PoliciesPanel({
         onSave={(payload) => policyMutation.mutate(editing ? { id: editing.id, action: 'edit', body: payload } : { action: 'create', body: payload })}
         submitting={policyMutation.isPending}
       />
+
+      {/* Confirm publish policy (H-2) */}
+      <AlertDialog open={!!publishTarget} onOpenChange={(open) => { if (!open) setPublishTarget(null); }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Publish consent policy?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {publishTarget ? `Publishing "${publishTarget.title}" (v${publishTarget.version}) will make it the active policy. All employees with existing consents for this type will be required to re-consent. This is a significant action.` : ''}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={policyMutation.isPending}>Cancel</AlertDialogCancel>
+            <AlertDialogAction disabled={policyMutation.isPending} onClick={() => { if (publishTarget) { policyMutation.mutate({ id: publishTarget.id, action: 'publish' }); setPublishTarget(null); } }}>Publish</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Confirm delete draft (H-2) */}
+      <AlertDialog open={!!deleteTarget} onOpenChange={(open) => { if (!open) setDeleteTarget(null); }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete policy draft?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {deleteTarget ? `This will permanently delete the draft "${deleteTarget.title}" (v${deleteTarget.version}). This action cannot be undone.` : ''}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={policyMutation.isPending}>Cancel</AlertDialogCancel>
+            <AlertDialogAction disabled={policyMutation.isPending} className="bg-destructive text-destructive-foreground hover:bg-destructive/90" onClick={() => { if (deleteTarget) { policyMutation.mutate({ id: deleteTarget.id, action: 'delete' }); setDeleteTarget(null); } }}>Delete Draft</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

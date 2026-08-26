@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { validateAgentToken } from '@/lib/agent/auth';
+import { log, requestContext } from '@/lib/logger';
 
 // POST /api/agent/commands/:id/ack
 // Device acknowledges (or reports failure of) a DELIVERED command.
@@ -86,7 +87,7 @@ export async function POST(
 
     return NextResponse.json({ success: true, status: updated });
   } catch (error) {
-    console.error('Agent command ack error:', error);
+    log.error('api.agent.commands.id.ack.', { error: String('Agent command ack error:') }, requestContext(req));
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }

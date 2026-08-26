@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { authError, requireSessionOrg } from '@/lib/api';
 import { effectiveLiveStatus } from '@/lib/presence';
+import { log, requestContext } from '@/lib/logger';
 
 export async function GET(req: NextRequest) {
   try {
@@ -66,7 +67,7 @@ export async function GET(req: NextRequest) {
       },
     });
   } catch (error) {
-    console.error('Device chart-data GET error:', error);
+    log.error('api.devices.chart-data.', { error: String('Device chart-data GET error:') }, requestContext(req));
     return NextResponse.json({ error: 'Failed to fetch chart data' }, { status: 500 });
   }
 }

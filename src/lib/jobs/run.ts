@@ -8,11 +8,13 @@ import { sweepExpiredAgentCredentials, type AgentTokenSweepResult } from './swee
 import { sweepStaleRateLimitCounters, type RateLimitSweepResult } from './sweep-rate-limit-counters';
 import { runDeviceIntegrityJob, type DeviceIntegrityResult } from './detect-device-integrity';
 import { sweepExpiredUserSessions, type UserSessionSweepResult } from './sweep-user-sessions';
+import { processPendingTranscriptions } from '@/lib/audio/transcribe-job';
 
 const JOB_LEASE_MS = 5 * 60 * 1000;
 
 export interface JobsResult {
   expiredConsents: number;
+  audioTranscriptions?: { processed: number; submitted: number; failed: number; errors: string[] };
   retention: RetentionResult;
   projectTimeSync: SyncRunResult | null;
   anomalyDetection: AnomalyDetectionJobResult | null;
@@ -112,6 +114,9 @@ const EMPTY_RETENTION: RetentionResult = {
   breakActivityRows: 0,
   orphanScreenshotsRemoved: 0,
   fileErrors: [],
+  audioRecordings: 0,
+  audioTranscriptions: 0,
+  audioFileErrors: [],
   errors: [],
 };
 
@@ -255,9 +260,20 @@ export async function runScheduledJobs(): Promise<JobsResult> {
     }
   }
 
+  // Audio transcription processing — pick up uploaded/queued recordings
+  if (await claimJob('audio_transcription')) {
+    try {
+      result.audioTranscriptions = await processPendingTranscriptions();
+      await finishJob('audio_transcription', undefined, { ...result.audioTranscriptions });
+    } catch (error) {
+      result.errors.push(`audio_transcription: ${String(error)}`);
+      await finishJob('audio_transcription', String(error)).catch(() => {});
+    }
+  }
+
   const durationMs = Date.now() - started;
   await db.jobRun.updateMany({
-    where: { job: { in: ['expire_consents', 'retention_cleanup', 'project_time_sync', 'anomaly_detection', 'agent_token_sweep', 'rate_limit_sweep', 'device_integrity', 'user_session_sweep'] } },
+    where: { job: { in: ['expire_consents', 'retention_cleanup', 'project_time_sync', 'anomaly_detection', 'agent_token_sweep', 'rate_limit_sweep', 'device_integrity', 'user_session_sweep', 'audio_transcription'] } },
     data: { lastDurationMs: durationMs },
   });
 

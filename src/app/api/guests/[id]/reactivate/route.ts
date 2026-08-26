@@ -2,6 +2,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { findOrgGuest, requireGuestWriteScope } from '@/lib/guests';
+import { log, requestContext } from '@/lib/logger';
 
 // POST /api/guests/[id]/reactivate
 // Restore a SUSPENDED guest (admin-only, org-scoped):
@@ -62,7 +63,7 @@ export async function POST(
 
     return NextResponse.json({ success: true, data: result });
   } catch (error) {
-    console.error('Guest reactivate error:', error);
+    log.error('api.guests.id.reactivate.', { error: String('Guest reactivate error:') }, requestContext(req));
     return NextResponse.json({ error: 'Failed to reactivate guest' }, { status: 500 });
   }
 }

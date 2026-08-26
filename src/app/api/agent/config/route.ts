@@ -3,6 +3,7 @@ import { db } from '@/lib/db';
 import { validateAgentToken } from '@/lib/agent/auth';
 import { resolveOrgMonitoring, resolveRetentionDays } from '@/lib/jobs/settings';
 import { APP_POLICY_VERSION_SETTING_KEY, DEFAULT_POLICY_VERSION, MAX_POLICY_PAYLOAD_ENTRIES } from '@/lib/policies/constants';
+import { log, requestContext } from '@/lib/logger';
 
 // GET /api/agent/config
 // Agent fetches monitoring configuration (screenshot frequency, idle timeout, etc.)
@@ -174,7 +175,7 @@ export async function GET(req: NextRequest) {
 
     return NextResponse.json({ config, assignment, policy });
   } catch (error) {
-    console.error('Agent config error:', error);
+    log.error('api.agent.config.', { error: String('Agent config error:') }, requestContext(req));
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }

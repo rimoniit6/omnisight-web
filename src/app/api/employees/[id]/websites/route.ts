@@ -5,6 +5,7 @@ import { authError, requireSessionOrg } from '@/lib/api';
 import { NON_INTERNAL_AGENT_ACTIVITY_FILTER } from '@/lib/agent-process';
 import { safeTimezone, zonedDayStart, zonedDayEnd, localDayKey } from '@/lib/timezone';
 import { subDays } from 'date-fns';
+import { log, requestContext } from '@/lib/logger';
 
 // GET /api/employees/[id]/websites?from&to&page&pageSize
 // Admin telemetry: domain-only website usage for one employee.
@@ -163,7 +164,7 @@ export async function GET(
       minSliceMs: MIN_SLICE_MS,
     });
   } catch (error) {
-    console.error('Admin website telemetry error:', error);
+    log.error('api.employees.id.websites.', { error: String('Admin website telemetry error:') }, requestContext(request));
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }

@@ -16,6 +16,7 @@ import { toast } from 'sonner';
 import { QuickStats, type QuickStat } from '@/components/ui/quick-stats';
 import { useLiveUpdates } from '@/hooks/use-live-updates';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, Legend } from 'recharts';
+import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 
 const PIE_COLORS = ['var(--chart-1)', 'var(--chart-2)', 'var(--chart-3)', 'var(--chart-4)', 'var(--chart-5)', 'var(--primary)'];
 
@@ -106,15 +107,28 @@ export function DevicesPage() {
     };
   }, []);
 
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [deleteDialogId, setDeleteDialogId] = useState<string | null>(null);
+  const deleteTargetName = (data?.data as Array<{ id: string; name: string }> | undefined)?.find((d) => d.id === deleteDialogId)?.name || 'this device';
+
   const handleDelete = async (id: string) => {
+    setDeleteDialogId(null);
+    setDeletingId(id);
     try {
-      await fetch(`/api/devices/${id}`, { method: 'DELETE' });
+      const res = await fetch(`/api/devices/${id}`, { method: 'DELETE' });
+      if (!res.ok) {
+        let msg = 'Failed to delete device';
+        try { const j = await res.json(); if (j?.error) msg = j.error; } catch { /* keep default */ }
+        throw new Error(msg);
+      }
       toast.success('Device deleted');
       queryClient.invalidateQueries({ queryKey: ['devices'] });
       queryClient.invalidateQueries({ queryKey: ['device-summary'] });
       queryClient.invalidateQueries({ queryKey: ['device-chart-data'] });
-    } catch {
-      toast.error('Failed to delete device');
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to delete device');
+    } finally {
+      setDeletingId(null);
     }
   };
 
@@ -365,7 +379,7 @@ export function DevicesPage() {
           <DeviceTable
             devices={data?.data || []}
             onEdit={(dev) => { setEditDevice(dev as unknown as Device); setDialogOpen(true); }}
-            onDelete={handleDelete}
+            onDelete={setDeleteDialogId}
           />
           <PaginationControls
             currentPage={data?.page || 1}
@@ -377,6 +391,16 @@ export function DevicesPage() {
         </>
       )}
       <DeviceDialog open={dialogOpen} onOpenChange={setDialogOpen} device={editDevice} onSaved={() => { queryClient.invalidateQueries({ queryKey: ['devices'] }); queryClient.invalidateQueries({ queryKey: ['device-summary'] }); queryClient.invalidateQueries({ queryKey: ['device-chart-data'] }); }} />
+
+      <ConfirmDialog
+        open={deleteDialogId !== null}
+        onOpenChange={(open) => { if (!open) setDeleteDialogId(null); }}
+        title="Delete Device"
+        description={`Are you sure you want to delete "${deleteTargetName}"? This action will permanently remove the device and its associated data.`}
+        confirmLabel="Delete"
+        onConfirm={() => { if (deleteDialogId) handleDelete(deleteDialogId); }}
+        disabled={deletingId !== null}
+      />
     </div>
   );
 }

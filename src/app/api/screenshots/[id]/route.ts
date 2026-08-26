@@ -3,6 +3,7 @@ import { db } from '@/lib/db';
 import { authError, requireSessionOrg, requireAdminOrg } from '@/lib/api';
 import { getClientIp } from '@/lib/agent/auth';
 import { deleteScreenshot, isNotFound } from '@/lib/storage';
+import { log, requestContext } from '@/lib/logger';
 
 // GET /api/screenshots/[id] — single screenshot with full details
 export async function GET(
@@ -42,7 +43,7 @@ export async function GET(
 
     return NextResponse.json(screenshot);
   } catch (error) {
-    console.error('Screenshot detail error:', error);
+    log.error('api.screenshots.id.', { error: String('Screenshot detail error:') }, requestContext(req));
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }
@@ -100,7 +101,7 @@ export async function DELETE(
 
     return NextResponse.json({ success: true });
   } catch (error) {
-    console.error('Screenshot delete error:', error);
+    log.error('api.screenshots.id.', { error: String('Screenshot delete error:') }, requestContext(req));
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }

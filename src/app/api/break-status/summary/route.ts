@@ -4,6 +4,7 @@ import { authError, requireSessionOrg } from '@/lib/api';
 import { EMPLOYEE_ONLINE_THRESHOLD_MS } from '@/lib/presence';
 import { orgDayWindow, safeTimezone } from '@/lib/timezone';
 import { sessionDurationSeconds } from '@/lib/breaks/service';
+import { log, requestContext } from '@/lib/logger';
 
 // GET /api/break-status/summary
 // Organization-scoped summary stats for Break Monitor.
@@ -152,7 +153,7 @@ export async function GET(req: NextRequest) {
       timezone,
     });
   } catch (error) {
-    console.error('Break summary error:', error);
+    log.error('api.break-status.summary.', { error: String('Break summary error:') }, requestContext(req));
     return NextResponse.json({ error: 'Failed to fetch break summary' }, { status: 500 });
   }
 }

@@ -1,8 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import * as XLSX from 'xlsx';
 import { db } from '@/lib/db';
-import { getRequestToken, verifyJWT } from '@/lib/auth';
+import { getRequestToken, hasRolePermission } from '@/lib/auth';
+import { verifySessionToken } from '@/lib/session';
 import { getSessionOrg } from '@/lib/api';
+import { log, requestContext } from '@/lib/logger';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -360,9 +362,17 @@ export async function POST(
     if (!token) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
-    const payload = await verifyJWT(token);
+    const payload = await verifySessionToken(token);
     if (!payload) {
       return NextResponse.json({ error: 'Invalid token' }, { status: 401 });
+    }
+
+    // M-9: Handler-level role authorization — never rely solely on proxy.
+    if (!hasRolePermission(payload.role, 'admin')) {
+      return NextResponse.json({ error: 'Insufficient permissions' }, { status: 403 });
+    }
+    if (!payload.organizationId) {
+      return NextResponse.json({ error: 'Organization scope required' }, { status: 403 });
     }
 
     // 2. Parse type param
@@ -459,7 +469,7 @@ export async function POST(
 
     return NextResponse.json(result);
   } catch (error) {
-    console.error('Import error:', error);
+    log.error('api.import.param.', { error: String('Import error:') }, requestContext(req));
     return NextResponse.json({ error: 'Failed to import file' }, { status: 500 });
   }
 }

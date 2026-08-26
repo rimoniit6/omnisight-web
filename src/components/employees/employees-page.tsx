@@ -18,6 +18,7 @@ import { BulkImportDialog } from '@/components/import/bulk-import-dialog';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { toast } from 'sonner';
 import { exportToCSV } from '@/lib/csv-export';
+import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { QuickStats, type QuickStat } from '@/components/ui/quick-stats';
 import { useAppStore, useAuthStore } from '@/lib/store';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -132,14 +133,26 @@ export function EmployeesPage() {
     }
   }, [data, page, setPage]);
 
+  const [archivingId, setArchivingId] = useState<string | null>(null);
+  const [archiveDialogId, setArchiveDialogId] = useState<string | null>(null);
+
   const handleArchive = async (id: string) => {
+    setArchiveDialogId(null);
+    setArchivingId(id);
     try {
-      await fetch(`/api/employees/${id}`, { method: 'DELETE' });
+      const res = await fetch(`/api/employees/${id}`, { method: 'DELETE' });
+      if (!res.ok) {
+        let msg = `Failed to archive employee (${res.status})`;
+        try { const j = await res.json(); if (j?.error) msg = j.error; } catch { /* keep default */ }
+        throw new Error(msg);
+      }
       toast.success('Employee archived');
       queryClient.invalidateQueries({ queryKey: ['employees'] });
       queryClient.invalidateQueries({ queryKey: ['employee-statistics'] });
-    } catch {
-      toast.error('Failed to archive employee');
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to archive employee');
+    } finally {
+      setArchivingId(null);
     }
   };
 
@@ -164,22 +177,38 @@ export function EmployeesPage() {
     queryClient.invalidateQueries({ queryKey: ['employee-statistics'] });
   }, [queryClient]);
 
+  const [bulkArchiving, setBulkArchiving] = useState(false);
+
   const handleBulkArchive = useCallback(async () => {
+    if (bulkArchiving) return; // prevent double-submit
+    setBulkArchiving(true);
     try {
       const res = await fetch('/api/employees/bulk', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ ids: Array.from(selectedIds), action: 'archive' }),
       });
+      if (!res.ok) {
+        let msg = `Failed to archive employees (${res.status})`;
+        try { const j = await res.json(); if (j?.error) msg = j.error; } catch { /* keep default */ }
+        throw new Error(msg);
+      }
       const json = await res.json();
-      toast.success(`${json.archived} employee(s) archived`);
+      const failed = json.failed || 0;
+      if (failed > 0) {
+        toast.warning(`${json.archived} archived, ${failed} failed`);
+      } else {
+        toast.success(`${json.archived} employee(s) archived`);
+      }
       setSelectedIds(new Set());
       queryClient.invalidateQueries({ queryKey: ['employees'] });
       queryClient.invalidateQueries({ queryKey: ['employee-statistics'] });
-    } catch {
-      toast.error('Failed to archive employees');
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to archive employees');
+    } finally {
+      setBulkArchiving(false);
     }
-  }, [selectedIds, queryClient]);
+  }, [selectedIds, queryClient, bulkArchiving]);
 
   const handleBulkExport = useCallback(() => {
     const employees = data?.data || [];
@@ -198,6 +227,7 @@ export function EmployeesPage() {
   }, [data, selectedIds]);
 
   const employees = data?.data || [];
+  const archiveTargetName = employees.find((e) => e.id === archiveDialogId);
   const total = data?.total || 0;
   const activeCount = data?.activeCount ?? 0;
   const inactiveCount = data?.inactiveCount ?? 0;
@@ -364,7 +394,7 @@ export function EmployeesPage() {
             employees={employees}
             loading={isLoading}
             onEdit={(emp) => { setEditEmployee(emp); setDialogOpen(true); }}
-            onArchive={handleArchive}
+            onArchive={setArchiveDialogId}
             onView={handleView}
             selectedIds={selectedIds}
             onSelectionChange={setSelectedIds}
@@ -403,6 +433,16 @@ export function EmployeesPage() {
         employeeId={storeSelectedEmployeeId}
         open={storeSelectedEmployeeId !== null}
         onOpenChange={(open) => { if (!open) setStoreSelectedEmployeeId(null); }}
+      />
+
+      <ConfirmDialog
+        open={archiveDialogId !== null}
+        onOpenChange={(open) => { if (!open) setArchiveDialogId(null); }}
+        title="Archive Employee"
+        description={`Are you sure you want to archive ${archiveTargetName ? `${archiveTargetName.firstName} ${archiveTargetName.lastName}` : 'this employee'}? They will be deactivated and removed from active listings.`}
+        confirmLabel="Archive"
+        onConfirm={() => { if (archiveDialogId) handleArchive(archiveDialogId); }}
+        disabled={archivingId !== null}
       />
 
     </div>

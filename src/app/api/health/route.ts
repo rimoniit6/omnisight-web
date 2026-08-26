@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { log, requestContext } from '@/lib/logger';
 
 // GET /api/health
 // Public health check. Returns lightweight server availability info.

@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { verifyClaimSecret } from '@/lib/agent/auth';
 import { checkRateLimit, RATE_LIMITS, getClientIpFromHeaders } from '@/lib/rate-limit';
+import { log, requestContext } from '@/lib/logger';
 
 // POST /api/device-claims/[id]/cancel
 //
@@ -132,7 +133,7 @@ export async function POST(
         { status: 409 }
       );
     }
-    console.error('DeviceClaim cancel error:', error);
+    log.error('api.device-claims.id.cancel.', { error: String('DeviceClaim cancel error:') }, requestContext(req));
     return NextResponse.json({ error: 'Failed to cancel device registration' }, { status: 500 });
   }
 }

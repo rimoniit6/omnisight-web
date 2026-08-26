@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { validateAgentToken } from '@/lib/agent/auth';
 import { startBreak, endBreak } from '@/lib/breaks/service';
+import { log, requestContext } from '@/lib/logger';
 
 // POST /api/agent/break
 // Agent notifies the server when the employee takes a break (breaks pause
@@ -75,7 +76,7 @@ export async function POST(req: NextRequest) {
           : 'Break mode deactivated. Tracking resumed.',
     });
   } catch (error) {
-    console.error('Agent break error:', error);
+    log.error('api.agent.break.', { error: String('Agent break error:') }, requestContext(req));
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }

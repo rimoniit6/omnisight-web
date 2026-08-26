@@ -2,6 +2,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { authError, requireSessionOrg, SAFE_EMPLOYEE_SELECT } from '@/lib/api';
+import { log, requestContext } from '@/lib/logger';
 
 // GET /api/device-claims
 // List zero-touch device claims for the caller's organization (admin session).
@@ -193,7 +194,7 @@ export async function GET(req: NextRequest) {
       ...(wantSummary ? { summary } : {}),
     });
   } catch (error) {
-    console.error('DeviceClaims GET error:', error);
+    log.error('api.device-claims.', { error: String('DeviceClaims GET error:') }, requestContext(req));
     return NextResponse.json({ error: 'Failed to fetch device claims' }, { status: 500 });
   }
 }

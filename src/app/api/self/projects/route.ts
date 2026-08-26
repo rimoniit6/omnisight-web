@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { getScopedEmployee } from '@/lib/self-guard';
+import { log, requestContext } from '@/lib/logger';
 
 // GET /api/self/projects?employeeId=xxx
 // Manager+ role (enforced by the proxy); employee scoped to caller's org.
@@ -90,7 +91,7 @@ export async function GET(req: NextRequest) {
 
     return NextResponse.json({ data });
   } catch (error) {
-    console.error('Self projects GET error:', error);
+    log.error('api.self.projects.', { error: String('Self projects GET error:') }, requestContext(req));
     return NextResponse.json({ error: 'Failed to fetch assigned projects' }, { status: 500 });
   }
 }

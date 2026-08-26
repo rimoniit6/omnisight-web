@@ -154,7 +154,7 @@ function DrawerInnerContent({
   const queryClient = useQueryClient();
 
   const { data, isLoading } = useQuery({
-    queryKey: ['employee-detail', employeeId],
+    queryKey: ['employee-details', employeeId],
     queryFn: async () => {
       if (!employeeId) return null;
       const res = await fetch(`/api/employees/${employeeId}/detail`);
@@ -239,7 +239,10 @@ function DrawerInnerContent({
             name={`${emp.firstName} ${emp.lastName}`}
             size="lg"
             editable
-            onUpdated={() => queryClient.invalidateQueries({ queryKey: ['employee', emp.id] })}
+            onUpdated={() => {
+              queryClient.invalidateQueries({ queryKey: ['employee-details', employeeId] });
+              queryClient.invalidateQueries({ queryKey: ['employees'] });
+            }}
           />
           <div className="flex-1 min-w-0">
             <SheetTitle className="text-lg">{emp.firstName} {emp.lastName}</SheetTitle>

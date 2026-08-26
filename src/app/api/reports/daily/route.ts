@@ -5,6 +5,7 @@ import { excludeInternalAgentActivities } from '@/lib/agent-process';
 import { localDayKey, zonedDayStart, zonedDayEnd, safeTimezone } from '@/lib/timezone';
 import { effectiveLiveStatus } from '@/lib/presence';
 import { sessionDurationSeconds } from '@/lib/breaks/service';
+import { log, requestContext } from '@/lib/logger';
 
 // POST /api/reports/daily
 // Generate a daily summary report for a given date
@@ -268,7 +269,7 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({ reportId: report.id, ...reportData });
   } catch (error) {
-    console.error('Daily report generation error:', error);
+    log.error('api.reports.daily.', { error: String('Daily report generation error:') }, requestContext(req));
     return NextResponse.json({ error: 'Failed to generate daily report' }, { status: 500 });
   }
 }

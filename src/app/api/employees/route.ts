@@ -5,6 +5,7 @@ import { Prisma } from '@prisma/client';
 import { authError, requireSessionOrg, requireAdminOrg } from '@/lib/api';
 import { EMPLOYEE_ONLINE_THRESHOLD_MS, LIFECYCLE_PINNED_STATUSES } from '@/lib/presence';
 import { createOrgNotification } from '@/lib/notifications/service';
+import { log, requestContext } from '@/lib/logger';
 
 // ─── Query parameter contracts ────────────────────────────────────────────
 // Only enum values that actually exist in the schema are accepted. Anything
@@ -273,7 +274,7 @@ export async function GET(req: NextRequest) {
       pagination: { page, pageSize, total, totalPages },
     });
   } catch (error) {
-    console.error('Employees GET error:', error);
+    log.error('api.employees.', { error: String('Employees GET error:') }, requestContext(req));
     return NextResponse.json({ error: 'Failed to fetch employees' }, { status: 500 });
   }
 }
@@ -337,7 +338,7 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({ data: safeEmployee }, { status: 201 });
   } catch (error: unknown) {
-    console.error('Employees POST error:', error);
+    log.error('api.employees.', { error: String('Employees POST error:') }, requestContext(req));
     if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
       return NextResponse.json({ error: 'Employee ID or email already exists' }, { status: 409 });
     }

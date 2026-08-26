@@ -4,6 +4,7 @@ import { db } from '@/lib/db';
 import { authError, requireManagerOrg } from '@/lib/api';
 import { sanitizeSpreadsheetCell } from '@/lib/export';
 import { excludeInternalAgentActivities, isInternalAgentProcess } from '@/lib/agent-process';
+import { log, requestContext } from '@/lib/logger';
 
 export async function GET(
   req: NextRequest,
@@ -158,7 +159,7 @@ export async function GET(
       },
     });
   } catch (error) {
-    console.error('Report CSV export error:', error);
+    log.error('api.reports.id.csv.', { error: String('Report CSV export error:') }, requestContext(req));
     return NextResponse.json({ error: 'Failed to export report as CSV' }, { status: 500 });
   }
 }

@@ -2,6 +2,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { authError, requireSessionOrg, requireAdminOrg } from '@/lib/api';
+import { log, requestContext } from '@/lib/logger';
 
 export async function GET(req: NextRequest) {
   try {
@@ -22,7 +23,7 @@ export async function GET(req: NextRequest) {
     });
     return NextResponse.json({ data: departments });
   } catch (error) {
-    console.error('Departments GET error:', error);
+    log.error('api.departments.', { error: String('Departments GET error:') }, requestContext(req));
     return NextResponse.json({ error: 'Failed to fetch departments' }, { status: 500 });
   }
 }
@@ -54,7 +55,7 @@ export async function POST(req: NextRequest) {
     });
     return NextResponse.json({ data: department }, { status: 201 });
   } catch (error) {
-    console.error('Departments POST error:', error);
+    log.error('api.departments.', { error: String('Departments POST error:') }, requestContext(req));
     return NextResponse.json({ error: 'Failed to create department' }, { status: 500 });
   }
 }

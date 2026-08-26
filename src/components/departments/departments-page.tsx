@@ -12,6 +12,7 @@ import { Plus, Search, Users, Building2, TrendingUp } from 'lucide-react';
 import { useAppStore } from '@/lib/store';
 import { toast } from 'sonner';
 import { motion } from 'framer-motion';
+import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 
 interface Department {
   id: string;
@@ -64,14 +65,27 @@ export function DepartmentsPage() {
     },
   });
 
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [deleteDialogId, setDeleteDialogId] = useState<string | null>(null);
+  const deleteTargetName = data?.find((d) => d.id === deleteDialogId)?.name || 'this department';
+
   const handleDelete = async (id: string) => {
+    setDeleteDialogId(null);
+    setDeletingId(id);
     try {
-      await fetch(`/api/departments/${id}`, { method: 'DELETE' });
+      const res = await fetch(`/api/departments/${id}`, { method: 'DELETE' });
+      if (!res.ok) {
+        let msg = 'Failed to delete department';
+        try { const j = await res.json(); if (j?.error) msg = j.error; } catch { /* keep default */ }
+        throw new Error(msg);
+      }
       toast.success('Department deleted');
       queryClient.invalidateQueries({ queryKey: ['departments'] });
       queryClient.invalidateQueries({ queryKey: ['departments-performance'] });
-    } catch {
-      toast.error('Failed to delete department');
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to delete department');
+    } finally {
+      setDeletingId(null);
     }
   };
 
@@ -234,7 +248,7 @@ export function DepartmentsPage() {
           <DepartmentTable
             departments={filteredDepts}
             onEdit={(dept) => { setEditDept(dept); setDialogOpen(true); }}
-            onDelete={handleDelete}
+            onDelete={setDeleteDialogId}
           />
         )}
       </div>
@@ -247,6 +261,16 @@ export function DepartmentsPage() {
           queryClient.invalidateQueries({ queryKey: ['departments'] });
           queryClient.invalidateQueries({ queryKey: ['departments-performance'] });
         }}
+      />
+
+      <ConfirmDialog
+        open={deleteDialogId !== null}
+        onOpenChange={(open) => { if (!open) setDeleteDialogId(null); }}
+        title="Delete Department"
+        description={`Are you sure you want to delete "${deleteTargetName}"? This action cannot be undone and will remove all department data.`}
+        confirmLabel="Delete"
+        onConfirm={() => { if (deleteDialogId) handleDelete(deleteDialogId); }}
+        disabled={deletingId !== null}
       />
     </div>
   );

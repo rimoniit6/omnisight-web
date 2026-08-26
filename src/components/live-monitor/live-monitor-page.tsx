@@ -40,6 +40,7 @@ import {
   Clock,
   PauseCircle,
   PlayCircle,
+  AlertTriangle,
 } from 'lucide-react';
 
 // ─── Constants ───
@@ -53,6 +54,8 @@ const ALL_EVENT_TYPES: { type: LiveEventType; label: string; icon: React.Element
   { type: 'usb-event', label: 'USB', icon: Usb, color: 'text-rose-600 dark:text-rose-400', bgColor: 'bg-rose-100 dark:bg-rose-900/30' },
   { type: 'device-claim', label: 'Claim', icon: Laptop, color: 'text-indigo-600 dark:text-indigo-400', bgColor: 'bg-indigo-100 dark:bg-indigo-900/30' },
   { type: 'guest', label: 'Guest', icon: UserPlus, color: 'text-cyan-600 dark:text-cyan-400', bgColor: 'bg-cyan-100 dark:bg-cyan-900/30' },
+  { type: 'alert-event', label: 'Alert Event', icon: AlertTriangle, color: 'text-red-600 dark:text-red-400', bgColor: 'bg-red-100 dark:bg-red-900/30' },
+  { type: 'project-time-update', label: 'Project Time', icon: Clock, color: 'text-blue-600 dark:text-blue-400', bgColor: 'bg-blue-100 dark:bg-blue-900/30' },
 ];
 
 const priorityBorderMap: Record<string, string> = {

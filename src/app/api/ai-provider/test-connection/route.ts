@@ -5,6 +5,7 @@ import { authError, requireSuperAdmin } from '@/lib/api';
 import { encryptSecret, decryptSecretWithMeta, maskSecret } from '@/lib/crypto';
 import { safeFetch, isSafeTarget } from '@/lib/ssrf';
 import { validateProviderConfig, apiEndpoint } from '@/lib/ai-provider-helper';
+import { log, requestContext } from '@/lib/logger';
 
 // ─── SSRF protection ────────────────────────────────────────────────────────
 // Delegates to the shared SSRF-safe client (src/lib/ssrf.ts): rejects
@@ -249,7 +250,7 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({ status, message, provider, url: testUrl });
   } catch (error) {
-    console.error('AI Provider test error:', error);
+    log.error('api.ai-provider.test-connection.', { error: String('AI Provider test error:') }, requestContext(req));
     return NextResponse.json({ error: 'Test failed' }, { status: 500 });
   }
 }

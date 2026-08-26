@@ -8,6 +8,7 @@ import {
   coerceMonitoringValue,
 } from '@/lib/jobs/settings';
 import type { MonitoringKey } from '@/lib/jobs/settings';
+import { log, requestContext } from '@/lib/logger';
 
 // Org-scoped agent monitoring configuration. Values are persisted in the
 // OrganizationSetting table (one row per org + key) and consumed by
@@ -53,7 +54,7 @@ export async function GET(req: NextRequest) {
 
     return NextResponse.json({ data: settings });
   } catch (error) {
-    console.error('Monitoring settings GET error:', error);
+    log.error('api.settings.monitoring.', { error: String('Monitoring settings GET error:') }, requestContext(req));
     return NextResponse.json({ error: 'Failed to fetch monitoring settings' }, { status: 500 });
   }
 }
@@ -109,7 +110,7 @@ export async function PUT(req: NextRequest) {
 
     return NextResponse.json({ data: { key, value: validation.value }, setting });
   } catch (error) {
-    console.error('Monitoring settings PUT error:', error);
+    log.error('api.settings.monitoring.', { error: String('Monitoring settings PUT error:') }, requestContext(req));
     return NextResponse.json({ error: 'Failed to update monitoring setting' }, { status: 500 });
   }
 }

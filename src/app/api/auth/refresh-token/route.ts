@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { signJWT, getRequestToken, getRoleLabel, setSessionCookie, jwtLifetimeSeconds } from '@/lib/auth';
 import { verifySessionToken, extendSessionExpiry } from '@/lib/session';
+import { log, requestContext } from '@/lib/logger';
 
 /**
  * POST /api/auth/refresh-token
@@ -68,7 +69,7 @@ export async function POST(req: NextRequest) {
       jwtLifetimeSeconds()
     );
   } catch (error) {
-    console.error('Token refresh error:', error);
+    log.error('api.auth.refresh-token.', { error: String('Token refresh error:') }, requestContext(req));
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }

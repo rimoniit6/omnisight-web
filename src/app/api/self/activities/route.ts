@@ -3,6 +3,7 @@ import { db } from '@/lib/db';
 import { getScopedEmployee } from '@/lib/self-guard';
 import { validatePagination } from '@/lib/api';
 import { NON_INTERNAL_AGENT_ACTIVITY_FILTER } from '@/lib/agent-process';
+import { log, requestContext } from '@/lib/logger';
 
 // GET /api/self/activities?employeeId=xxx&type=&category=&dateFrom=&dateTo=&page=&pageSize=
 // Manager+ role (enforced by middleware); employee scoped to caller's org.
@@ -113,7 +114,7 @@ export async function GET(req: NextRequest) {
       },
     });
   } catch (error) {
-    console.error('Self Activities GET error:', error);
+    log.error('api.self.activities.', { error: String('Self Activities GET error:') }, requestContext(req));
     return NextResponse.json({ error: 'Failed to fetch activities' }, { status: 500 });
   }
 }

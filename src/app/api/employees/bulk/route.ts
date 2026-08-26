@@ -2,6 +2,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { authError, requireAdminOrg } from '@/lib/api';
+import { log, requestContext } from '@/lib/logger';
 
 export async function POST(req: NextRequest) {
   try {
@@ -27,7 +28,7 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({ error: 'Invalid action. Supported: archive' }, { status: 400 });
   } catch (error) {
-    console.error('Employees bulk POST error:', error);
+    log.error('api.employees.bulk.', { error: String('Employees bulk POST error:') }, requestContext(req));
     return NextResponse.json({ error: 'Bulk operation failed' }, { status: 500 });
   }
 }

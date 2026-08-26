@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { validateAgentToken, getClientIp } from '@/lib/agent/auth';
+import { log, requestContext } from '@/lib/logger';
 
 // POST /api/agent/heartbeat
 // Agent sends periodic heartbeat to show it's alive
@@ -45,7 +46,7 @@ export async function POST(req: NextRequest) {
       break: breakState,
     });
   } catch (error) {
-    console.error('Agent heartbeat error:', error);
+    log.error('api.agent.heartbeat.', { error: String('Agent heartbeat error:') }, requestContext(req));
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }

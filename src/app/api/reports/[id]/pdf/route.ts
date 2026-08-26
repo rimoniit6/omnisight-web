@@ -4,6 +4,7 @@ import { db } from '@/lib/db';
 import { authError, requireManagerOrg } from '@/lib/api';
 import { excludeInternalAgentActivities } from '@/lib/agent-process';
 import { effectiveLiveStatus } from '@/lib/presence';
+import { log, requestContext } from '@/lib/logger';
 
 export async function GET(
   req: NextRequest,
@@ -292,7 +293,7 @@ export async function GET(
       },
     });
   } catch (error) {
-    console.error('Report PDF GET error:', error);
+    log.error('api.reports.id.pdf.', { error: String('Report PDF GET error:') }, requestContext(req));
     return NextResponse.json({ error: 'Failed to generate report preview' }, { status: 500 });
   }
 }

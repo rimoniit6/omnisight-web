@@ -9,7 +9,7 @@
 // / at-rest-encryption suites; extension normalization by
 // browser-extension/tests/domain.test.mjs.
 
-import { readFileSync } from 'fs';
+import { readFileSync, existsSync } from 'fs';
 import path from 'path';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -20,6 +20,12 @@ let buildActivityPing: typeof import('../mini-services/live-updates/activity-eve
 let isBareDomain: typeof import('../mini-services/live-updates/activity-events').isBareDomain;
 
 const root = path.join(__dirname, '..');
+
+// The `omnisight-agent` component lives in a separate repository. The test that
+// derives the extension id from its install script must skip when the agent is
+// not checked out, so the suite stays portable. (Item 14)
+const AGENT_PRESENT = existsSync(path.join(root, 'omnisight-agent'));
+const agentTest = AGENT_PRESENT ? test : test.skip;
 
 test('load pure activity-events module', async () => {
   const mod = await import('../mini-services/live-updates/activity-events');
@@ -179,7 +185,7 @@ test('WEBSITE-100-15: incognito tabs are excluded at the extension (source invar
 // [a-p]) is identical in Chrome and Edge on every machine, and the native
 // host manifests must allow-list exactly that id (never a placeholder).
 
-test('WEBSITE-100-16: pinned manifest key derives the allowlisted extension id (source invariant)', async () => {
+agentTest('WEBSITE-100-16: pinned manifest key derives the allowlisted extension id (source invariant)', async () => {
   const manifest = JSON.parse(readFileSync(path.join(root, 'browser-extension/manifest.json'), 'utf8'));
   assert.equal(typeof manifest.key, 'string', 'manifest must pin a public key for a deterministic id');
   assert.ok(manifest.key.length > 100, 'key must be a real base64 DER SubjectPublicKeyInfo');

@@ -2,6 +2,16 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { getRequestToken, hashPassword, hasRolePermission, getRoleLabel } from '@/lib/auth';
 import { verifySessionToken, revokeAllUserSessions, getUserAgent } from '@/lib/session';
+import { log, requestContext } from '@/lib/logger';
+
+/** Role hierarchy levels for C-2 privilege-escalation guard. */
+const ROLE_LEVELS: Record<string, number> = {
+  super_admin: 50,
+  owner: 40,
+  admin: 30,
+  manager: 20,
+  viewer: 10,
+};
 
 // ─── GET /api/auth/users/[id] ──────────────────────────────────────────────
 
@@ -25,8 +35,15 @@ export async function GET(
     }
 
     const { id } = await params;
-    const user = await db.appUser.findUnique({
-      where: { id },
+
+    // C-1: Non-super-admin must only see users within their own organization.
+    const whereClause: Record<string, string> = { id };
+    if (payload.role !== 'super_admin' && payload.organizationId) {
+      whereClause.organizationId = payload.organizationId;
+    }
+
+    const user = await db.appUser.findFirst({
+      where: whereClause,
       select: {
         id: true,
         email: true,
@@ -52,7 +69,7 @@ export async function GET(
       },
     });
   } catch (error) {
-    console.error('Get user error:', error);
+    log.error('api.auth.users.id.', { error: String('Get user error:') }, requestContext(req));
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }
@@ -88,7 +105,13 @@ export async function PUT(
       password?: string;
     };
 
-    const user = await db.appUser.findUnique({ where: { id } });
+    // C-1: Non-super-admin can only modify users within their own organization.
+    const whereClause: Record<string, string> = { id };
+    if (payload.role !== 'super_admin' && payload.organizationId) {
+      whereClause.organizationId = payload.organizationId;
+    }
+
+    const user = await db.appUser.findFirst({ where: whereClause });
     if (!user) {
       return NextResponse.json({ error: 'User not found' }, { status: 404 });
     }
@@ -110,6 +133,23 @@ export async function PUT(
       }
       if (role === 'super_admin' && payload.role !== 'super_admin') {
         return NextResponse.json({ error: 'Only Super Admin can assign Super Admin role' }, { status: 403 });
+      }
+      // C-2: Privilege escalation guard — assigner must have >= target role level.
+      const assignerLevel = ROLE_LEVELS[payload.role] ?? 0;
+      const targetLevel = ROLE_LEVELS[role] ?? 0;
+      if (payload.role !== 'super_admin' && assignerLevel < targetLevel) {
+        return NextResponse.json(
+          { error: `Insufficient permissions to assign role '${role}' (requires level ${targetLevel}, you have ${assignerLevel})` },
+          { status: 403 }
+        );
+      }
+      // C-2: Prevent promoting to a role higher than the user's current role.
+      const currentLevel = ROLE_LEVELS[user.role] ?? 0;
+      if (payload.role !== 'super_admin' && assignerLevel < currentLevel && assignerLevel < targetLevel) {
+        return NextResponse.json(
+          { error: `Cannot promote above your own role level` },
+          { status: 403 }
+        );
       }
       updateData.role = role;
     }
@@ -159,7 +199,7 @@ export async function PUT(
       },
     });
   } catch (error) {
-    console.error('Update user error:', error);
+    log.error('api.auth.users.id.', { error: String('Update user error:') }, requestContext(req));
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }
@@ -193,7 +233,13 @@ export async function DELETE(
       return NextResponse.json({ error: 'Cannot delete yourself' }, { status: 400 });
     }
 
-    const user = await db.appUser.findUnique({ where: { id } });
+    // C-1: Non-super-admin can only delete users within their own organization.
+    const whereClause: Record<string, string> = { id };
+    if (payload.role !== 'super_admin' && payload.organizationId) {
+      whereClause.organizationId = payload.organizationId;
+    }
+
+    const user = await db.appUser.findFirst({ where: whereClause });
     if (!user) {
       return NextResponse.json({ error: 'User not found' }, { status: 404 });
     }
@@ -226,7 +272,7 @@ export async function DELETE(
 
     return NextResponse.json({ message: 'User deactivated successfully' });
   } catch (error) {
-    console.error('Delete user error:', error);
+    log.error('api.auth.users.id.', { error: String('Delete user error:') }, requestContext(req));
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }

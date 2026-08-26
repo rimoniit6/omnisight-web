@@ -4,6 +4,7 @@ import { db } from '@/lib/db';
 import { authError, requireAdminOrg, requireSuperAdmin, parseJsonBody, BodyParseError } from '@/lib/api';
 import { encryptSecret } from '@/lib/crypto';
 import { validateProviderConfig } from '@/lib/ai-provider-helper';
+import { log, requestContext } from '@/lib/logger';
 
 // Values of these keys are secrets — never returned to the client and stored
 // encrypted at rest.
@@ -47,7 +48,7 @@ export async function GET(req: NextRequest) {
     const data = visible.map((s) => ({ ...s, value: redact(s.value, s.key) }));
     return NextResponse.json({ data, grouped });
   } catch (error) {
-    console.error('Settings GET error:', error);
+    log.error('api.settings.', { error: String('Settings GET error:') }, requestContext(req));
     return NextResponse.json({ error: 'Failed to fetch settings' }, { status: 500 });
   }
 }
@@ -179,7 +180,7 @@ export async function PUT(req: NextRequest) {
     // REDACTED in responses exactly like GET.
     return NextResponse.json({ data: { ...setting, value: redact(setting.value, key) } });
   } catch (error) {
-    console.error('Settings PUT error:', error);
+    log.error('api.settings.', { error: String('Settings PUT error:') }, requestContext(req));
     return NextResponse.json({ error: 'Failed to update setting' }, { status: 500 });
   }
 }

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { authError, requireAdminOrg } from '@/lib/api';
+import { log, requestContext } from '@/lib/logger';
 
 /**
  * POST /api/projects/[id]/restore
@@ -58,7 +59,7 @@ export async function POST(
 
     return NextResponse.json({ data: project, message: 'Project restored' });
   } catch (error) {
-    console.error('Project restore POST error:', error);
+    log.error('api.projects.id.restore.', { error: String('Project restore POST error:') }, requestContext(req));
     return NextResponse.json({ error: 'Failed to restore project' }, { status: 500 });
   }
 }

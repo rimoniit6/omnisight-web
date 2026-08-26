@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { authenticateRequest, getSessionOrg, validatePagination } from '@/lib/api';
 import { hasRolePermission } from '@/lib/auth';
+import { log, requestContext } from '@/lib/logger';
 import {
   isValidAnomalyType,
   isValidAnomalySeverity,
@@ -131,7 +132,7 @@ export async function GET(req: NextRequest) {
       stats,
     });
   } catch (error) {
-    console.error('Anomalies GET error:', error);
+    log.error('api.anomalies.', { error: String('Anomalies GET error:') }, requestContext(req));
     return NextResponse.json({ error: 'Failed to fetch anomalies' }, { status: 500 });
   }
 }
@@ -252,7 +253,7 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json(anomaly, { status: 201 });
   } catch (error) {
-    console.error('Anomalies POST error:', error);
+    log.error('api.anomalies.', { error: String('Anomalies POST error:') }, requestContext(req));
     return NextResponse.json({ error: 'Failed to create anomaly' }, { status: 500 });
   }
 }

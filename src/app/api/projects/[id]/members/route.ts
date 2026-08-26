@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { Prisma } from '@prisma/client';
 import { db } from '@/lib/db';
 import { authError, requireSessionOrg, requireAdminOrg } from '@/lib/api';
+import { log, requestContext } from '@/lib/logger';
 
 export async function GET(
   req: NextRequest,
@@ -88,7 +89,7 @@ export async function GET(
 
     return NextResponse.json({ data: enrichedMembers, total: enrichedMembers.length });
   } catch (error) {
-    console.error('Project members GET error:', error);
+    log.error('api.projects.id.members.', { error: String('Project members GET error:') }, requestContext(req));
     return NextResponse.json({ error: 'Failed to fetch project members' }, { status: 500 });
   }
 }
@@ -224,7 +225,7 @@ export async function POST(
       throw error;
     }
   } catch (error: unknown) {
-    console.error('Project members POST error:', error);
+    log.error('api.projects.id.members.', { error: String('Project members POST error:') }, requestContext(req));
     return NextResponse.json({ error: 'Failed to add project member' }, { status: 500 });
   }
 }

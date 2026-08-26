@@ -10,9 +10,10 @@ import { Switch } from '@/components/ui/switch';
 import { Badge } from '@/components/ui/badge';
 import { toast } from 'sonner';
 import { useTheme } from 'next-themes';
-import { Save, Shield, Cpu, Bell, Settings, ToggleLeft, Wrench, Sun, Moon, Monitor, Users, Trash2, ShieldCheck, Sparkles } from 'lucide-react';
+import { Save, Shield, Cpu, Bell, Settings, ToggleLeft, Wrench, Sun, Moon, Monitor, Users, Trash2, ShieldCheck, Sparkles, AlertTriangle } from 'lucide-react';
 import { UserManagement } from '@/components/auth/user-management';
 import { ChangePasswordDialog } from '@/components/auth/change-password-dialog';
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
 import { cn } from '@/lib/utils';
 
 const sections = [
@@ -234,13 +235,16 @@ interface MonitoringRowProps {
   helper?: string;
   /** When true the control is read-only — the stored value is still shown. */
   disabled?: boolean;
+  /** Confirmation dialog config for destructive boolean toggles (false→true only). */
+  confirmEnable?: { title: string; description: string };
 }
 
-function MonitoringRow({ s, onSaved, badge, helper, disabled = false }: MonitoringRowProps) {
+function MonitoringRow({ s, onSaved, badge, helper, disabled = false, confirmEnable }: MonitoringRowProps) {
   const queryClient = useQueryClient();
   const [value, setValue] = useState<string | number | boolean>(s.value);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  const [showConfirm, setShowConfirm] = useState(false);
   // Local state initializes from the server value; the parent remounts this
   // row (key includes s.value) whenever the server value changes, so no
   // effect-based sync is needed.
@@ -262,10 +266,35 @@ function MonitoringRow({ s, onSaved, badge, helper, disabled = false }: Monitori
       queryClient.invalidateQueries({ queryKey: ['monitoring-settings'] });
       onSaved();
     } catch (err) {
+      // Rollback: restore the previous value on failure so the UI does not
+      // show a false-success state.
+      setValue(s.value);
       setError(err instanceof Error ? err.message : 'Failed to update setting');
     } finally {
       setSaving(false);
     }
+  };
+
+  const handleBooleanToggle = (newValue: boolean) => {
+    // Destructive enable (false→true) with confirmation dialog.
+    if (newValue && confirmEnable) {
+      setShowConfirm(true);
+      return; // do NOT change value yet — wait for confirmation
+    }
+    // Non-destructive change (true→false, or no confirmation needed): apply immediately.
+    setValue(newValue);
+    if (!disabled) void handleSave(newValue);
+  };
+
+  const handleConfirmEnable = () => {
+    setShowConfirm(false);
+    setValue(true);
+    if (!disabled) void handleSave(true);
+  };
+
+  const handleCancelConfirm = () => {
+    // Cancel must leave the value unchanged — the Switch reverts via the key prop.
+    setShowConfirm(false);
   };
 
   const meta = s.type === 'number' && s.min !== undefined && s.max !== undefined
@@ -273,6 +302,7 @@ function MonitoringRow({ s, onSaved, badge, helper, disabled = false }: Monitori
     : s.type;
 
   return (
+    <>
     <div className='flex items-center justify-between py-2 px-3 rounded-lg hover:bg-muted/50 transition-colors'>
       <div className='min-w-0'>
         <div className='flex items-center gap-2 flex-wrap'>
@@ -288,8 +318,8 @@ function MonitoringRow({ s, onSaved, badge, helper, disabled = false }: Monitori
           <div className={cn('px-1 py-1 rounded-full transition-all duration-300', value === true ? 'bg-success/10 ring-success/20' : 'bg-muted')}>
             <Switch
               checked={value === true}
-              disabled={disabled}
-              onCheckedChange={(v) => { setValue(v); if (!disabled) void handleSave(v); }}
+              disabled={disabled || saving}
+              onCheckedChange={handleBooleanToggle}
             />
           </div>
         ) : s.type === 'time' ? (
@@ -318,6 +348,34 @@ function MonitoringRow({ s, onSaved, badge, helper, disabled = false }: Monitori
         )}
       </div>
     </div>
+    {/* Confirmation dialog for destructive boolean enable */}
+    {confirmEnable && (
+      <AlertDialog open={showConfirm} onOpenChange={(open) => { if (!open) handleCancelConfirm(); }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle className='flex items-center gap-2'>
+              <AlertTriangle className='h-5 w-5 text-amber-500' />
+              {confirmEnable.title}
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              {confirmEnable.description}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel onClick={handleCancelConfirm}>
+              Cancel
+            </AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleConfirmEnable}
+              className='bg-amber-600 hover:bg-amber-700 text-white'
+            >
+              Enable
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    )}
+    </>
   );
 }
 
@@ -369,7 +427,7 @@ function AgentMonitoringCard() {
               onSaved={() => queryClient.invalidateQueries({ queryKey: ['monitoring-settings'] })}
               {...(s.key === 'website_tracking'
                 ? {
-                    helper: 'Requires the OmniSight browser extension (Chrome/Edge/Firefox) on the employee\'s device and active activity-tracking consent. Collects DOMAIN names only (e.g. github.com) — never full URLs, paths, queries or page contents.',
+                    helper: 'Website tracking requires either the OmniSight browser extension (Chrome/Edge/Firefox) OR Native Website Tracking to be enabled. If both are unavailable, no website activity will be collected even when this setting is on. Requires active activity-tracking consent. Collects DOMAIN names only (e.g. github.com) — never full URLs, paths, queries or page contents.',
                   }
                 : {})}
               {...(s.key === 'usb_monitoring'
@@ -384,7 +442,20 @@ function AgentMonitoringCard() {
                 : {})}
               {...(s.key === 'app_policy_terminate'
                 ? {
-                    helper: 'DANGER: when enabled on top of App Policy Enforcement, a blocked application is actively TERMINATED. Report-only (false) is the safe default.',
+                    helper: 'When enabled on top of App Policy Enforcement, a blocked application is actively TERMINATED on managed devices. This is a destructive action that may interrupt employee work. Report-only (false) is the safe default.',
+                    confirmEnable: {
+                      title: 'Enable application termination?',
+                      description: 'This will allow OmniSight to automatically terminate applications that violate an active application policy on managed devices. This is a destructive action and may interrupt employee work. Only enable this if you understand the consequences.',
+                    },
+                  }
+                : {})}
+              {...(s.key === 'webcam_capture_enabled'
+                ? {
+                    helper: 'Enabling this allows authorized webcam sessions on managed devices. Webcam access remains subject to employee consent and server-side monitoring policy. Disabling this setting immediately stops server-side webcam frame acceptance.',
+                    confirmEnable: {
+                      title: 'Enable webcam capture?',
+                      description: 'Enabling this setting allows authorized webcam sessions on managed devices. Webcam access remains subject to employee consent — enabling this does not bypass employee consent requirements. The server re-validates consent and this setting during active sessions.',
+                    },
                   }
                 : {})}
             />

@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { authError, requireSessionOrg, requireAdminOrg } from '@/lib/api';
 import { effectiveDeviceStatus } from '@/lib/device-status';
+import { log, requestContext } from '@/lib/logger';
 
 export async function GET(
   req: NextRequest,
@@ -36,7 +37,7 @@ export async function GET(
     }
     return NextResponse.json({ data: device });
   } catch (error) {
-    console.error('Device GET error:', error);
+    log.error('api.devices.id.', { error: String('Device GET error:') }, requestContext(req));
     return NextResponse.json({ error: 'Failed to fetch device' }, { status: 500 });
   }
 }
@@ -87,7 +88,7 @@ export async function PUT(
     });
     return NextResponse.json({ data: device });
   } catch (error) {
-    console.error('Device PUT error:', error);
+    log.error('api.devices.id.', { error: String('Device PUT error:') }, requestContext(req));
     return NextResponse.json({ error: 'Failed to update device' }, { status: 500 });
   }
 }
@@ -110,7 +111,7 @@ export async function DELETE(
     await db.device.delete({ where: { id } });
     return NextResponse.json({ success: true });
   } catch (error) {
-    console.error('Device DELETE error:', error);
+    log.error('api.devices.id.', { error: String('Device DELETE error:') }, requestContext(req));
     return NextResponse.json({ error: 'Failed to delete device' }, { status: 500 });
   }
 }

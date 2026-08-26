@@ -3,6 +3,7 @@ import { db } from '@/lib/db';
 import { authError, requireSessionOrg, validatePagination } from '@/lib/api';
 import { EMPLOYEE_ONLINE_THRESHOLD_MS, LIFECYCLE_PINNED_STATUSES } from '@/lib/presence';
 import { orgDayWindow, safeTimezone } from '@/lib/timezone';
+import { log, requestContext } from '@/lib/logger';
 import {
   getCurrentBreak,
   sessionDurationSeconds,
@@ -208,7 +209,7 @@ export async function GET(req: NextRequest) {
       timezone,
     });
   } catch (error) {
-    console.error('Break status GET error:', error);
+    log.error('api.break-status.', { error: String('Break status GET error:') }, requestContext(req));
     return NextResponse.json({ error: 'Failed to fetch break status' }, { status: 500 });
   }
 }

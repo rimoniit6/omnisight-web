@@ -4,6 +4,7 @@ import { db } from '@/lib/db';
 import { authError, requireSessionOrg, requireManagerOrg, validatePagination } from '@/lib/api';
 import { createOrgNotification, NotificationValidationError } from '@/lib/notifications/service';
 import { validateTitle, validateMessage } from '@/lib/notifications/validation';
+import { log, requestContext } from '@/lib/logger';
 
 export async function GET(req: NextRequest) {
   try {
@@ -100,7 +101,7 @@ export async function GET(req: NextRequest) {
       stats: { byType, byPriority, recentCount },
     });
   } catch (error) {
-    console.error('Notifications GET error:', error);
+    log.error('api.notifications.', { error: String('Notifications GET error:') }, requestContext(req));
     return NextResponse.json({ error: 'Failed to fetch notifications' }, { status: 500 });
   }
 }
@@ -169,7 +170,7 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({ data: notification }, { status: 201 });
   } catch (error) {
-    console.error('Notifications POST error:', error);
+    log.error('api.notifications.', { error: String('Notifications POST error:') }, requestContext(req));
     return NextResponse.json({ error: 'Failed to create notification' }, { status: 500 });
   }
 }
@@ -239,7 +240,7 @@ export async function PUT(req: NextRequest) {
     });
     return NextResponse.json({ data: notification });
   } catch (error) {
-    console.error('Notifications PUT error:', error);
+    log.error('api.notifications.', { error: String('Notifications PUT error:') }, requestContext(req));
     return NextResponse.json({ error: 'Failed to update notification' }, { status: 500 });
   }
 }

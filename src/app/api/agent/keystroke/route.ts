@@ -3,6 +3,7 @@ import { db } from '@/lib/db';
 import { validateAgentToken } from '@/lib/agent/auth';
 import { hasActiveConsent } from '@/lib/consent';
 import { resolveOrgMonitoring } from '@/lib/jobs/settings';
+import { log, requestContext } from '@/lib/logger';
 
 // POST /api/agent/keystroke
 // Aggregate keyboard-activity intervals from the desktop agent.
@@ -177,7 +178,7 @@ export async function POST(req: NextRequest) {
       message: `${created.count} keyboard intervals recorded`,
     });
   } catch (error) {
-    console.error('Agent keystroke error:', error);
+    log.error('api.agent.keystroke.', { error: String('Agent keystroke error:') }, requestContext(req));
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }

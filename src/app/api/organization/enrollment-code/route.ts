@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { authError, requireAdminOrg } from '@/lib/api';
 import { checkRateLimit, RATE_LIMITS, getClientIpFromHeaders } from '@/lib/rate-limit';
+import { log, requestContext } from '@/lib/logger';
 import {
   generateEnrollmentCode,
   hashEnrollmentCode,
@@ -65,7 +66,7 @@ export async function POST(req: NextRequest) {
       message: 'Enrollment code issued. It is returned only once — provision it to agents before it is needed.',
     });
   } catch (error) {
-    console.error('Enrollment code POST error:', error);
+    log.error('api.organization.enrollment-code.', { error: String('Enrollment code POST error:') }, requestContext(req));
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }
@@ -97,7 +98,7 @@ export async function DELETE(req: NextRequest) {
 
     return NextResponse.json({ success: true, enabled: removed.count > 0 });
   } catch (error) {
-    console.error('Enrollment code DELETE error:', error);
+    log.error('api.organization.enrollment-code.', { error: String('Enrollment code DELETE error:') }, requestContext(req));
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }

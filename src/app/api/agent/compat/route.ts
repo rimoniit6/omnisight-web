@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { log, requestContext } from '@/lib/logger';
 
 // GET /api/agent/compat
 // Public, zero-write fingerprint endpoint used by the Local Agent Builder

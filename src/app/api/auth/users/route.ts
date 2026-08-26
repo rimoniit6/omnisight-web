@@ -1,6 +1,17 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
-import { verifyJWT, getRequestToken, hashPassword, hasRolePermission, getRoleLabel } from '@/lib/auth';
+import { getRequestToken, hashPassword, hasRolePermission, getRoleLabel } from '@/lib/auth';
+import { verifySessionToken } from '@/lib/session';
+import { log, requestContext } from '@/lib/logger';
+
+/** Role hierarchy levels for C-2 privilege-escalation guard. */
+const ROLE_LEVELS: Record<string, number> = {
+  super_admin: 50,
+  owner: 40,
+  admin: 30,
+  manager: 20,
+  viewer: 10,
+};
 
 // ─── GET /api/auth/users ───────────────────────────────────────────────────
 // List all users (admin+ only)
@@ -12,7 +23,7 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    const payload = await verifyJWT(token);
+    const payload = await verifySessionToken(token);
     if (!payload) {
       return NextResponse.json({ error: 'Invalid or expired token' }, { status: 401 });
     }
@@ -29,7 +40,11 @@ export async function GET(req: NextRequest) {
     const search = url.searchParams.get('search') || '';
     const roleFilter = url.searchParams.get('role') || '';
 
+    // C-1: Non-super-admin callers are scoped to their own organization.
     const where: Record<string, unknown> = {};
+    if (payload.role !== 'super_admin' && payload.organizationId) {
+      where.organizationId = payload.organizationId;
+    }
     if (roleFilter) where.role = roleFilter;
     if (search) {
       // Case-insensitive email search on PostgreSQL (ILIKE via mode).
@@ -83,7 +98,7 @@ export async function GET(req: NextRequest) {
       },
     });
   } catch (error) {
-    console.error('List users error:', error);
+    log.error('api.auth.users.', { error: String('List users error:') }, requestContext(req));
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }
@@ -98,7 +113,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    const payload = await verifyJWT(token);
+    const payload = await verifySessionToken(token);
     if (!payload) {
       return NextResponse.json({ error: 'Invalid or expired token' }, { status: 401 });
     }
@@ -109,12 +124,11 @@ export async function POST(req: NextRequest) {
     }
 
     const body = await req.json();
-    const { email, name, password, role, organizationId } = body as {
+    const { email, name, password, role } = body as {
       email?: string;
       name?: string;
       password?: string;
       role?: string;
-      organizationId?: string;
     };
 
     if (!email || !name || !password || !role) {
@@ -134,14 +148,32 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Only Super Admin can create Super Admin users' }, { status: 403 });
     }
 
+    // C-2: Privilege escalation guard — assigner must have >= target role level.
+    const assignerLevel = ROLE_LEVELS[payload.role] ?? 0;
+    const targetLevel = ROLE_LEVELS[role] ?? 0;
+    if (payload.role !== 'super_admin' && assignerLevel < targetLevel) {
+      return NextResponse.json(
+        { error: `Insufficient permissions to assign role '${role}' (requires level ${targetLevel}, you have ${assignerLevel})` },
+        { status: 403 }
+      );
+    }
+
     // Check password strength
     if (password.length < 8) {
       return NextResponse.json({ error: 'Password must be at least 8 characters' }, { status: 400 });
     }
 
-    // Check if email already exists
+    // C-1: Determine organization — non-super-admins are forced to their own org.
+    const targetOrgId = payload.role === 'super_admin'
+      ? (body.organizationId as string | undefined) || payload.organizationId || null
+      : payload.organizationId || null;
+
+    // Check if email already exists within the same organization scope
     const existing = await db.appUser.findFirst({
-      where: { email: { contains: email } },
+      where: {
+        email: { contains: email },
+        ...(targetOrgId ? { organizationId: targetOrgId } : {}),
+      },
     });
     const existingUser = existing && existing.email.toLowerCase() === email.toLowerCase();
 
@@ -158,7 +190,7 @@ export async function POST(req: NextRequest) {
           name,
           password: hashedPassword,
           role,
-          organizationId: organizationId || payload.organizationId || null,
+          organizationId: targetOrgId,
           isActive: true,
         },
       });
@@ -190,7 +222,7 @@ export async function POST(req: NextRequest) {
       },
     }, { status: 201 });
   } catch (error) {
-    console.error('Create user error:', error);
+    log.error('api.auth.users.', { error: String('Create user error:') }, requestContext(req));
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }

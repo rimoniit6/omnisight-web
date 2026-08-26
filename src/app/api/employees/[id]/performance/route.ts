@@ -5,6 +5,7 @@ import { db } from '@/lib/db';
 import { format, subDays, startOfDay, getDay } from 'date-fns';
 import { authError, requireSessionOrg } from '@/lib/api';
 import { excludeInternalAgentActivities } from '@/lib/agent-process';
+import { log, requestContext } from '@/lib/logger';
 
 export async function GET(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -327,7 +328,7 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
       },
     });
   } catch (error) {
-    console.error('Employee performance error:', error);
+    log.error('api.employees.id.performance.', { error: String('Employee performance error:') }, requestContext(request));
     return NextResponse.json({ error: 'Failed to fetch performance data' }, { status: 500 });
   }
 }

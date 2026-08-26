@@ -3,6 +3,7 @@ import { db } from '@/lib/db';
 import { getClientIp, verifyAgentPassword } from '@/lib/agent/auth';
 import { checkRateLimit, RATE_LIMITS } from '@/lib/rate-limit';
 import { createOrgNotification } from '@/lib/notifications/service';
+import { log, requestContext } from '@/lib/logger';
 
 // POST /api/agent/register
 // Windows agent calls this with employeeId + password + device info
@@ -178,7 +179,7 @@ export async function POST(req: NextRequest) {
       name: `${employee.firstName} ${employee.lastName}`,
     }, { status: 201 });
   } catch (error) {
-    console.error('Agent register error:', error);
+    log.error('api.agent.register.', { error: String('Agent register error:') }, requestContext(req));
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }

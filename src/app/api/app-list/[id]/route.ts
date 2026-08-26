@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { authError, requireAdminOrg } from '@/lib/api';
 import { bumpPolicyVersion } from '@/lib/policies/version';
+import { log, requestContext } from '@/lib/logger';
 
 // DELETE /api/app-list/[id] — Remove app from whitelist/blacklist
 export async function DELETE(
@@ -56,7 +57,7 @@ export async function DELETE(
 
     return NextResponse.json({ success: true, data: updated });
   } catch (error) {
-    console.error('App list DELETE error:', error);
+    log.error('api.app-list.id.', { error: String('App list DELETE error:') }, requestContext(req));
     return NextResponse.json({ error: 'Failed to remove app' }, { status: 500 });
   }
 }

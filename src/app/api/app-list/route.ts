@@ -4,6 +4,7 @@ import { authError, requireManagerOrg, requireSessionOrg, validatePagination } f
 import { validateAppListInput } from '@/lib/policies/validation';
 import { bumpPolicyVersion, readPolicyVersion } from '@/lib/policies/version';
 import { MAX_POLICY_PAYLOAD_ENTRIES } from '@/lib/policies/constants';
+import { log, requestContext } from '@/lib/logger';
 
 const MAX_SEARCH_LENGTH = 100;
 
@@ -66,7 +67,7 @@ export async function GET(req: NextRequest) {
       policyVersion: await readPolicyVersion(orgId),
     });
   } catch (error) {
-    console.error('App list GET error:', error);
+    log.error('api.app-list.', { error: String('App list GET error:') }, requestContext(req));
     return NextResponse.json({ error: 'Failed to fetch app list' }, { status: 500 });
   }
 }
@@ -166,7 +167,7 @@ export async function POST(req: NextRequest) {
     ) {
       return NextResponse.json({ error: 'App already exists in this list' }, { status: 409 });
     }
-    console.error('App list POST error:', error);
+    log.error('api.app-list.', { error: String('App list POST error:') }, requestContext(req));
     return NextResponse.json({ error: 'Failed to add app' }, { status: 500 });
   }
 }

@@ -3,6 +3,7 @@ import { db } from '@/lib/db';
 import { authError, requireSessionOrg, validatePagination } from '@/lib/api';
 import { orgDayWindow, safeTimezone, zonedDayStart, zonedDayEnd, localDayKey } from '@/lib/timezone';
 import { sessionDurationSeconds } from '@/lib/breaks/service';
+import { log, requestContext } from '@/lib/logger';
 
 // GET /api/break-status/history
 // Canonical break history from BreakSession rows (NOT audit logs — audit logs
@@ -122,7 +123,7 @@ export async function GET(req: NextRequest) {
       timezone,
     });
   } catch (error) {
-    console.error('Break history GET error:', error);
+    log.error('api.break-status.history.', { error: String('Break history GET error:') }, requestContext(req));
     return NextResponse.json({ error: 'Failed to fetch break history' }, { status: 500 });
   }
 }

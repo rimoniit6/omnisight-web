@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { authError, requireSessionOrg, requireAdminOrg } from '@/lib/api';
+import { log, requestContext } from '@/lib/logger';
 
 // Authoritative value sets (mirror of the Project model comments).
 const PROJECT_STATUSES = ['active', 'on_hold', 'completed', 'cancelled'] as const;
@@ -119,7 +120,7 @@ export async function GET(
       },
     });
   } catch (error) {
-    console.error('Project GET error:', error);
+    log.error('api.projects.id.', { error: String('Project GET error:') }, requestContext(req));
     return NextResponse.json({ error: 'Failed to fetch project' }, { status: 500 });
   }
 }
@@ -242,7 +243,7 @@ export async function PUT(
 
     return NextResponse.json({ data: project });
   } catch (error) {
-    console.error('Project PUT error:', error);
+    log.error('api.projects.id.', { error: String('Project PUT error:') }, requestContext(req));
     return NextResponse.json({ error: 'Failed to update project' }, { status: 500 });
   }
 }
@@ -301,7 +302,7 @@ export async function DELETE(
 
     return NextResponse.json({ data: project, message: 'Project archived (status set to cancelled)' });
   } catch (error) {
-    console.error('Project DELETE error:', error);
+    log.error('api.projects.id.', { error: String('Project DELETE error:') }, requestContext(req));
     return NextResponse.json({ error: 'Failed to archive project' }, { status: 500 });
   }
 }

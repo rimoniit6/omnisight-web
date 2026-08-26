@@ -2,6 +2,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { authError, requireSessionOrg, requireAdminOrg } from '@/lib/api';
+import { log, requestContext } from '@/lib/logger';
 
 export async function GET(
   req: NextRequest,
@@ -70,7 +71,7 @@ export async function GET(
       },
     });
   } catch (error) {
-    console.error('Sentiment GET by ID error:', error);
+    log.error('api.sentiment.id.', { error: String('Sentiment GET by ID error:') }, requestContext(req));
     return NextResponse.json(
       { error: 'Failed to fetch sentiment record' },
       { status: 500 }
@@ -102,7 +103,7 @@ export async function DELETE(
     await db.sentimentRecord.delete({ where: { id } });
     return NextResponse.json({ success: true });
   } catch (error) {
-    console.error('Sentiment DELETE error:', error);
+    log.error('api.sentiment.id.', { error: String('Sentiment DELETE error:') }, requestContext(req));
     return NextResponse.json(
       { error: 'Failed to delete sentiment record' },
       { status: 500 }

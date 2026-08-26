@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { authError, requireAdminOrg, requireSessionOrg } from '@/lib/api';
 import { GUEST_PENDING_LIMIT_SETTING_KEY } from '@/lib/guests';
+import { log, requestContext } from '@/lib/logger';
 
 // GET /api/guests
 // List guest enrollments for the caller's organization (admin session).
@@ -147,7 +148,7 @@ export async function GET(req: NextRequest) {
       ...(wantSummary ? { summary } : {}),
     });
   } catch (error) {
-    console.error('Guests GET error:', error);
+    log.error('api.guests.', { error: String('Guests GET error:') }, requestContext(req));
     return NextResponse.json({ error: 'Failed to fetch guests' }, { status: 500 });
   }
 }
@@ -208,7 +209,7 @@ export async function PUT(req: NextRequest) {
       remaining,
     });
   } catch (error) {
-    console.error('Guests PUT error:', error);
+    log.error('api.guests.', { error: String('Guests PUT error:') }, requestContext(req));
     return NextResponse.json({ error: 'Could not update the guest enrollment limit.' }, { status: 500 });
   }
 }

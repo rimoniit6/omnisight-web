@@ -207,7 +207,17 @@ export function GuestsPage() {
 
   // ── Actions ───────────────────────────────────────────────────────────────
 
+  // Confirmation dialog states (H-2)
+  const [confirmApprove, setConfirmApprove] = useState<{ claimId: string; hostname: string } | null>(null);
+  const [confirmReject, setConfirmReject] = useState<{ claimId: string; hostname: string } | null>(null);
+  const [confirmSuspend, setConfirmSuspend] = useState<{ id: string; hostname: string } | null>(null);
+  const [confirmReactivate, setConfirmReactivate] = useState<{ id: string; hostname: string } | null>(null);
+  const [actionPending, setActionPending] = useState(false);
+
   const approveAsGuest = async (claimId: string, hostname: string) => {
+    if (actionPending) return;
+    setConfirmApprove(null);
+    setActionPending(true);
     try {
       const res = await fetch(`/api/device-claims/${claimId}/approve`, {
         method: 'POST',
@@ -220,10 +230,15 @@ export function GuestsPage() {
       invalidateAll();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Failed to approve guest');
+    } finally {
+      setActionPending(false);
     }
   };
 
   const rejectClaim = async (claimId: string, hostname: string) => {
+    if (actionPending) return;
+    setConfirmReject(null);
+    setActionPending(true);
     try {
       const res = await fetch(`/api/device-claims/${claimId}/reject`, {
         method: 'POST',
@@ -236,12 +251,18 @@ export function GuestsPage() {
       invalidateAll();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Failed to reject');
+    } finally {
+      setActionPending(false);
     }
   };
 
   const [revokeTarget, setRevokeTarget] = useState<GuestRow | null>(null);
 
   const guestAction = async (id: string, action: 'suspend' | 'reactivate', hostname: string) => {
+    if (actionPending) return;
+    setConfirmSuspend(null);
+    setConfirmReactivate(null);
+    setActionPending(true);
     try {
       const res = await fetch(`/api/guests/${id}/${action}`, {
         method: 'POST',
@@ -254,6 +275,8 @@ export function GuestsPage() {
       invalidateAll();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : `Failed to ${action}`);
+    } finally {
+      setActionPending(false);
     }
   };
 
@@ -399,10 +422,10 @@ export function GuestsPage() {
                         </div>
                       </div>
                       <div className="flex items-center gap-2 shrink-0">
-                        <Button size="sm" onClick={() => approveAsGuest(claim.id, claim.device.name || claim.device.hostname)}>
+                        <Button size="sm" onClick={() => setConfirmApprove({ claimId: claim.id, hostname: claim.device.name || claim.device.hostname })} disabled={actionPending}>
                           <ShieldCheck className="w-3.5 h-3.5" /> Approve as Guest
                         </Button>
-                        <Button size="sm" variant="outline" onClick={() => rejectClaim(claim.id, claim.device.name || claim.device.hostname)}>
+                        <Button size="sm" variant="outline" onClick={() => setConfirmReject({ claimId: claim.id, hostname: claim.device.name || claim.device.hostname })} disabled={actionPending}>
                           <XCircle className="w-3.5 h-3.5" /> Reject
                         </Button>
                       </div>
@@ -439,7 +462,7 @@ export function GuestsPage() {
                         <Button size="sm" variant="outline" onClick={() => openConvert(g)}>
                           <ArrowRightLeft className="w-3.5 h-3.5" /> Convert to Employee
                         </Button>
-                        <Button size="sm" variant="outline" onClick={() => guestAction(g.id, 'suspend', g.device.name || g.device.hostname)}>
+                        <Button size="sm" variant="outline" onClick={() => setConfirmSuspend({ id: g.id, hostname: g.device.name || g.device.hostname })} disabled={actionPending}>
                           <PauseCircle className="w-3.5 h-3.5" /> Suspend
                         </Button>
                         <Button size="sm" variant="destructive" onClick={() => setRevokeTarget(g)}>
@@ -474,7 +497,7 @@ export function GuestsPage() {
                         </div>
                       </div>
                       <div className="flex items-center gap-2 shrink-0">
-                        <Button size="sm" onClick={() => guestAction(g.id, 'reactivate', g.device.name || g.device.hostname)}>
+                        <Button size="sm" onClick={() => setConfirmReactivate({ id: g.id, hostname: g.device.name || g.device.hostname })} disabled={actionPending}>
                           <PlayCircle className="w-3.5 h-3.5" /> Reactivate
                         </Button>
                         <Button size="sm" variant="destructive" onClick={() => setRevokeTarget(g)}>
@@ -565,8 +588,72 @@ export function GuestsPage() {
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={confirmRevoke}>Revoke</AlertDialogAction>
+            <AlertDialogCancel disabled={actionPending}>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={confirmRevoke} disabled={actionPending}>Revoke</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Confirm approve as guest */}
+      <AlertDialog open={!!confirmApprove} onOpenChange={(open) => { if (!open) setConfirmApprove(null); }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Approve as Guest?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {confirmApprove ? `This will approve "${confirmApprove.hostname}" as a guest device. The device will receive standard monitoring consent (activity + application tracking) and can access the network. The guest can be revoked at any time.` : ''}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={actionPending}>Cancel</AlertDialogCancel>
+            <AlertDialogAction disabled={actionPending} onClick={() => { if (confirmApprove) approveAsGuest(confirmApprove.claimId, confirmApprove.hostname); }}>Approve as Guest</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Confirm reject claim */}
+      <AlertDialog open={!!confirmReject} onOpenChange={(open) => { if (!open) setConfirmReject(null); }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Reject guest request?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {confirmReject ? `This will reject the enrollment request for "${confirmReject.hostname}". The device will not be granted access and the claim will be closed.` : ''}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={actionPending}>Cancel</AlertDialogCancel>
+            <AlertDialogAction disabled={actionPending} className="bg-destructive text-destructive-foreground hover:bg-destructive/90" onClick={() => { if (confirmReject) rejectClaim(confirmReject.claimId, confirmReject.hostname); }}>Reject</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Confirm suspend guest */}
+      <AlertDialog open={!!confirmSuspend} onOpenChange={(open) => { if (!open) setConfirmSuspend(null); }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Suspend guest?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {confirmSuspend ? `This will suspend "${confirmSuspend.hostname}". The device will lose monitoring access but the guest record and telemetry history are preserved. You can reactivate later.` : ''}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={actionPending}>Cancel</AlertDialogCancel>
+            <AlertDialogAction disabled={actionPending} onClick={() => { if (confirmSuspend) guestAction(confirmSuspend.id, 'suspend', confirmSuspend.hostname); }}>Suspend</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Confirm reactivate guest */}
+      <AlertDialog open={!!confirmReactivate} onOpenChange={(open) => { if (!open) setConfirmReactivate(null); }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Reactivate guest?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {confirmReactivate ? `This will restore access for "${confirmReactivate.hostname}". The device will resume monitoring under its previous consent terms.` : ''}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={actionPending}>Cancel</AlertDialogCancel>
+            <AlertDialogAction disabled={actionPending} onClick={() => { if (confirmReactivate) guestAction(confirmReactivate.id, 'reactivate', confirmReactivate.hostname); }}>Reactivate</AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>

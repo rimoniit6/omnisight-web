@@ -5,6 +5,7 @@ import { authError, requireManagerOrg, isValidDate, parseJsonBody, BodyParseErro
 import { parseBoundedRange } from '@/lib/export';
 import { excludeInternalAgentActivities } from '@/lib/agent-process';
 import { effectiveLiveStatus } from '@/lib/presence';
+import { log, requestContext } from '@/lib/logger';
 
 type ReportType = 'productivity' | 'attendance' | 'activity' | 'department' | 'device' | 'employee';
 
@@ -161,7 +162,7 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({ data: report }, { status: 201 });
   } catch (error) {
-    console.error('Report generate error:', error);
+    log.error('api.reports.generate.', { error: String('Report generate error:') }, requestContext(req));
     return NextResponse.json({ error: 'Failed to generate report' }, { status: 500 });
   }
 }

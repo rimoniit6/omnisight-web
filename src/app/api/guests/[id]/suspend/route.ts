@@ -2,6 +2,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { findOrgGuest, requireGuestWriteScope } from '@/lib/guests';
+import { log, requestContext } from '@/lib/logger';
 
 // POST /api/guests/[id]/suspend
 // Suspend an ACTIVE guest (admin-only, org-scoped). Reversible via
@@ -64,7 +65,7 @@ export async function POST(
 
     return NextResponse.json({ success: true, data: result });
   } catch (error) {
-    console.error('Guest suspend error:', error);
+    log.error('api.guests.id.suspend.', { error: String('Guest suspend error:') }, requestContext(req));
     return NextResponse.json({ error: 'Failed to suspend guest' }, { status: 500 });
   }
 }

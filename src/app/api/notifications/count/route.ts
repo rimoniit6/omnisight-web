@@ -2,6 +2,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { authError, requireSessionOrg } from '@/lib/api';
+import { log, requestContext } from '@/lib/logger';
 
 export async function GET(req: NextRequest) {
   try {
@@ -17,7 +18,7 @@ export async function GET(req: NextRequest) {
     ]);
     return NextResponse.json({ unread, total });
   } catch (error) {
-    console.error('Notification count error:', error);
+    log.error('api.notifications.count.', { error: String('Notification count error:') }, requestContext(req));
     return NextResponse.json({ error: 'Failed to fetch count' }, { status: 500 });
   }
 }

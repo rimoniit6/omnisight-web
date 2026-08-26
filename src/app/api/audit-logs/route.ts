@@ -4,6 +4,7 @@ import { db } from '@/lib/db';
 import { authError, requireSessionOrg, validatePagination } from '@/lib/api';
 import { authenticateRequest } from '@/lib/api';
 import { hasRolePermission } from '@/lib/auth';
+import { log, requestContext } from '@/lib/logger';
 
 export async function GET(req: NextRequest) {
   try {
@@ -88,7 +89,7 @@ export async function GET(req: NextRequest) {
       },
     });
   } catch (error) {
-    console.error('AuditLogs GET error:', error);
+    log.error('api.audit-logs.', { error: String('AuditLogs GET error:') }, requestContext(req));
     return NextResponse.json({ error: 'Failed to fetch audit logs' }, { status: 500 });
   }
 }

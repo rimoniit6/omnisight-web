@@ -6,6 +6,7 @@ import { authError, requireSessionOrg } from '@/lib/api';
 import { authenticateRequest } from '@/lib/api';
 import { hasRolePermission } from '@/lib/auth';
 import { DEFAULT_EXPORT_WINDOW_DAYS, parseExportRange } from '@/lib/export';
+import { log, requestContext } from '@/lib/logger';
 
 // ─── Bounded-export constants (S-02) ────────────────────────────────────────
 // The export never loads the whole audit-log table into memory:
@@ -133,7 +134,7 @@ export async function GET(req: NextRequest) {
 
     return NextResponse.json({ data: exportData, total: exportData.length, truncated });
   } catch (error) {
-    console.error('Audit logs export GET error:', error);
+    log.error('api.audit-logs.export.', { error: String('Audit logs export GET error:') }, requestContext(req));
     return NextResponse.json({ error: 'Failed to export audit logs' }, { status: 500 });
   }
 }

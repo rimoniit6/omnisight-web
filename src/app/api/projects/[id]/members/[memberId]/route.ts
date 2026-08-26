@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { authError, requireAdminOrg } from '@/lib/api';
+import { log, requestContext } from '@/lib/logger';
 
 export async function PUT(
   req: NextRequest,
@@ -84,7 +85,7 @@ export async function PUT(
 
     return NextResponse.json({ data: updated });
   } catch (error) {
-    console.error('Project member PUT error:', error);
+    log.error('api.projects.id.members.param.', { error: String('Project member PUT error:') }, requestContext(req));
     return NextResponse.json({ error: 'Failed to update project member' }, { status: 500 });
   }
 }
@@ -179,7 +180,7 @@ export async function DELETE(
 
     return NextResponse.json({ data: updated, message: 'Member removed from project' });
   } catch (error) {
-    console.error('Project member DELETE error:', error);
+    log.error('api.projects.id.members.param.', { error: String('Project member DELETE error:') }, requestContext(req));
     return NextResponse.json({ error: 'Failed to remove project member' }, { status: 500 });
   }
 }

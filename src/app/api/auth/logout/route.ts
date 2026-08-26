@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { verifyJWT, getRequestToken, clearSessionCookie } from '@/lib/auth';
 import { db } from '@/lib/db';
 import { revokeSession, getUserAgent } from '@/lib/session';
+import { log, requestContext } from '@/lib/logger';
 
 export async function POST(req: NextRequest) {
   try {
@@ -47,7 +48,7 @@ export async function POST(req: NextRequest) {
       NextResponse.json({ message: 'Logged out successfully' })
     );
   } catch (error) {
-    console.error('Logout error:', error);
+    log.error('api.auth.logout.', { error: String('Logout error:') }, requestContext(req));
     return NextResponse.json(
       { error: 'Internal server error' },
       { status: 500 }

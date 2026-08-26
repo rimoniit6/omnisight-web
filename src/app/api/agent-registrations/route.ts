@@ -2,6 +2,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { authError, requireSessionOrg, SAFE_EMPLOYEE_SELECT } from '@/lib/api';
+import { log, requestContext } from '@/lib/logger';
 
 // GET /api/agent-registrations
 // List legacy agent registrations for the caller's organization (admin session).
@@ -94,7 +95,7 @@ export async function GET(req: NextRequest) {
       ...(wantSummary ? { summary } : {}),
     });
   } catch (error) {
-    console.error('AgentRegistrations GET error:', error);
+    log.error('api.agent-registrations.', { error: String('AgentRegistrations GET error:') }, requestContext(req));
     return NextResponse.json(
       { error: 'Failed to fetch agent registrations' },
       { status: 500 }

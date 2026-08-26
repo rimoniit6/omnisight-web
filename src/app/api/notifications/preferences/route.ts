@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { authError, requireSessionOrg, requireManagerOrg } from '@/lib/api';
 import { NOTIFICATION_TYPE_REGISTRY, isNotificationType } from '@/lib/notifications/constants';
+import { log, requestContext } from '@/lib/logger';
 
 // GET /api/notifications/preferences
 // Organization-level notification preferences (notifications are org-broadcast,
@@ -32,7 +33,7 @@ export async function GET(req: NextRequest) {
 
     return NextResponse.json({ preferences });
   } catch (error) {
-    console.error('Notification preferences GET error:', error);
+    log.error('api.notifications.preferences.', { error: String('Notification preferences GET error:') }, requestContext(req));
     return NextResponse.json({ error: 'Failed to fetch preferences' }, { status: 500 });
   }
 }
@@ -77,7 +78,7 @@ export async function PUT(req: NextRequest) {
 
     return NextResponse.json({ success: true, notificationType, enabled });
   } catch (error) {
-    console.error('Notification preferences PUT error:', error);
+    log.error('api.notifications.preferences.', { error: String('Notification preferences PUT error:') }, requestContext(req));
     return NextResponse.json({ error: 'Failed to update preference' }, { status: 500 });
   }
 }

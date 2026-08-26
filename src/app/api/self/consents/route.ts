@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { getScopedEmployee } from '@/lib/self-guard';
 import { CONSENT_TYPES } from '@/lib/consent';
+import { log, requestContext } from '@/lib/logger';
 
 // GET /api/self/consents?employeeId=xxx
 // Manager+ role (enforced by middleware); employee scoped to caller's org.
@@ -122,7 +123,7 @@ export async function GET(req: NextRequest) {
       },
     });
   } catch (error) {
-    console.error('Self Consents GET error:', error);
+    log.error('api.self.consents.', { error: String('Self Consents GET error:') }, requestContext(req));
     return NextResponse.json({ error: 'Failed to fetch consents' }, { status: 500 });
   }
 }

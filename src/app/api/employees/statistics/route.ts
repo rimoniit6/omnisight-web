@@ -2,6 +2,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { authError, requireSessionOrg } from '@/lib/api';
+import { log, requestContext } from '@/lib/logger';
 
 export async function GET(req: NextRequest) {
   try {
@@ -145,7 +146,7 @@ export async function GET(req: NextRequest) {
       topPerformers,
     });
   } catch (error) {
-    console.error('Employee statistics error:', error);
+    log.error('api.employees.statistics.', { error: String('Employee statistics error:') }, requestContext(req));
     return NextResponse.json({ error: 'Failed to fetch employee statistics' }, { status: 500 });
   }
 }

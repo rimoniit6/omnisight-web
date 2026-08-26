@@ -4,6 +4,7 @@ import { getScopedEmployee } from '@/lib/self-guard';
 import { hasActiveConsent } from '@/lib/consent';
 import { resolveOrgMonitoring } from '@/lib/jobs/settings';
 import { excludeInternalAgentActivities } from '@/lib/agent-process';
+import { log, requestContext } from '@/lib/logger';
 
 // GET /api/self/telemetry-summary?employeeId=xxx
 // Manager+ role (enforced by the proxy); employee scoped to caller's org.
@@ -142,7 +143,7 @@ export async function GET(req: NextRequest) {
       },
     });
   } catch (error) {
-    console.error('Self telemetry-summary GET error:', error);
+    log.error('api.self.telemetry-summary.', { error: String('Self telemetry-summary GET error:') }, requestContext(req));
     return NextResponse.json({ error: 'Failed to fetch telemetry summary' }, { status: 500 });
   }
 }

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { authenticateRequest, getSessionOrg } from '@/lib/api';
 import { hasRolePermission } from '@/lib/auth';
+import { log, requestContext } from '@/lib/logger';
 
 // PATCH /api/consent/policies/[id] — publish / archive / redraft (admin+)
 // Publishing a new version auto-archives the previously published one and
@@ -94,7 +95,7 @@ export async function PATCH(
       message.startsWith('Draft policies ') ||
       message.startsWith('Only ') ||
       message.includes('cannot be archived');
-    if (!isStateRule) console.error('Consent policy PATCH error:', error);
+    if (!isStateRule) log.error('api.consent.policies.id.', { error: String('Consent policy PATCH error:') }, requestContext(req));
     return NextResponse.json({ error: message }, { status: isStateRule ? 400 : 500 });
   }
 }
@@ -141,7 +142,7 @@ export async function DELETE(
 
     return NextResponse.json({ success: true });
   } catch (error) {
-    console.error('Consent policy DELETE error:', error);
+    log.error('api.consent.policies.id.', { error: String('Consent policy DELETE error:') }, requestContext(req));
     return NextResponse.json({ error: 'Failed to delete policy' }, { status: 500 });
   }
 }

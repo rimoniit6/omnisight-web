@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { Prisma } from '@prisma/client';
 import { db } from '@/lib/db';
-import { getRequestToken, verifyJWT, hasRolePermission } from '@/lib/auth';
+import { requireManagerOrg, authError } from '@/lib/api';
 import { NON_INTERNAL_AGENT_ACTIVITY_FILTER } from '@/lib/agent-process';
+import { log, requestContext } from '@/lib/logger';
 import {
   generateExport,
   getExportContentType,
@@ -412,21 +413,13 @@ export async function GET(
   let exportType = 'unknown';
 
   try {
-    // 1. Auth check
-    const token = getRequestToken(req);
-    if (!token) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
-    const payload = await verifyJWT(token);
-    if (!payload) {
-      return NextResponse.json({ error: 'Invalid or expired token' }, { status: 401 });
-    }
-
-    // P3-7: handler-level RBAC — the proxy gates /api/export to manager+, but
-    // the handler enforces it too (defense-in-depth, never proxy-only).
-    if (!hasRolePermission(payload.role, 'manager')) {
-      return NextResponse.json({ error: 'Insufficient permissions' }, { status: 403 });
-    }
+    // 1. Auth + session re-check (S-04) + RBAC (manager+) + org scope.
+    // Defense-in-depth: the proxy gates /api/export to manager+, but the
+    // handler enforces it too (never proxy-only). Using requireManagerOrg
+    // instead of raw verifyJWT ensures a revoked session is rejected even
+    // when its JWT signature is still valid.
+    const auth = await requireManagerOrg(req);
+    if (!auth.ok) return authError(auth);
 
     // 2. Parse type param
     const { type } = await params;
@@ -492,16 +485,16 @@ export async function GET(
 
     switch (type) {
       case 'employees':
-        data = await fetchEmployees(search, department, status, from, to, payload.organizationId ?? null);
+        data = await fetchEmployees(search, department, status, from, to, auth.organizationId);
         break;
       case 'activities':
-        data = await fetchActivities(search, employeeId, category, from, to, payload.organizationId ?? null);
+        data = await fetchActivities(search, employeeId, category, from, to, auth.organizationId);
         break;
       case 'time-entries':
-        data = await fetchTimeEntries(search, projectId, employeeId, from, to, payload.organizationId ?? null);
+        data = await fetchTimeEntries(search, projectId, employeeId, from, to, auth.organizationId);
         break;
       case 'projects':
-        data = await fetchProjects(search, status, from, to, payload.organizationId ?? null);
+        data = await fetchProjects(search, status, from, to, auth.organizationId);
         break;
       default:
         break;
@@ -533,7 +526,7 @@ export async function GET(
       },
     });
   } catch (error) {
-    console.error(`Export [${exportType}] error:`, error);
+    log.error('api.export.param.', { error: String(`Export [${exportType}] error:`) }, requestContext(req));log.error('api.export\param\route.ts.', { error: String(`Export [${exportType}] error:`) }, requestContext(req));
     return NextResponse.json(
       { error: 'Failed to generate export.' },
       { status: 500 }

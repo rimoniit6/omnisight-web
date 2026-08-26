@@ -218,60 +218,117 @@ export function NotificationsPage() {
   };
 
   const markAllRead = async () => {
-    await fetch('/api/notifications', {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ markAllRead: true }),
-    });
-    invalidateNotificationQueries();
-    toast.success('All notifications marked as read');
+    try {
+      const res = await fetch('/api/notifications', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ markAllRead: true }),
+      });
+      if (!res.ok) throw new Error('Failed to mark all as read');
+      invalidateNotificationQueries();
+      toast.success('All notifications marked as read');
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to mark all as read');
+    }
   };
 
   const markRead = async (id: string) => {
-    await fetch('/api/notifications', {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ id, status: 'read' }),
-    });
-    invalidateNotificationQueries();
+    try {
+      const res = await fetch('/api/notifications', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id, status: 'read' }),
+      });
+      if (!res.ok) throw new Error('Failed to mark as read');
+      invalidateNotificationQueries();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to mark as read');
+    }
   };
 
   const archiveNotification = async (id: string) => {
-    await fetch('/api/notifications', {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ archive: true, id }),
-    });
-    invalidateNotificationQueries();
-    toast.success('Notification archived');
+    try {
+      const res = await fetch('/api/notifications', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ archive: true, id }),
+      });
+      if (!res.ok) throw new Error('Failed to archive notification');
+      invalidateNotificationQueries();
+      toast.success('Notification archived');
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to archive notification');
+    }
   };
 
   const handleNotificationClick = async (notif: { id: string; actionUrl?: string; status: string; entityType?: string; entityId?: string }) => {
     if (notif.status === 'unread') {
-      await fetch('/api/notifications', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id: notif.id, status: 'read' }),
-      });
-      invalidateNotificationQueries();
+      try {
+        const res = await fetch('/api/notifications', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id: notif.id, status: 'read' }),
+        });
+        if (res.ok) invalidateNotificationQueries();
+      } catch { /* ignore — non-critical */ }
     }
-    if (notif.actionUrl) {
-      // Parse actionUrl to determine navigation
-      const url = notif.actionUrl;
-      if (url.startsWith('/employees') && notif.entityType === 'employee' && notif.entityId) {
-        setSelectedEmployeeId(notif.entityId);
-        setCurrentPage('employees');
-        setPageContext(`view:${notif.entityId}`);
-      } else if (url.startsWith('/devices')) {
-        setCurrentPage('devices');
-      } else if (url.startsWith('/anomalies')) {
-        setCurrentPage('anomalies');
-      } else if (url.startsWith('/projects')) {
-        setCurrentPage('projects');
-      } else if (url.startsWith('/consent')) {
-        setCurrentPage('consent');
-      } else {
-        setCurrentPage('employees');
+    if (notif.actionUrl || notif.entityType) {
+      // M-14: support all entity types for navigation
+      const entityType = notif.entityType || '';
+      const entityId = notif.entityId || '';
+      switch (entityType) {
+        case 'employee':
+          if (entityId) {
+            setSelectedEmployeeId(entityId);
+            setCurrentPage('employees');
+            setPageContext(`view:${entityId}`);
+          } else {
+            setCurrentPage('employees');
+          }
+          break;
+        case 'device':
+          setCurrentPage('devices');
+          break;
+        case 'anomaly':
+          setCurrentPage('anomalies');
+          break;
+        case 'project':
+          setCurrentPage('projects');
+          if (entityId) setPageContext(`project:${entityId}`);
+          break;
+        case 'consent':
+          setCurrentPage('consent');
+          break;
+        case 'guest':
+          setCurrentPage('guests');
+          break;
+        case 'alert':
+          setCurrentPage('alerts');
+          break;
+        case 'report':
+          setCurrentPage('reports');
+          break;
+        case 'screenshot':
+          setCurrentPage('screenshots');
+          break;
+        case 'policy':
+          setCurrentPage('policies');
+          break;
+        default: {
+          // Fallback: parse actionUrl if present
+          const url = notif.actionUrl || '';
+          if (url.startsWith('/employees')) setCurrentPage('employees');
+          else if (url.startsWith('/devices')) setCurrentPage('devices');
+          else if (url.startsWith('/anomalies')) setCurrentPage('anomalies');
+          else if (url.startsWith('/projects')) setCurrentPage('projects');
+          else if (url.startsWith('/consent')) setCurrentPage('consent');
+          else if (url.startsWith('/guests')) setCurrentPage('guests');
+          else if (url.startsWith('/alerts')) setCurrentPage('alerts');
+          else if (url.startsWith('/reports')) setCurrentPage('reports');
+          else if (url.startsWith('/screenshots')) setCurrentPage('screenshots');
+          else if (url.startsWith('/policies')) setCurrentPage('policies');
+          else setCurrentPage('employees');
+        }
       }
     }
   };
@@ -733,17 +790,54 @@ export function NotificationsPage() {
                             <Button size='sm' variant='ghost' className='h-6 text-[10px] text-muted-foreground hover:text-foreground p-0' onClick={() => archiveNotification(notif.id)}>
                               <Archive className='w-3 h-3 mr-1' /> Archive
                             </Button>
-                            {notif.entityId && notif.entityType && !isActionable && (
-                              <Button size='sm' variant='ghost' className='h-6 text-[10px] text-blue-600 hover:text-blue-700 p-0' onClick={() => {
-                                if (notif.entityType === 'employee') {
-                                  setSelectedEmployeeId(notif.entityId!);
-                                  setCurrentPage('employees');
-                                  setPageContext(`view:${notif.entityId}`);
-                                }
-                              }}>
-                                <ExternalLink className='w-3 h-3 mr-1' /> View
-                              </Button>
-                            )}
+                            {notif.entityId && notif.entityType && !isActionable && (() => {
+                                // M-14: map entity types to navigation destinations
+                                const navigateToEntity = (type: string, id: string) => {
+                                  switch (type) {
+                                    case 'employee':
+                                      setSelectedEmployeeId(id);
+                                      setCurrentPage('employees');
+                                      setPageContext(`view:${id}`);
+                                      break;
+                                    case 'device':
+                                      setCurrentPage('devices');
+                                      break;
+                                    case 'anomaly':
+                                      setCurrentPage('anomalies');
+                                      break;
+                                    case 'project':
+                                      setCurrentPage('projects');
+                                      setPageContext(`project:${id}`);
+                                      break;
+                                    case 'consent':
+                                      setCurrentPage('consent');
+                                      break;
+                                    case 'guest':
+                                      setCurrentPage('guests');
+                                      break;
+                                    case 'alert':
+                                      setCurrentPage('alerts');
+                                      break;
+                                    case 'report':
+                                      setCurrentPage('reports');
+                                      break;
+                                    case 'screenshot':
+                                      setCurrentPage('screenshots');
+                                      break;
+                                    case 'policy':
+                                      setCurrentPage('policies');
+                                      break;
+                                    default:
+                                      setCurrentPage('employees');
+                                  }
+                                };
+                                const isSupportedType = ['employee', 'device', 'anomaly', 'project', 'consent', 'guest', 'alert', 'report', 'screenshot', 'policy'].includes(notif.entityType!);
+                                return isSupportedType ? (
+                                  <Button size='sm' variant='ghost' className='h-6 text-[10px] text-blue-600 hover:text-blue-700 p-0' onClick={() => navigateToEntity(notif.entityType!, notif.entityId!)}>
+                                    <ExternalLink className='w-3 h-3 mr-1' /> View
+                                  </Button>
+                                ) : null;
+                              })()}
                           </div>
                         </div>
                       </div>

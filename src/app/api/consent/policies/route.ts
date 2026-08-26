@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { authenticateRequest, getSessionOrg } from '@/lib/api';
 import { hasRolePermission } from '@/lib/auth';
+import { log, requestContext } from '@/lib/logger';
 import {
   CONSENT_TYPES,
   isValidConsentType,
@@ -43,7 +44,7 @@ export async function GET(req: NextRequest) {
 
     return NextResponse.json({ data: byType });
   } catch (error) {
-    console.error('Consent policies GET error:', error);
+    log.error('api.consent.policies.', { error: String('Consent policies GET error:') }, requestContext(req));
     return NextResponse.json({ error: 'Failed to fetch consent policies' }, { status: 500 });
   }
 }
@@ -107,7 +108,7 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json(policy, { status: 201 });
   } catch (error) {
-    console.error('Consent policies POST error:', error);
+    log.error('api.consent.policies.', { error: String('Consent policies POST error:') }, requestContext(req));
     return NextResponse.json({ error: 'Failed to create consent policy' }, { status: 500 });
   }
 }

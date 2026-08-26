@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { localDayKey } from '@/lib/timezone';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -79,7 +80,7 @@ export function EmployeeDialog({ open, onOpenChange, employee, onSaved }: Employ
     } else {
       setForm({
         firstName: '', lastName: '', email: '', phone: '', designation: '',
-        employeeId: '', departmentId: '', joinDate: new Date().toISOString().split('T')[0],
+        employeeId: '', departmentId: '', joinDate: localDayKey(new Date(), useAuthStore.getState().organization?.timezone || 'UTC'),
         status: 'active',
       });
     }

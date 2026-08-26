@@ -2,6 +2,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { authError, requireSessionOrg } from '@/lib/api';
+import { log, requestContext } from '@/lib/logger';
 
 async function scopedOrg(req: NextRequest): Promise<{ ok: true; organizationId: string } | { ok: false; response: NextResponse }> {
   const scope = await requireSessionOrg(req);
@@ -47,7 +48,7 @@ export async function PUT(
 
     return NextResponse.json({ data: updated });
   } catch (error) {
-    console.error('Insight update error:', error);
+    log.error('api.insights.id.', { error: String('Insight update error:') }, requestContext(req));
     return NextResponse.json({ error: 'Failed to update insight' }, { status: 500 });
   }
 }
@@ -67,7 +68,7 @@ export async function GET(
     }
     return NextResponse.json({ data: insight });
   } catch (error) {
-    console.error('Insight GET error:', error);
+    log.error('api.insights.id.', { error: String('Insight GET error:') }, requestContext(req));
     return NextResponse.json({ error: 'Failed to fetch insight' }, { status: 500 });
   }
 }

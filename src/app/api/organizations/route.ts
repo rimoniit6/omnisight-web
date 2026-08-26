@@ -25,7 +25,7 @@ export async function GET(req: NextRequest) {
 
     return NextResponse.json({ data: organizations });
   } catch (error) {
-    console.error('Organizations GET error:', error);
+    log.error('api.organizations.', { error: String('Organizations GET error:') }, requestContext(req));
     return NextResponse.json({ error: 'Failed to fetch organizations' }, { status: 500 });
   }
 }

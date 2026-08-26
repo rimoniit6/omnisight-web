@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { Prisma } from '@prisma/client';
 import { authError, requireSessionOrg } from '@/lib/api';
+import { log, requestContext } from '@/lib/logger';
 
 export async function GET(req: NextRequest) {
   try {
@@ -194,7 +195,7 @@ export async function GET(req: NextRequest) {
       },
     });
   } catch (error) {
-    console.error('Project stats GET error:', error);
+    log.error('api.projects.stats.', { error: String('Project stats GET error:') }, requestContext(req));
     return NextResponse.json({ error: 'Failed to fetch project stats' }, { status: 500 });
   }
 }
