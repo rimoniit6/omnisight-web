@@ -122,6 +122,17 @@ export async function POST(req: NextRequest) {
         data: { organizationId: org.id },
       });
 
+      // P1 (unified creation): the creator's OrganizationMembership is the
+      // authoritative membership record for this org (owner role), so the
+      // org-switcher and membership management work for them immediately.
+      await tx.organizationMembership.upsert({
+        where: {
+          userId_organizationId: { userId: auth.userId, organizationId: org.id },
+        },
+        create: { userId: auth.userId, organizationId: org.id, role: 'owner', status: 'ACTIVE' },
+        update: { role: 'owner', status: 'ACTIVE' },
+      });
+
       await tx.auditLog.create({
         data: {
           action: 'create',
@@ -148,6 +159,7 @@ export async function POST(req: NextRequest) {
       email: auth.email,
       role: auth.role,
       organizationId: organization.id,
+      activeOrganizationId: organization.id,
       sessionId: currentPayload?.sessionId,
     });
 
@@ -166,8 +178,8 @@ export async function POST(req: NextRequest) {
           id: auth.userId,
           name: user.name,
           email: auth.email,
-          role: 'super_admin',
-          roleLabel: 'Super Admin',
+          role: auth.role,
+          roleLabel: auth.role === 'super_admin' ? 'Super Admin' : auth.role,
           initials: user.name
             ? user.name.split(' ').map((n: string) => n[0]).join('').toUpperCase().slice(0, 2)
             : 'SA',

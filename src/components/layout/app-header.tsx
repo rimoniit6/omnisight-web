@@ -27,6 +27,7 @@ import { AvatarUpload } from '@/components/upload/avatar-upload';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
 import { useRouter } from 'next/navigation';
+import { OrgSwitcher } from './org-switcher';
 
 const pageLabels: Record<string, string> = {
   dashboard: 'Dashboard',
@@ -56,6 +57,8 @@ const pageLabels: Record<string, string> = {
   'daily-report': 'Daily Report',
   settings: 'Settings',
   'agent-approvals': 'Agent Approvals',
+  'super-admin-organizations': 'Super Admin — Organizations',
+  'super-admin-organization-detail': 'Super Admin — Organization',
 };
 
 interface AppHeaderProps {
@@ -267,6 +270,9 @@ export function AppHeader({ onMobileMenuToggle, isMobile }: AppHeaderProps) {
         <div data-tour-target="notifications">
           <NotificationBell />
         </div>
+
+        {/* Organization Switcher — only shown for multi-org users */}
+        <OrgSwitcher />
 
         {/* Divider — desktop only */}
         <div className="hidden md:block h-6 w-px bg-border mx-1" />

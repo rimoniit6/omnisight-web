@@ -29,7 +29,9 @@ export type PageType =
   | 'self-portal'
   | 'projects'
   | 'sentiment'
-  | 'audio';
+  | 'audio'
+  | 'super-admin-organizations'
+  | 'super-admin-organization-detail';
 
 function getInitialTourState(): boolean {
   if (typeof window === 'undefined') return false;

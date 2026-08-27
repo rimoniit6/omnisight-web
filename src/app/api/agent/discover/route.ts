@@ -4,6 +4,7 @@ import {
   generateClaimSecret,
   hashClaimSecret,
   ENROLLMENT_CODE_SETTING_KEY,
+  ENROLLMENT_CODE_EXPIRES_KEY,
   verifyEnrollmentCode,
 } from '@/lib/agent/auth';
 import { validateAgentSession } from '@/lib/agent/session';
@@ -52,13 +53,14 @@ import { log } from '@/lib/logger';
 const DENIED = new Error('DEVICE_ACCESS_DENIED');
 
 /**
- * Resolve the organization an anonymous new device may enroll into, from an
- * admin-issued enrollment code. Only SHA-256 hashes are stored and compared
- * (constant-time per candidate) — a wrong code never reveals whether an org
- * or code exists. Returns null when the code is absent, malformed, or matches
- * nothing (the caller decides the exact 4xx).
+ * Resolution result for an enrollment code attempt.
+ * - matched: valid code, org resolved, not expired
+ * - expired: valid code but past expiration
+ * - no_match: code doesn't match any organization
  */
-async function resolveOrgFromEnrollmentCode(code: string | null): Promise<{ id: string } | null> {
+async function resolveOrgFromEnrollmentCode(
+  code: string | null
+): Promise<{ id: string } | null | 'expired'> {
   if (!code || code.length > 256) return null;
   const settings = await db.organizationSetting.findMany({
     where: { key: ENROLLMENT_CODE_SETTING_KEY },
@@ -66,10 +68,24 @@ async function resolveOrgFromEnrollmentCode(code: string | null): Promise<{ id: 
   });
   for (const setting of settings) {
     if (verifyEnrollmentCode(code, setting.value)) {
-      return db.organization.findUnique({
-        where: { id: setting.organizationId },
-        select: { id: true },
+      // Code matches — check expiration
+      const expiresSetting = await db.organizationSetting.findUnique({
+        where: {
+          organizationId_key: { organizationId: setting.organizationId, key: ENROLLMENT_CODE_EXPIRES_KEY },
+        },
+        select: { value: true },
       });
+      if (expiresSetting?.value && new Date(expiresSetting.value) < new Date()) {
+        return 'expired';
+      }
+      // Check organization is active
+      const org = await db.organization.findUnique({
+        where: { id: setting.organizationId },
+        select: { id: true, status: true },
+      });
+      if (!org) return null;
+      if (org.status !== 'active') return null; // Suspended/archived orgs can't enroll
+      return { id: org.id };
     }
   }
   return null;
@@ -158,9 +174,17 @@ export async function POST(req: NextRequest) {
     } else if (device) {
       org = await db.organization.findUnique({ where: { id: device.organizationId } });
     } else {
-      org = await resolveOrgFromEnrollmentCode(
+      const codeResult = await resolveOrgFromEnrollmentCode(
         typeof enrollmentCode === 'string' && enrollmentCode.length > 0 ? enrollmentCode : null
       );
+      if (codeResult === 'expired') {
+        log.info('agent-discover.org-resolution:expired', { ...ctx });
+        return NextResponse.json(
+          { error: 'This invitation code has expired. Ask your administrator for a new code.', code: 'ENROLLMENT_CODE_EXPIRED' },
+          { status: 410 }
+        );
+      }
+      org = codeResult;
       if (!org) {
         const missing = enrollmentCode === undefined || enrollmentCode === null || enrollmentCode === '';
         log.info('agent-discover.org-resolution:no-match', { missing, ...ctx });
@@ -168,7 +192,8 @@ export async function POST(req: NextRequest) {
           {
             error: missing
               ? 'Device registration requires an organization enrollment code (issued by your administrator) or an employee sign-in.'
-              : 'Invalid enrollment code.',
+              : 'Invalid invitation code.',
+            code: missing ? 'ENROLLMENT_CODE_MISSING' : 'INVALID_OR_MISSING_ENROLLMENT_CODE',
           },
           { status: 422 }
         );

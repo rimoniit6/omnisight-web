@@ -8,6 +8,7 @@ import { log, requestContext } from '@/lib/logger';
 const ROLE_LEVELS: Record<string, number> = {
   super_admin: 50,
   owner: 40,
+  org_admin: 35,
   admin: 30,
   manager: 20,
   viewer: 10,
@@ -138,7 +139,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const validRoles = ['super_admin', 'owner', 'admin', 'manager', 'viewer'];
+    const validRoles = ['super_admin', 'owner', 'org_admin', 'admin', 'manager', 'viewer'];
     if (!validRoles.includes(role)) {
       return NextResponse.json({ error: `Invalid role. Must be one of: ${validRoles.join(', ')}` }, { status: 400 });
     }
@@ -194,6 +195,30 @@ export async function POST(req: NextRequest) {
           isActive: true,
         },
       });
+
+      // P1: OrganizationMembership is now the authoritative membership layer.
+      // For org-bound roles, create an ACTIVE membership in the target org so
+      // the user is genuinely multi-org capable (different roles per org).
+      // super_admin is a global role and intentionally has no per-org
+      // membership. The compound-unique [userId, organizationId] constraint
+      // prevents duplicate memberships; upsert keeps create idempotent.
+      if (role !== 'super_admin' && targetOrgId) {
+        await tx.organizationMembership.upsert({
+          where: {
+            userId_organizationId: { userId: created.id, organizationId: targetOrgId },
+          },
+          create: {
+            userId: created.id,
+            organizationId: targetOrgId,
+            role,
+            status: 'ACTIVE',
+          },
+          update: {
+            role,
+            status: 'ACTIVE',
+          },
+        });
+      }
 
       // Audit log
       await tx.auditLog.create({

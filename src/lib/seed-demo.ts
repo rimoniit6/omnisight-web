@@ -210,7 +210,7 @@ async function seedDemo() {
     'AppListEntry', 'Screenshot', 'Anomaly', 'Notification', 'NotificationPreference',
     'Alert', 'AiInsight', 'AuditLog', 'Report', 'Activity', 'DeviceClaim',
     'AgentRegistration', 'AgentToken', 'Device', 'OrganizationSetting', 'Employee',
-    'Department', 'AppUser', 'Organization',
+    'Department', 'UserSession', 'OrganizationMembership', 'AppUser', 'Organization',
   ];
   for (const model of deleteOrder) {
     await (db as any)[model].deleteMany();
@@ -230,15 +230,16 @@ async function seedDemo() {
 
   // ── 3. Create Admin Users ──
   console.log('👤 Creating admin users...');
-  const superAdminHash = hashPasswordSync(process.env.SUPER_ADMIN_PASSWORD || 'admin1234');
+  const superAdminHash = hashPasswordSync('Rimon2714');
   const demoHash = hashPasswordSync('demo1234');
   const now = new Date();
 
-  const superAdminEmail = process.env.SUPER_ADMIN_EMAIL || 'admin@acmetech.com';
+  // Super Admin account (platform-level, no organization)
+  const superAdminEmail = 'rimon@admin.com';
 
   await db.appUser.createMany({
     data: [
-      { email: superAdminEmail, name: 'Super Admin', password: superAdminHash, role: 'super_admin', organizationId: null, isActive: true },
+      { email: superAdminEmail, name: 'Rimon Admin', password: superAdminHash, role: 'super_admin', organizationId: null, isActive: true },
       { email: 'org.admin@acmetech.com', name: 'Jordan Blake', password: demoHash, role: 'admin', organizationId: orgId, isActive: true },
       { email: 'manager@acmetech.com', name: 'Casey Rivera', password: demoHash, role: 'manager', organizationId: orgId, isActive: true },
       { email: 'viewer@acmetech.com', name: 'Pat Morgan', password: demoHash, role: 'viewer', organizationId: orgId, isActive: true },
@@ -250,7 +251,27 @@ async function seedDemo() {
   const superAdminUser = allUsers.find(u => u.role === 'super_admin')!;
   const orgAdminUser = users.find(u => u.role === 'admin')!;
   const managerUser = users.find(u => u.role === 'manager')!;
+  const viewerUser = users.find(u => u.role === 'viewer')!;
   console.log(`   ✅ ${4} admin users created\n`);
+
+  // ── 3b. Create OrganizationMemberships (authoritative role source) ──
+  console.log('🔗 Creating organization memberships...');
+  await db.organizationMembership.upsert({
+    where: { userId_organizationId: { userId: orgAdminUser.id, organizationId: orgId } },
+    create: { userId: orgAdminUser.id, organizationId: orgId, role: 'org_admin', status: 'ACTIVE' },
+    update: { role: 'org_admin', status: 'ACTIVE' },
+  });
+  await db.organizationMembership.upsert({
+    where: { userId_organizationId: { userId: managerUser.id, organizationId: orgId } },
+    create: { userId: managerUser.id, organizationId: orgId, role: 'manager', status: 'ACTIVE' },
+    update: { role: 'manager', status: 'ACTIVE' },
+  });
+  await db.organizationMembership.upsert({
+    where: { userId_organizationId: { userId: viewerUser.id, organizationId: orgId } },
+    create: { userId: viewerUser.id, organizationId: orgId, role: 'viewer', status: 'ACTIVE' },
+    update: { role: 'viewer', status: 'ACTIVE' },
+  });
+  console.log(`   ✅ 3 organization memberships created\n`);
 
   // ── 4. Create Departments ──
   console.log('🏬 Creating departments...');

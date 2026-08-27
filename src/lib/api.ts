@@ -4,6 +4,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { extractToken, hasRolePermission, SESSION_COOKIE_NAME } from '@/lib/auth';
 import { verifySessionToken } from '@/lib/session';
+import { db } from '@/lib/db';
+import { getRolesWithPermission, getRoleLabelFromPermissions } from '@/lib/permissions';
 
 // ─── Safe employee projection (approval lists / responses) ─────────────────
 // Employee rows carry credential material (`agentPassword`) that must never be
@@ -33,6 +35,7 @@ export interface AuthContext {
   email: string;
   role: string;
   organizationId?: string;
+  activeOrganizationId?: string;
 }
 
 // ─── Response Helpers ──────────────────────────────────────────────────────
@@ -69,6 +72,7 @@ export async function authenticateRequest(req: NextRequest): Promise<AuthContext
       email: payload.email,
       role: payload.role,
       organizationId: payload.organizationId,
+      activeOrganizationId: payload.activeOrganizationId,
     };
   } catch {
     return null;
@@ -118,6 +122,9 @@ export function validatePagination(
  * SECURITY (tenant isolation): organization identity must come from the
  * verified JWT (cookie or bearer), never from a findFirst() over all
  * organizations and never from client-supplied input.
+ *
+ * Multi-org: prefers activeOrganizationId (set via /api/me/organization/switch),
+ * falls back to organizationId for single-org or legacy tokens.
  */
 export async function getSessionOrg(
   req: NextRequest
@@ -125,92 +132,240 @@ export async function getSessionOrg(
   // Route through authenticateRequest so the server-side session re-check
   // (S-04) applies here too — a revoked session no longer resolves an org.
   const auth = await authenticateRequest(req);
-  if (!auth?.organizationId) return null;
-  return { id: auth.organizationId };
+  // Prefer active org (multi-org), fall back to legacy organizationId
+  const orgId = auth?.activeOrganizationId || auth?.organizationId;
+  if (!orgId) return null;
+  return { id: orgId };
 }
 
 // ─── Organization Scope Helpers ─────────────────────────────────────────────
 
 export type OrgScopeResult =
   | { ok: true; organizationId: string | null } // null => global (org-less super_admin)
-  | { ok: false; status: 401 | 403 };
+  | { ok: false; status: 401 | 403; requiredPermission?: string; userRole?: string };
+
+/**
+ * Canonical authorization helper (P0). Authenticate, derive the organization
+ * STRICTLY from the verified session/JWT (never client input), load the
+ * Organization row, and enforce `status === 'active'`. Rejects
+ * suspended/archived orgs with 403 even for an already-authenticated session —
+ * this is what stops a retained web-admin session from keeping access after the
+ * organization is suspended or archived.
+ *
+ * SECURITY: organization identity is taken only from `auth.activeOrganizationId`
+ * or `auth.organizationId` (both HMAC-signed claims). Query params, request
+ * bodies, Zustand state, localStorage and URL values are NEVER consulted.
+ *
+ * The only exception is the org-less super_admin global scope (`allowGlobal`),
+ * which must stay usable so Super Admin can still manage suspended/archived
+ * orgs via the super-admin API.
+ */
+export type ActiveSessionOrgResult =
+  | { ok: true; organizationId: string; userId: string; email: string; role: string }
+  | { ok: true; organizationId: null; userId: string; email: string; role: string } // global super_admin
+  | { ok: false; status: 401 | 403; requiredPermission?: string; userRole?: string };
+
+export async function requireActiveSessionOrg(
+  req: NextRequest,
+  opts: { allowGlobal?: boolean; minRole?: string } = {}
+): Promise<ActiveSessionOrgResult> {
+  const auth = await authenticateRequest(req);
+  if (!auth) return { ok: false, status: 401 };
+
+  const orgId = auth.activeOrganizationId || auth.organizationId;
+
+  // Org-less super_admin in a global context (listing all orgs, the employees
+  // global branch) — no single org to validate, allowed through.
+  if (!orgId) {
+    if (opts.allowGlobal && auth.role === 'super_admin') {
+      return { ok: true, organizationId: null, userId: auth.userId, email: auth.email, role: auth.role };
+    }
+    return { ok: false, status: 403, userRole: auth.role };
+  }
+
+  // Load the Organization from the DB and verify it is ACTIVE. Suspended and
+  // archived orgs are rejected for every org-scoped web-admin request.
+  const org = await db.organization.findUnique({
+    where: { id: orgId },
+    select: { id: true, status: true },
+  });
+  if (!org || org.status !== 'active') {
+    return { ok: false, status: 403, userRole: auth.role };
+  }
+
+  // Enforce an ACTIVE membership for the requested org (spec C: removing a
+  // membership must instantly revoke that org's access). This is applied only
+  // once the user has been migrated to the membership model — a user with no
+  // memberships at all keeps working via the legacy AppUser.organizationId
+  // field until the migration script backfills them, so existing single-org
+  // accounts are never locked out mid-migration.
+  if (auth.role !== 'super_admin') {
+    const hasAnyMembership = await db.organizationMembership.findFirst({
+      where: { userId: auth.userId, status: 'ACTIVE' },
+      select: { id: true },
+    });
+    if (hasAnyMembership) {
+      const membership = await db.organizationMembership.findUnique({
+        where: { userId_organizationId: { userId: auth.userId, organizationId: orgId } },
+        select: { status: true },
+      });
+      if (!membership || membership.status !== 'ACTIVE') {
+        return { ok: false, status: 403, userRole: auth.role };
+      }
+    }
+  }
+
+  // Optional minimum-role gate (manager+/admin+).
+  if (opts.minRole && !hasRolePermission(auth.role, opts.minRole)) {
+    // Map minRole to a representative permission
+    const roleToPermission: Record<string, string> = {
+      manager: 'reports.create',
+      admin: 'organization.settings.update',
+      org_admin: 'organization.members.create',
+      super_admin: 'platform.organizations.read',
+    };
+    return { ok: false, status: 403, requiredPermission: roleToPermission[opts.minRole], userRole: auth.role };
+  }
+
+  return { ok: true, organizationId: orgId, userId: auth.userId, email: auth.email, role: auth.role };
+}
 
 /**
  * Authenticate a request and resolve its organization scope for a route.
+ * Org status (`active`) is enforced via requireActiveSessionOrg.
  *
  * - No valid token          -> 401
  * - Valid token with org    -> ok(scoped)
- * - Org-less super_admin    -> ok(null) when `allowGlobal` (global read scope,
- *                             mirroring the self-portal guard convention)
+ * - Org-less super_admin    -> ok(null) when `allowGlobal` (global read scope)
  * - Valid token without org -> 403
  */
 export async function requireSessionOrg(
   req: NextRequest,
   opts: { allowGlobal?: boolean } = {}
 ): Promise<OrgScopeResult> {
-  const auth = await authenticateRequest(req);
-  if (!auth) return { ok: false, status: 401 };
-  if (auth.organizationId) return { ok: true, organizationId: auth.organizationId };
-  if (opts.allowGlobal && auth.role === 'super_admin') {
-    return { ok: true, organizationId: null };
-  }
-  return { ok: false, status: 403 };
+  const r = await requireActiveSessionOrg(req, { allowGlobal: opts.allowGlobal });
+  if (!r.ok) return { ok: false, status: r.status, requiredPermission: r.requiredPermission, userRole: r.userRole };
+  return { ok: true, organizationId: r.organizationId };
 }
 
 export type AdminOrgResult =
   | { ok: true; organizationId: string; userId: string; email: string }
-  | { ok: false; status: 401 | 403 };
+  | { ok: false; status: 401 | 403; requiredPermission?: string; userRole?: string };
 
 export type ManagerOrgResult =
   | { ok: true; organizationId: string; userId: string; email: string }
-  | { ok: false; status: 401 | 403 };
+  | { ok: false; status: 401 | 403; requiredPermission?: string; userRole?: string };
 
 /**
  * Authenticate a request and require an ORG-BOUND manager-or-above session
  * (report generation/export S-3). Organization identity is always derived
- * from the verified session — never from client-supplied input.
+ * from the verified session — never from client-supplied input. Org status is
+ * enforced (suspended/archived -> 403).
  */
 export async function requireManagerOrg(
   req: NextRequest
 ): Promise<ManagerOrgResult> {
-  const auth = await authenticateRequest(req);
-  if (!auth) return { ok: false, status: 401 };
-  if (!auth.organizationId || !hasRolePermission(auth.role, 'manager')) {
-    return { ok: false, status: 403 };
-  }
-  return { ok: true, organizationId: auth.organizationId, userId: auth.userId, email: auth.email };
+  const r = await requireActiveSessionOrg(req, { minRole: 'manager' });
+  if (!r.ok) return { ok: false, status: r.status, requiredPermission: r.requiredPermission, userRole: r.userRole };
+  return { ok: true, organizationId: r.organizationId as string, userId: r.userId, email: r.email };
 }
 
 /**
  * Authenticate a request and require an ORG-BOUND admin-or-above session
  * (used for mutations). Organization identity is always derived from the
- * verified session — never from client-supplied input.
+ * verified session — never from client-supplied input. Org status is enforced.
  */
 export async function requireAdminOrg(
   req: NextRequest
 ): Promise<AdminOrgResult> {
+  const r = await requireActiveSessionOrg(req, { minRole: 'admin' });
+  if (!r.ok) return { ok: false, status: r.status, requiredPermission: r.requiredPermission, userRole: r.userRole };
+  return { ok: true, organizationId: r.organizationId as string, userId: r.userId, email: r.email };
+}
+
+export type OrgAdminResult =
+  | { ok: true; userId: string; email: string; role: string; isSuperAdmin: boolean }
+  | { ok: false; status: 401 | 403; requiredPermission?: string; userRole?: string };
+
+/**
+ * Authorize management of a SPECIFIC organization's members/resources.
+ *
+ * The caller must be a super_admin (global platform admin) OR an active,
+ * org-bound admin/owner whose active organization equals `targetOrgId`.
+ *
+ * SECURITY: `targetOrgId` is taken from the URL, but the caller's own
+ * authority is derived ONLY from the verified session — we never trust a
+ * client-supplied organization id for the caller's identity. For non-super-admins
+ * the target org must be ACTIVE (suspended/archived orgs are locked for normal
+ * admins; super_admin may still manage them).
+ */
+export async function requireOrgAdmin(
+  req: NextRequest,
+  targetOrgId: string,
+  minRole: string = 'admin'
+): Promise<OrgAdminResult> {
   const auth = await authenticateRequest(req);
-  if (!auth) return { ok: false, status: 401 };
-  if (!auth.organizationId || !hasRolePermission(auth.role, 'admin')) {
-    return { ok: false, status: 403 };
+  if (!auth) return { ok: false, status: 401, userRole: undefined };
+
+  if (auth.role === 'super_admin') {
+    return { ok: true, userId: auth.userId, email: auth.email, role: auth.role, isSuperAdmin: true };
   }
-  return { ok: true, organizationId: auth.organizationId, userId: auth.userId, email: auth.email };
+
+  const callerOrg = auth.activeOrganizationId || auth.organizationId;
+  if (!callerOrg || callerOrg !== targetOrgId) return { ok: false, status: 403, requiredPermission: 'organization.members.create', userRole: auth.role };
+  if (!hasRolePermission(auth.role, minRole)) return { ok: false, status: 403, requiredPermission: 'organization.members.create', userRole: auth.role };
+
+  const org = await db.organization.findUnique({
+    where: { id: targetOrgId },
+    select: { status: true },
+  });
+  if (!org || org.status !== 'active') return { ok: false, status: 403, userRole: auth.role };
+
+  return { ok: true, userId: auth.userId, email: auth.email, role: auth.role, isSuperAdmin: false };
 }
 
 /**
  * Turn a scope/auth result into a NextResponse error using the project's
  * error semantics: 401 = no valid session, 403 = insufficient scope/permission.
+ * Optionally includes structured authorization error information.
  */
-export function authError(result: { ok: false; status: 401 | 403 }) {
-  return apiError(
-    result.status === 401 ? 'Unauthorized. Please sign in.' : 'Insufficient permissions',
-    result.status
-  );
+export function authError(
+  result: { ok: false; status: 401 | 403 },
+  opts?: { permission?: string; userRole?: string }
+) {
+  if (result.status === 401) {
+    return apiError('Unauthorized. Please sign in.', 401);
+  }
+
+  // 403 - structured authorization error
+  const permission = opts?.permission;
+  const userRole = opts?.userRole;
+
+if (permission) {
+    const allowedRoles = getRolesWithPermission(permission as any);
+    const allowedRoleLabels = allowedRoles.map(getRoleLabelFromPermissions).join(', ');
+    const userRoleLabel = userRole ? getRoleLabelFromPermissions(userRole) : 'Unknown';
+
+    const body = {
+      error: 'FORBIDDEN',
+      code: 'INSUFFICIENT_PERMISSION',
+      message: 'Insufficient permissions',
+      requiredPermission: permission,
+      requiredRoles: allowedRoles,
+      allowedRoleLabels,
+      userRole,
+      userRoleLabel,
+    };
+    return NextResponse.json(body, { status: 403 });
+}
+
+  // Fallback for calls without permission info
+  return apiError('Insufficient permissions', 403);
 }
 
 export type SuperAdminResult =
   | { ok: true; userId: string; email: string }
-  | { ok: false; status: 401 | 403 };
+  | { ok: false; status: 401 | 403; requiredPermission?: string; userRole?: string };
 
 /**
  * Authenticate a request and require a super_admin session. Used for
@@ -222,8 +377,95 @@ export async function requireSuperAdmin(
 ): Promise<SuperAdminResult> {
   const auth = await authenticateRequest(req);
   if (!auth) return { ok: false, status: 401 };
-  if (auth.role !== 'super_admin') return { ok: false, status: 403 };
+  if (auth.role !== 'super_admin') return { ok: false, status: 403, requiredPermission: 'platform.organizations.read', userRole: auth.role };
   return { ok: true, userId: auth.userId, email: auth.email };
+}
+
+// ─── DB-Verified Role (P2/P3 #11) ─────────────────────────────────────────
+
+export type DbVerifiedRoleResult =
+  | { ok: true; userId: string; email: string; role: string; organizationId: string | null }
+  | { ok: false; status: 401 | 403; requiredPermission?: string; userRole?: string };
+
+/**
+ * For highly privileged operations (super_admin check, membership management,
+ * role changes), verify the user's role from the DATABASE, not from the JWT.
+ * This closes the window where a revoked role in the DB is still accepted
+ * because the JWT hasn't expired yet.
+ *
+ * Use this instead of requireSuperAdmin or requireOrgAdmin for the most
+ * sensitive mutations (role assignment, org status changes, membership removal).
+ * Low-risk read operations should continue using the JWT for performance.
+ */
+export async function requireDbVerifiedRole(
+  req: NextRequest,
+  opts: { requireSuperAdmin?: boolean; minRole?: string; orgId?: string } = {}
+): Promise<DbVerifiedRoleResult> {
+  const auth = await authenticateRequest(req);
+  if (!auth) return { ok: false, status: 401, userRole: undefined };
+
+  // Load the actual role from the DB
+  const dbUser = await db.appUser.findUnique({
+    where: { id: auth.userId },
+    select: { id: true, email: true, role: true, isActive: true },
+  });
+  if (!dbUser || !dbUser.isActive) return { ok: false, status: 401, userRole: auth?.role };
+
+  // Reject if the DB role is weaker than what the JWT claims.
+  // Use 403 (forbidden) — the user IS authenticated but lacks permission.
+  if (opts.requireSuperAdmin && dbUser.role !== 'super_admin') {
+    return { ok: false, status: 403, requiredPermission: 'platform.organizations.read', userRole: dbUser.role };
+  }
+  if (opts.minRole && !hasRolePermission(dbUser.role, opts.minRole)) {
+    const roleToPermission: Record<string, string> = {
+      manager: 'reports.create',
+      admin: 'organization.settings.update',
+      org_admin: 'organization.members.create',
+      super_admin: 'platform.organizations.read',
+    };
+    return { ok: false, status: 403, requiredPermission: roleToPermission[opts.minRole], userRole: dbUser.role };
+  }
+
+  return { ok: true, userId: dbUser.id, email: dbUser.email, role: dbUser.role, organizationId: auth.organizationId || auth.activeOrganizationId || null };
+}
+
+export type MembershipAdminResult =
+  | { ok: true; userId: string; email: string; role: string; organizationId: string; isSuperAdmin: boolean }
+  | { ok: false; status: 401 | 403; requiredPermission?: string; userRole?: string };
+
+/**
+ * Authorize membership management operations with DB-verified role.
+ * For mutations that change membership roles, status, or remove members —
+ * the role is verified from the DB, not the JWT.
+ */
+export async function requireMembershipAdmin(
+  req: NextRequest,
+  targetOrgId: string
+): Promise<MembershipAdminResult> {
+  const auth = await authenticateRequest(req);
+  if (!auth) return { ok: false, status: 401, userRole: undefined };
+
+  const dbUser = await db.appUser.findUnique({
+    where: { id: auth.userId },
+    select: { id: true, email: true, role: true, isActive: true },
+  });
+  if (!dbUser || !dbUser.isActive) return { ok: false, status: 401, userRole: undefined };
+
+  if (dbUser.role === 'super_admin') {
+    return { ok: true, userId: dbUser.id, email: dbUser.email, role: dbUser.role, organizationId: targetOrgId, isSuperAdmin: true };
+  }
+
+  const callerOrg = auth.activeOrganizationId || auth.organizationId;
+  if (!callerOrg || callerOrg !== targetOrgId) return { ok: false, status: 403, requiredPermission: 'organization.members.create', userRole: dbUser.role };
+  if (!hasRolePermission(dbUser.role, 'admin')) return { ok: false, status: 403, requiredPermission: 'organization.members.create', userRole: dbUser.role };
+
+  const org = await db.organization.findUnique({
+    where: { id: targetOrgId },
+    select: { status: true },
+  });
+  if (!org || org.status !== 'active') return { ok: false, status: 403, userRole: dbUser.role };
+
+  return { ok: true, userId: dbUser.id, email: dbUser.email, role: dbUser.role, organizationId: targetOrgId, isSuperAdmin: false };
 }
 
 /**

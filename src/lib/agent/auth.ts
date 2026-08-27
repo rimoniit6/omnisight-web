@@ -3,7 +3,7 @@ import { db } from '@/lib/db';
 import { hashPassword, verifyPassword } from '@/lib/auth';
 import { getClientIpFromHeaders } from '@/lib/rate-limit';
 import { log } from '@/lib/logger';
-import { verifyAgentCredential, toPublicAccount } from '@/lib/agent-account';
+
 
 // ─── Device claim secrets (zero-touch discovery) ────────────────────────────
 // The claim secret is a one-time credential issued at discovery; only its
@@ -38,6 +38,10 @@ export function generateClaimSecret(): string {
 // created (no implicit "first organization" selection).
 
 export const ENROLLMENT_CODE_SETTING_KEY = 'agent_enrollment_code';
+export const ENROLLMENT_CODE_EXPIRES_KEY = 'agent_enrollment_code_expires_at';
+
+/** Default enrollment code validity: 30 days. */
+export const ENROLLMENT_CODE_DEFAULT_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 
 export function hashEnrollmentCode(code: string): string {
   return createHash('sha256').update(`wl-enroll:${code}`).digest('hex');
@@ -57,6 +61,12 @@ export function verifyEnrollmentCode(code: string, hash: string): boolean {
 /** 24 cryptographically-random bytes (base64url) — returned exactly once at issue. */
 export function generateEnrollmentCode(): string {
   return randomBytes(24).toString('base64url');
+}
+
+/** Check if an enrollment code has expired based on the stored expiration. */
+export function isEnrollmentCodeExpired(expiresAt: string | null): boolean {
+  if (!expiresAt) return false; // No expiration = never expires (legacy)
+  return new Date(expiresAt) < new Date();
 }
 
 // Verify an agent password against the stored credential.
@@ -168,6 +178,24 @@ export async function validateAgentToken(req: Request): Promise<{
         log.warn('agent.auth.device_inactive', { employeeId: agentToken.employee.employeeId, ip: getClientIp(req) });
         return { valid: false, error: 'Device is not active' };
       }
+    }
+
+    // Organization suspension check: a suspended/archived org must not
+    // allow agent operations. Fail closed.
+    const org = await db.organization.findUnique({
+      where: { id: agentToken.employee.organizationId },
+      select: { status: true },
+    });
+    if (!org || org.status !== 'active') {
+      log.warn('agent.auth.org_not_active', { employeeId: agentToken.employee.employeeId, ip: getClientIp(req) });
+      return { valid: false, error: 'Organization is not active' };
+    }
+
+    // Cross-org integrity: verify the token's organization matches the employee's.
+    // organizationId is NOT NULL (schema enforced) — always present.
+    if (agentToken.organizationId !== agentToken.employee.organizationId) {
+      log.warn('agent.auth.org_mismatch', { employeeId: agentToken.employee.employeeId, ip: getClientIp(req) });
+      return { valid: false, error: 'Token organization mismatch' };
     }
 
     // Update lastUsedAt

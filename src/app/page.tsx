@@ -45,6 +45,8 @@ const SelfPortalPage = dynamic(() => import('@/components/self-portal/self-porta
 const ProjectsPage = dynamic(() => import('@/components/projects/projects-page').then(m => ({ default: m.ProjectsPage })), { ssr: false });
 const SentimentPage = dynamic(() => import('@/components/sentiment/sentiment-page').then(m => ({ default: m.SentimentPage })), { ssr: false });
 const AudioPage = dynamic(() => import('@/components/audio/audio-page').then(m => ({ default: m.AudioPage })), { ssr: false });
+const SuperAdminOrganizationsPage = dynamic(() => import('@/components/super-admin/super-admin-organizations-page').then(m => ({ default: m.SuperAdminOrganizationsPage })), { ssr: false });
+const SuperAdminOrganizationDetailPage = dynamic(() => import('@/components/super-admin/super-admin-organization-detail-page').then(m => ({ default: m.SuperAdminOrganizationDetailPage })), { ssr: false });
 
 const pageComponents: Record<string, React.ComponentType> = {
   dashboard: DashboardPage,
@@ -76,6 +78,8 @@ const pageComponents: Record<string, React.ComponentType> = {
   projects: ProjectsPage,
   sentiment: SentimentPage,
   audio: AudioPage,
+  'super-admin-organizations': SuperAdminOrganizationsPage,
+  'super-admin-organization-detail': SuperAdminOrganizationDetailPage,
 };
 
 function AppLayout() {

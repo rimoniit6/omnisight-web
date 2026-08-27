@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
-import { getRequestToken } from '@/lib/auth';
+import { getRequestToken, getRoleLabel } from '@/lib/auth';
 import { verifySessionToken } from '@/lib/session';
 import { log, requestContext } from '@/lib/logger';
+import { resolveActiveMembership } from '@/lib/membership';
 
 export async function GET(req: NextRequest) {
   try {
@@ -27,9 +28,61 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: 'User not found or inactive' }, { status: 401 });
     }
 
-    const organization = adminUser.organizationId
+    // ── ROLE RESOLUTION FROM MEMBERSHIP (authoritative) ────────────────
+    // The previous implementation used AppUser.role (the deprecated legacy
+    // global role), which causes all users to potentially display the wrong
+    // role in the frontend. OrganizationMembership.role is the source of
+    // truth for org-bound users.
+    const activeOrgId = payload.activeOrganizationId || adminUser.organizationId || null;
+    let effectiveRole = adminUser.role; // fallback for org-less super_admin
+    let effectiveOrgId = activeOrgId;
+
+    if (activeOrgId && adminUser.role !== 'super_admin') {
+      const membership = await db.organizationMembership.findUnique({
+        where: {
+          userId_organizationId: { userId: adminUser.id, organizationId: activeOrgId },
+        },
+        select: { role: true, status: true },
+      });
+
+      if (membership && membership.status === 'ACTIVE') {
+        effectiveRole = membership.role;
+      } else {
+        // No active membership for the active org — resolve from any membership
+        const resolved = await resolveActiveMembership(adminUser.id, adminUser.organizationId);
+        if (resolved) {
+          effectiveRole = resolved.role;
+          effectiveOrgId = resolved.organizationId;
+        } else {
+          // Org-bound user with no memberships — deny access
+          effectiveOrgId = null;
+        }
+      }
+    }
+
+    // For super_admin, try to resolve membership but keep super_admin role
+    if (adminUser.role === 'super_admin' && activeOrgId) {
+      const membership = await db.organizationMembership.findUnique({
+        where: {
+          userId_organizationId: { userId: adminUser.id, organizationId: activeOrgId },
+        },
+        select: { role: true, status: true },
+      });
+      // Super admin keeps their platform role regardless of membership
+      if (!membership || membership.status !== 'ACTIVE') {
+        // No active membership for this org — try to find one
+        const resolved = await resolveActiveMembership(adminUser.id, adminUser.organizationId);
+        if (resolved) {
+          effectiveOrgId = resolved.organizationId;
+        } else {
+          effectiveOrgId = null;
+        }
+      }
+    }
+
+    const organization = effectiveOrgId
       ? await db.organization.findUnique({
-          where: { id: adminUser.organizationId },
+          where: { id: effectiveOrgId },
         })
       : null;
 
@@ -37,21 +90,13 @@ export async function GET(req: NextRequest) {
       ? adminUser.name.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2)
       : 'AD';
 
-    const roleLabels: Record<string, string> = {
-      super_admin: 'Super Admin',
-      admin: 'Admin',
-      owner: 'Owner',
-      manager: 'Manager',
-      viewer: 'Viewer',
-    };
-
     return NextResponse.json({
       user: {
         id: adminUser.id,
         name: adminUser.name,
         email: adminUser.email,
-        role: adminUser.role,
-        roleLabel: roleLabels[adminUser.role] || adminUser.role,
+        role: effectiveRole,
+        roleLabel: getRoleLabel(effectiveRole),
         initials,
         avatar: adminUser.avatar,
         lastLogin: adminUser.lastLogin,

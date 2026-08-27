@@ -8,6 +8,7 @@ import { log, requestContext } from '@/lib/logger';
 const ROLE_LEVELS: Record<string, number> = {
   super_admin: 50,
   owner: 40,
+  org_admin: 35,
   admin: 30,
   manager: 20,
   viewer: 10,
@@ -127,7 +128,7 @@ export async function PUT(
     if (isActive !== undefined) updateData.isActive = isActive;
 
     if (role !== undefined) {
-      const validRoles = ['super_admin', 'owner', 'admin', 'manager', 'viewer'];
+      const validRoles = ['super_admin', 'owner', 'org_admin', 'admin', 'manager', 'viewer'];
       if (!validRoles.includes(role)) {
         return NextResponse.json({ error: 'Invalid role' }, { status: 400 });
       }
@@ -165,6 +166,24 @@ export async function PUT(
       where: { id },
       data: updateData,
     });
+
+    // P1: keep the organization-specific membership role in sync when a
+    // non-super-admin changes a user's role within their org. super_admin is a
+    // global role and intentionally has no per-org membership.
+    if (
+      role !== undefined &&
+      role !== 'super_admin' &&
+      payload.role !== 'super_admin' &&
+      payload.organizationId
+    ) {
+      await db.organizationMembership.upsert({
+        where: {
+          userId_organizationId: { userId: id, organizationId: payload.organizationId },
+        },
+        create: { userId: id, organizationId: payload.organizationId, role, status: 'ACTIVE' },
+        update: { role },
+      });
+    }
 
     // S-04: disabling a user or resetting their password revokes every live
     // session — an already-issued JWT stops working server-side immediately.

@@ -427,7 +427,7 @@ function AgentMonitoringCard() {
               onSaved={() => queryClient.invalidateQueries({ queryKey: ['monitoring-settings'] })}
               {...(s.key === 'website_tracking'
                 ? {
-                    helper: 'Website tracking requires either the OmniSight browser extension (Chrome/Edge/Firefox) OR Native Website Tracking to be enabled. If both are unavailable, no website activity will be collected even when this setting is on. Requires active activity-tracking consent. Collects DOMAIN names only (e.g. github.com) — never full URLs, paths, queries or page contents.',
+                    helper: 'When enabled, the desktop agent collects website domain names (e.g. github.com) from monitored devices. Requires active activity-tracking consent. Collects DOMAIN names only — never full URLs, paths, queries or page contents.',
                   }
                 : {})}
               {...(s.key === 'usb_monitoring'

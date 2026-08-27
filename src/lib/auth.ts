@@ -12,6 +12,10 @@ export interface JWTPayload {
   email: string;
   role: string;
   organizationId?: string;
+  // The organization the user is actively working in (multi-org support).
+  // Server-authoritative: set via POST /api/me/organization/switch after
+  // verifying membership. Falls back to organizationId for single-org users.
+  activeOrganizationId?: string;
   // Server-authoritative web session (S-04). Login/refresh always embed the
   // session id; authenticateRequest/proxy re-validate the row so logout,
   // force-logout, account disable, and password change can revoke a live
@@ -309,6 +313,7 @@ export function hasRolePermission(userRole: string, requiredRole: string): boole
   const hierarchy: Record<string, number> = {
     super_admin: 50,
     owner: 40,
+    org_admin: 35,
     admin: 30,
     manager: 20,
     viewer: 10,
@@ -326,6 +331,7 @@ export function hasRolePermission(userRole: string, requiredRole: string): boole
 export function getRoleLabel(role: string): string {
   const labels: Record<string, string> = {
     super_admin: 'Super Admin',
+    org_admin: 'Organization Admin',
     admin: 'Admin',
     owner: 'Owner',
     manager: 'Manager',

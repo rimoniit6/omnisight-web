@@ -42,6 +42,7 @@ model Organization {
   departments   Department[]
   devices       Device[]
   users         AppUser[]
+  memberships   OrganizationMembership[]
   notifications Notification[]
   alerts        Alert[]
   auditLogs     AuditLog[]
@@ -66,9 +67,11 @@ model Organization {
   webcamSessions      WebcamSession[]
   notificationPreferences NotificationPreference[]
   userSessions        UserSession[]
+  activeOrgSessions   UserSession[] @relation("ActiveOrgSession")
   breakSessions       BreakSession[]
   audioRecordings     AudioRecording[]
   audioTranscriptions AudioTranscription[]
+  agentTokens         AgentToken[]
 }
 
 // ==================== Department ====================
@@ -571,7 +574,9 @@ model AuditLog {
   createdAt       DateTime @default(now())
 
   // Relations
-  organization  Organization? @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  // SetNull preserves audit records when an organization is archived/deleted.
+  // Audit history must survive org lifecycle changes for compliance.
+  organization  Organization? @relation(fields: [organizationId], references: [id], onDelete: SetNull)
 
   @@index([organizationId])
   @@index([organizationId, createdAt])
@@ -631,6 +636,8 @@ model AppUser {
   password        String?
   role            String   @default("admin") // super_admin, owner, admin, manager, viewer
   avatar          String?
+  // DEPRECATED for multi-org: use OrganizationMembership instead.
+  // Kept for backward compatibility until all consumers migrate.
   organizationId  String?
   isActive        Boolean  @default(true)
   lastLogin       DateTime?
@@ -640,9 +647,33 @@ model AppUser {
   // Relations
   organization  Organization? @relation(fields: [organizationId], references: [id], onDelete: SetNull)
   sessions      UserSession[]
+  memberships   OrganizationMembership[]
 
   @@index([organizationId])
   @@index([role])
+}
+
+// ==================== Organization Membership (Multi-Org) ====================
+// Maps AppUser ↔ Organization with a role scoped to that organization.
+// One user may hold memberships in multiple organizations.
+// The compound unique (userId, organizationId) prevents duplicate membership.
+model OrganizationMembership {
+  id             String   @id @default(cuid())
+  userId         String
+  organizationId String
+  role           String   @default("viewer") // owner, admin, manager, viewer
+  status         String   @default("ACTIVE") // ACTIVE, INVITED, SUSPENDED, REMOVED
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  // Relations
+  user         AppUser      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, organizationId])
+  @@index([userId])
+  @@index([organizationId])
+  @@index([status])
 }
 
 // ==================== Web Session (server-authoritative revocation) ====================
@@ -657,6 +688,10 @@ model UserSession {
   id             String   @id @default(cuid())
   userId         String
   organizationId String?
+  // The org the user is actively working in (may switch without re-login).
+  // Server-authoritative: only set via POST /api/me/organization/switch
+  // after verifying membership.
+  activeOrganizationId String?
   ipAddress      String?
   userAgent      String?
   createdAt      DateTime @default(now())
@@ -666,9 +701,11 @@ model UserSession {
 
   user          AppUser       @relation(fields: [userId], references: [id], onDelete: Cascade)
   organization  Organization? @relation(fields: [organizationId], references: [id], onDelete: SetNull)
+  activeOrganization Organization? @relation("ActiveOrgSession", fields: [activeOrganizationId], references: [id], onDelete: SetNull)
 
   @@index([userId])
   @@index([userId, revokedAt])
+  @@index([activeOrganizationId])
 }
 
 // ==================== System Settings (Key-Value) ====================
@@ -729,20 +766,27 @@ model AgentRegistration {
 // ==================== Agent Token (Authenticated Sessions) ====================
 
 model AgentToken {
-  id           String   @id @default(cuid())
-  token        String   @unique // Bearer token for API calls
-  employeeId   String
-  deviceId     String?  // Current device this token is bound to
-  ipAddress    String?
-  userAgent    String?  // Agent version + OS info
-  expiresAt    DateTime
-  lastUsedAt   DateTime @default(now())
-  createdAt    DateTime @default(now())
+  id             String   @id @default(cuid())
+  token          String   @unique // Bearer token for API calls
+  employeeId     String
+  // Direct organization FK for fast tenant-isolation checks without JOIN
+  // through Employee. Set at token issuance from Employee.organizationId.
+  // NOT NULL: the agent must never operate without an organization.
+  organizationId String
+  deviceId       String?  // Current device this token is bound to
+  ipAddress      String?
+  userAgent      String?  // Agent version + OS info
+  expiresAt      DateTime
+  lastUsedAt     DateTime @default(now())
+  createdAt      DateTime @default(now())
 
   // Relations
-  employee Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  employee     Employee      @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
 
   @@index([employeeId])
+  @@index([organizationId])
+  @@index([organizationId, employeeId])
 }
 
 // ==================== Agent Session (Phase 3 — Agent login bootstrap) ========

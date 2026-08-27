@@ -219,6 +219,7 @@ export async function POST(req: NextRequest) {
         data: {
           token,
           employeeId: employee.id,
+          organizationId: employee.organizationId,
           deviceId: dev.id,
           ipAddress: clientIp,
           userAgent: agentVersion ? `WorkLensAgent/${agentVersion}` : null,
@@ -412,6 +413,7 @@ async function authenticateDevice(args: {
       data: {
         token,
         employeeId: employee.id,
+        organizationId: employee.organizationId,
         deviceId: device.id,
         ipAddress: clientIp,
         userAgent: typeof args.agentVersion === 'string' ? `WorkLensAgent/${args.agentVersion}` : null,

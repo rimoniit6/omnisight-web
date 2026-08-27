@@ -33,6 +33,7 @@ import {
   FolderKanban,
   HeartPulse,
   Mic,
+  Crown,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import {
@@ -110,6 +111,12 @@ const navGroups: NavGroup[] = [
       { page: 'reports', label: 'Reports', icon: FileText },
       { page: 'daily-report', label: 'Daily Report', icon: FileBarChart },
       { page: 'settings', label: 'Settings', icon: Settings },
+    ],
+  },
+  {
+    section: 'Platform',
+    items: [
+      { page: 'super-admin-organizations', label: 'Super Admin', icon: Crown },
     ],
   },
 ];
@@ -315,7 +322,7 @@ export function AppSidebar({ onNavigate }: AppSidebarProps) {
             {sidebarOpen && (
               <div className="min-w-0">
                 <p className="text-sm font-medium text-sidebar-foreground truncate">{displayUser?.name || 'Admin'}</p>
-                <p className="text-[11px] text-muted-foreground truncate">{displayUser?.roleLabel || 'Super Admin'}</p>
+                <p className="text-[11px] text-muted-foreground truncate">{displayUser?.roleLabel || 'Loading...'}</p>
               </div>
             )}
           </div>

@@ -88,16 +88,43 @@ export async function isWebSessionActive(sessionId: string, now = Date.now()): P
 }
 
 /**
+ * P2-01: Verify that the JWT's activeOrganizationId matches the session's
+ * server-authoritative activeOrganizationId. After an org switch, the session
+ * row is updated but old tokens still carry the previous org. This mismatch
+ * causes rejection — old tokens cannot access the previous org after switch.
+ */
+export async function verifySessionActiveOrg(sessionId: string, jwtActiveOrgId: string | undefined): Promise<boolean> {
+  try {
+    const session = await db.userSession.findUnique({
+      where: { id: sessionId },
+      select: { activeOrganizationId: true },
+    });
+    if (!session) return false;
+    // If the session has no active org set, accept (legacy sessions)
+    if (!session.activeOrganizationId) return true;
+    // JWT's activeOrganizationId must match the session's
+    return session.activeOrganizationId === jwtActiveOrgId;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Verify a web JWT and its server-side session. Tokens without a sessionId
  * claim are accepted (legacy stateless tokens); tokens WITH one are rejected
- * when the row is missing, revoked, or expired.
+ * when the row is missing, revoked, expired, or has a different active org
+ * than the session's server-authoritative state (P2-01).
  */
 export async function verifySessionToken(token: string): Promise<JWTPayload | null> {
   const payload = await verifyJWT(token);
   if (!payload) return null;
   if (!payload.sessionId) return payload;
   const active = await isWebSessionActive(payload.sessionId);
-  return active ? payload : null;
+  if (!active) return null;
+  // P2-01: Reject tokens whose activeOrganizationId differs from the session's.
+  // This closes the overlap window after an org switch.
+  const orgMatch = await verifySessionActiveOrg(payload.sessionId, payload.activeOrganizationId);
+  return orgMatch ? payload : null;
 }
 
 /** Revoke a single session (idempotent — no-op when already revoked). */

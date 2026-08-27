@@ -11,6 +11,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
 import { useToast } from '@/hooks/use-toast';
+import { useAuthStore } from '@/lib/store';
+import { useApiErrorHandler, parseAuthorizationError } from '@/lib/auth-error';
 import { Mic, Upload, Search, Download, Trash2, RefreshCw, Eye, Loader2, AlertCircle } from 'lucide-react';
 
 interface AudioRecording {
@@ -67,6 +69,8 @@ export function AudioPage() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const userRole = useAuthStore((s) => s.user?.role ?? '');
+  const { handleApiError } = useApiErrorHandler();
 
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState('');
@@ -97,8 +101,11 @@ export function AudioPage() {
       formData.append('file', file);
       const res = await fetch('/api/audio', { method: 'POST', body: formData });
       if (!res.ok) {
+        const authError = await parseAuthorizationError(res);
         const err = await res.json();
-        throw new Error(err.error || 'Upload failed');
+        const error = new Error(err.error || 'Upload failed') as Error & { authError?: any };
+        if (authError) error.authError = authError;
+        throw error;
       }
       return res.json();
     },
@@ -107,8 +114,12 @@ export function AudioPage() {
       toast({ title: 'Audio uploaded', description: 'Your audio file has been queued for transcription.' });
       setUploadProgress(false);
     },
-    onError: (err: Error) => {
-      toast({ title: 'Upload failed', description: err.message, variant: 'destructive' });
+    onError: (err: Error & { authError?: any }) => {
+      if (err.authError) {
+        handleApiError(err.authError, userRole);
+      } else {
+        toast({ title: 'Upload failed', description: err.message, variant: 'destructive' });
+      }
       setUploadProgress(false);
     },
   });
@@ -117,7 +128,13 @@ export function AudioPage() {
   const deleteMutation = useMutation({
     mutationFn: async (id: string) => {
       const res = await fetch(`/api/audio/${id}`, { method: 'DELETE' });
-      if (!res.ok) throw new Error('Delete failed');
+      if (!res.ok) {
+        const authError = await parseAuthorizationError(res);
+        const err = await res.json();
+        const error = new Error(err.error || 'Delete failed') as Error & { authError?: any };
+        if (authError) error.authError = authError;
+        throw error;
+      }
       return res.json();
     },
     onSuccess: () => {
@@ -126,8 +143,12 @@ export function AudioPage() {
       setShowDeleteDialog(false);
       setDeleteTarget(null);
     },
-    onError: (err: Error) => {
-      toast({ title: 'Delete failed', description: err.message, variant: 'destructive' });
+    onError: (err: Error & { authError?: any }) => {
+      if (err.authError) {
+        handleApiError(err.authError, userRole);
+      } else {
+        toast({ title: 'Delete failed', description: err.message, variant: 'destructive' });
+      }
     },
   });
 
@@ -136,8 +157,11 @@ export function AudioPage() {
     mutationFn: async (id: string) => {
       const res = await fetch(`/api/audio/${id}/retry`, { method: 'POST' });
       if (!res.ok) {
+        const authError = await parseAuthorizationError(res);
         const err = await res.json();
-        throw new Error(err.error || 'Retry failed');
+        const error = new Error(err.error || 'Retry failed') as Error & { authError?: any };
+        if (authError) error.authError = authError;
+        throw error;
       }
       return res.json();
     },
@@ -145,8 +169,12 @@ export function AudioPage() {
       queryClient.invalidateQueries({ queryKey: ['audio-recordings'] });
       toast({ title: 'Retry queued', description: 'Transcription has been re-queued.' });
     },
-    onError: (err: Error) => {
-      toast({ title: 'Retry failed', description: err.message, variant: 'destructive' });
+    onError: (err: Error & { authError?: any }) => {
+      if (err.authError) {
+        handleApiError(err.authError, userRole);
+      } else {
+        toast({ title: 'Retry failed', description: err.message, variant: 'destructive' });
+      }
     },
   });
 
@@ -180,10 +208,51 @@ export function AudioPage() {
 
   return (
     <div className="p-6 space-y-6">
+      {/* Feature Status Banner */}
+      <Card className="border-blue-200 bg-blue-50/50">
+        <CardContent className="flex items-center gap-4 py-4 px-6">
+          <div className="flex-shrink-0">
+            <div className="h-10 w-10 rounded-full bg-blue-100 flex items-center justify-center">
+              <Mic className="h-5 w-5 text-blue-600" />
+            </div>
+          </div>
+          <div className="flex-1">
+            <div className="flex items-center gap-2 mb-1">
+              <h3 className="font-semibold text-blue-900">Audio Transcription</h3>
+              <Badge className="bg-green-100 text-green-800 text-xs">Available</Badge>
+            </div>
+            <p className="text-sm text-blue-700">
+              Upload audio files for server-side transcription. Manual uploads are fully supported.
+            </p>
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card className="border-amber-200 bg-amber-50/50">
+        <CardContent className="flex items-center gap-4 py-4 px-6">
+          <div className="flex-shrink-0">
+            <div className="h-10 w-10 rounded-full bg-amber-100 flex items-center justify-center">
+              <Mic className="h-5 w-5 text-amber-600" />
+            </div>
+          </div>
+          <div className="flex-1">
+            <div className="flex items-center gap-2 mb-1">
+              <h3 className="font-semibold text-amber-900">Agent Audio Capture</h3>
+              <Badge className="bg-amber-100 text-amber-800 text-xs">Upcoming — Next Version</Badge>
+            </div>
+            <p className="text-sm text-amber-700">
+              Automatic audio capture from managed agent devices and server-side transcription will be available in a future release.
+            </p>
+          </div>
+          <Button variant="outline" disabled className="opacity-50 cursor-not-allowed">
+            Coming Soon
+          </Button>
+        </CardContent>
+      </Card>
+
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <Mic className="h-6 w-6" />
-          <h1 className="text-2xl font-bold">Audio Transcriptions</h1>
+          <h1 className="text-2xl font-bold">Recordings</h1>
         </div>
         <div className="flex items-center gap-3">
           <input

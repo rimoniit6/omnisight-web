@@ -5,6 +5,7 @@ import { checkRateLimit, RATE_LIMITS } from '@/lib/rate-limit';
 import { getClientIpFromHeaders } from '@/lib/client-ip';
 import { log, requestContext } from '@/lib/logger';
 import { createUserSession, getUserAgent } from '@/lib/session';
+import { resolveActiveMembership } from '@/lib/membership';
 
 export async function POST(req: NextRequest) {
   try {
@@ -78,6 +79,13 @@ export async function POST(req: NextRequest) {
 
     log.info('auth.login.success', { userId: user.id, email: user.email }, requestContext(req));
 
+    // P1: resolve the effective active organization from the authoritative
+    // OrganizationMembership layer (falls back to the deprecated
+    // AppUser.organizationId for pre-migration users).
+    const resolved = await resolveActiveMembership(user.id, user.organizationId);
+    const activeOrgId = resolved?.organizationId ?? user.organizationId ?? null;
+    const effectiveRole = resolved?.role ?? user.role;
+
     // Update last login and create audit log
     await db.$transaction(async (tx) => {
       await tx.appUser.update({
@@ -94,17 +102,29 @@ export async function POST(req: NextRequest) {
           description: `User ${user.name} (${user.email}) logged in`,
           userId: user.id,
           // Null for org-less super_admin (AuditLog.organizationId is nullable).
-          organizationId: user.organizationId ?? null,
+          organizationId: activeOrgId,
         },
       });
     });
 
-    // Get organization — derived strictly from the user's own record.
-    // No findFirst() fallback: an org-less user gets no org, never the
-    // "first row in the table" (tenant isolation).
-    const organization = user.organizationId
+    // Get organization — derived strictly from the resolved membership (or the
+    // legacy field). No findFirst() over all organizations: an org-less user
+    // gets no org, never the "first row in the table" (tenant isolation).
+    const organization = activeOrgId
       ? await db.organization.findUnique({
-          where: { id: user.organizationId },
+          where: { id: activeOrgId },
+          select: {
+            id: true,
+            name: true,
+            slug: true,
+            email: true,
+            phone: true,
+            address: true,
+            logo: true,
+            status: true,
+            timezone: true,
+            currency: true,
+          },
         })
       : null;
 
@@ -114,23 +134,27 @@ export async function POST(req: NextRequest) {
     // JWT lifetime.
     const { id: sessionId } = await createUserSession({
       userId: user.id,
-      organizationId: user.organizationId ?? null,
+      organizationId: activeOrgId,
       ipAddress: clientIp,
       userAgent: getUserAgent(req),
       expiresAt: new Date(Date.now() + jwtLifetimeSeconds() * 1000),
     });
 
-    // Sign JWT
+    // Sign JWT. activeOrganizationId always corresponds to an ACTIVE membership
+    // (or is undefined for a global super_admin). The client can never select
+    // an organization it is not a member of.
     const token = await signJWT({
       userId: user.id,
       email: user.email,
-      role: user.role,
-      organizationId: user.organizationId || undefined,
+      role: effectiveRole,
+      organizationId: activeOrgId || undefined,
+      activeOrganizationId: activeOrgId || undefined,
       sessionId,
     });
 
     const roleLabels: Record<string, string> = {
       super_admin: 'Super Admin',
+      org_admin: 'Organization Admin',
       admin: 'Admin',
       owner: 'Owner',
       manager: 'Manager',
@@ -152,8 +176,8 @@ export async function POST(req: NextRequest) {
         id: user.id,
         name: user.name,
         email: user.email,
-        role: user.role,
-        roleLabel: roleLabels[user.role] || user.role,
+        role: effectiveRole,
+        roleLabel: roleLabels[effectiveRole] || effectiveRole,
         initials,
         avatar: user.avatar,
         lastLogin: new Date(),

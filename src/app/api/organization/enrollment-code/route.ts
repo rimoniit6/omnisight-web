@@ -8,6 +8,8 @@ import {
   generateEnrollmentCode,
   hashEnrollmentCode,
   ENROLLMENT_CODE_SETTING_KEY,
+  ENROLLMENT_CODE_EXPIRES_KEY,
+  ENROLLMENT_CODE_DEFAULT_TTL_MS,
 } from '@/lib/agent/auth';
 
 // POST   /api/organization/enrollment-code — generate/rotate the org's
@@ -35,6 +37,9 @@ export async function POST(req: NextRequest) {
 
     const code = generateEnrollmentCode();
     const hash = hashEnrollmentCode(code);
+    const expiresAt = new Date(Date.now() + ENROLLMENT_CODE_DEFAULT_TTL_MS).toISOString();
+
+    // Store hash and expiration atomically
     await db.organizationSetting.upsert({
       where: {
         organizationId_key: { organizationId: scope.organizationId, key: ENROLLMENT_CODE_SETTING_KEY },
@@ -44,6 +49,18 @@ export async function POST(req: NextRequest) {
         organizationId: scope.organizationId,
         key: ENROLLMENT_CODE_SETTING_KEY,
         value: hash,
+        category: 'agent',
+      },
+    });
+    await db.organizationSetting.upsert({
+      where: {
+        organizationId_key: { organizationId: scope.organizationId, key: ENROLLMENT_CODE_EXPIRES_KEY },
+      },
+      update: { value: expiresAt, category: 'agent' },
+      create: {
+        organizationId: scope.organizationId,
+        key: ENROLLMENT_CODE_EXPIRES_KEY,
+        value: expiresAt,
         category: 'agent',
       },
     });
@@ -63,6 +80,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({
       success: true,
       code,
+      expiresAt,
       message: 'Enrollment code issued. It is returned only once — provision it to agents before it is needed.',
     });
   } catch (error) {
@@ -79,7 +97,10 @@ export async function DELETE(req: NextRequest) {
     const clientIp = getClientIpFromHeaders(req.headers);
 
     const removed = await db.organizationSetting.deleteMany({
-      where: { organizationId: scope.organizationId, key: ENROLLMENT_CODE_SETTING_KEY },
+      where: {
+        organizationId: scope.organizationId,
+        key: { in: [ENROLLMENT_CODE_SETTING_KEY, ENROLLMENT_CODE_EXPIRES_KEY] },
+      },
     });
 
     if (removed.count > 0) {
@@ -99,6 +120,43 @@ export async function DELETE(req: NextRequest) {
     return NextResponse.json({ success: true, enabled: removed.count > 0 });
   } catch (error) {
     log.error('api.organization.enrollment-code.', { error: String('Enrollment code DELETE error:') }, requestContext(req));
+    return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
+  }
+}
+
+// GET /api/organization/enrollment-code — return enrollment code STATUS only.
+// Never returns the plaintext code. Admin-only, org-scoped.
+export async function GET(req: NextRequest) {
+  try {
+    const scope = await requireAdminOrg(req);
+    if (!scope.ok) return authError(scope);
+
+    const setting = await db.organizationSetting.findUnique({
+      where: {
+        organizationId_key: { organizationId: scope.organizationId, key: ENROLLMENT_CODE_SETTING_KEY },
+      },
+      select: { value: true, updatedAt: true },
+    });
+
+    const expiresSetting = await db.organizationSetting.findUnique({
+      where: {
+        organizationId_key: { organizationId: scope.organizationId, key: ENROLLMENT_CODE_EXPIRES_KEY },
+      },
+      select: { value: true },
+    });
+
+    const expiresAt = expiresSetting?.value || null;
+    const isExpired = expiresAt ? new Date(expiresAt) < new Date() : false;
+
+    return NextResponse.json({
+      configured: !!setting,
+      active: !!setting && !isExpired,
+      expiresAt,
+      revoked: !setting,
+      createdAt: setting?.updatedAt || null,
+    });
+  } catch (error) {
+    log.error('api.organization.enrollment-code.', { error: String('Enrollment code GET error:') }, requestContext(req));
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }

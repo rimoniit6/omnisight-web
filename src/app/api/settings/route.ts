@@ -1,7 +1,7 @@
 'use server';
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
-import { authError, requireAdminOrg, requireSuperAdmin, parseJsonBody, BodyParseError } from '@/lib/api';
+import { authError, authenticateRequest, requireAdminOrg, requireSuperAdmin, parseJsonBody, BodyParseError } from '@/lib/api';
 import { encryptSecret } from '@/lib/crypto';
 import { validateProviderConfig } from '@/lib/ai-provider-helper';
 import { log, requestContext } from '@/lib/logger';
@@ -29,8 +29,13 @@ export async function GET(req: NextRequest) {
   try {
     // Defense-in-depth: proxy gates /api/settings to admin+; the handler
     // enforces it too (settings include provider config and secret envelopes).
-    const admin = await requireAdminOrg(req);
-    if (!admin.ok) return authError(admin);
+    // Super Admin (global or org-bound) can always read platform settings.
+    const auth = await authenticateRequest(req);
+    if (!auth) return authError({ ok: false, status: 401 });
+    if (auth.role !== 'super_admin') {
+      const admin = await requireAdminOrg(req);
+      if (!admin.ok) return authError(admin);
+    }
 
     const settings = await db.systemSetting.findMany({
       orderBy: { key: 'asc' },
