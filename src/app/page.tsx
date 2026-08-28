@@ -32,7 +32,6 @@ const SettingsPage = dynamic(() => import('@/components/settings/settings-page')
 const ReportsPage = dynamic(() => import('@/components/reports/reports-page').then(m => ({ default: m.ReportsPage })), { ssr: false });
 const OrganizationPage = dynamic(() => import('@/components/organization/organization-page').then(m => ({ default: m.OrganizationPage })), { ssr: false });
 const AgentApprovalsPage = dynamic(() => import('@/components/agent-approvals/agent-approvals-page').then(m => ({ default: m.AgentApprovalsPage })), { ssr: false });
-const GuestsPage = dynamic(() => import('@/components/guests/guests-page').then(m => ({ default: m.GuestsPage })), { ssr: false });
 const ScreenshotsPage = dynamic(() => import('@/components/screenshots/screenshots-page').then(m => ({ default: m.ScreenshotsPage })), { ssr: false });
 const BreakStatusPage = dynamic(() => import('@/components/break-status/break-status-page').then(m => ({ default: m.BreakStatusPage })), { ssr: false });
 const DailyReportPage = dynamic(() => import('@/components/reports/daily-report').then(m => ({ default: m.DailyReportPage })), { ssr: false });
@@ -65,7 +64,6 @@ const pageComponents: Record<string, React.ComponentType> = {
   reports: ReportsPage,
   organization: OrganizationPage,
   'agent-approvals': AgentApprovalsPage,
-  guests: GuestsPage,
   screenshots: ScreenshotsPage,
   'break-status': BreakStatusPage,
   'daily-report': DailyReportPage,

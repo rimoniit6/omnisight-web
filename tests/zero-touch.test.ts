@@ -525,18 +525,6 @@ test('ZT-17: wrong device secret rejected (401) — no cross-device auth', async
   assert.equal(res.status, 401);
 });
 
-test('ZT-18: legacy PATH B (employeeId + password) still works after Phase B', async () => {
-  const emp = await seedEmployee('ZT18-EMP');
-  const { hashPassword } = await import('../src/lib/auth');
-  await db.employee.update({ where: { id: emp.id }, data: { agentPassword: await hashPassword('s3cret-pass'), agentApproved: true } });
-
-  const res = await authApi.POST(req(null, { method: 'POST', body: { employeeId: emp.employeeId, password: 's3cret-pass', hostname: 'PC-LEGACY' }, ip: '203.0.113.18' }));
-  const parsed = await res.json().catch(() => ({})) as Record<string, unknown>;
-  assert.equal(res.status, 200, JSON.stringify(parsed));
-  assert.equal(parsed.success, true);
-  assert.equal(typeof parsed.token, 'string');
-});
-
 // ─── B-4: admin list view ───────────────────────────────────────────────────
 
 test('ZT-19: admin list shows pending claims with device + assignment data', async () => {

@@ -165,34 +165,43 @@ test('RBAC-1: only admin can approve a claim as guest — viewer/employee/manage
 
 // ─── RBAC-2: lifecycle mutations ────────────────────────────────────────────
 
-test('RBAC-2: viewer/employee/manager cannot revoke, suspend, reactivate or convert guests', async () => {
-  // Two guests: one for suspend/revoke checks, one stays ACTIVE for convert.
-  const { body: g1 } = await discoverGuest('RBAC2a');
-  const { body: g2 } = await discoverGuest('RBAC2b');
+test('RBAC-2: viewer/employee cannot revoke/suspend/convert guests; manager and admin can', async () => {
+  // Guest for the denied viewer/employee mutations.
+  const { body: gDenied } = await discoverGuest('RBAC2a');
   const admin = await tokenFor('admin', 'u-r2-admin');
-  assert.equal((await approveGuest(admin, g1.claimId as string)).status, 200);
-  assert.equal((await approveGuest(admin, g2.claimId as string)).status, 200);
-  const guest1 = await db.guest.findFirst({ where: { deviceId: g1.deviceId as string } });
-  const guest2 = await db.guest.findFirst({ where: { deviceId: g2.deviceId as string } });
+  assert.equal((await approveGuest(admin, gDenied.claimId as string)).status, 200);
+  const deniedGuest = await db.guest.findFirst({ where: { deviceId: gDenied.deviceId as string } });
 
-  for (const [role, uid] of [['viewer', 'u-r2-viewer'], ['employee', 'u-r2-emp'], ['manager', 'u-r2-mgr']] as const) {
-    const token = await tokenFor(role, uid);
-    const revoke = await revokeApi.POST(req(token, { method: 'POST', body: { reason: 'x' }, ip: '198.51.100.21' }), { params: Promise.resolve({ id: guest1!.id }) });
+  const viewer = await tokenFor('viewer', 'u-r2-viewer');
+  const employee = await tokenFor('employee', 'u-r2-emp');
+  for (const [role, token] of [['viewer', viewer], ['employee', employee]] as const) {
+    const revoke = await revokeApi.POST(req(token, { method: 'POST', body: { reason: 'x' }, ip: '198.51.100.21' }), { params: Promise.resolve({ id: deniedGuest!.id }) });
     assert.equal(revoke.status, 403, `${role} must not revoke guests`);
 
-    const suspend = await suspendApi.POST(req(token, { method: 'POST', body: { reason: 'x' }, ip: '198.51.100.21' }), { params: Promise.resolve({ id: guest2!.id }) });
+    const suspend = await suspendApi.POST(req(token, { method: 'POST', body: { reason: 'x' }, ip: '198.51.100.21' }), { params: Promise.resolve({ id: deniedGuest!.id }) });
     assert.equal(suspend.status, 403, `${role} must not suspend guests`);
 
     const convert = await convertApi.POST(
       req(token, { method: 'POST', body: { firstName: 'A', lastName: 'B', email: 'a.b@company.com' }, ip: '198.51.100.21' }),
-      { params: Promise.resolve({ id: guest2!.id }) }
+      { params: Promise.resolve({ id: deniedGuest!.id }) }
     );
     assert.equal(convert.status, 403, `${role} must not convert guests`);
   }
 
-  // Guests untouched by the denied mutations.
-  assert.equal((await db.guest.findUnique({ where: { id: guest1!.id } }))!.status, 'ACTIVE');
-  assert.equal((await db.guest.findUnique({ where: { id: guest2!.id } }))!.status, 'ACTIVE');
+  // Visitor/employee mutations did not change the guest.
+  assert.equal((await db.guest.findUnique({ where: { id: deniedGuest!.id } }))!.status, 'ACTIVE');
+
+  // Manager (guests.manage) may convert a fresh guest.
+  const { body: gMgr } = await discoverGuest('RBAC2mgr');
+  assert.equal((await approveGuest(admin, gMgr.claimId as string)).status, 200);
+  const mgrGuest = await db.guest.findFirst({ where: { deviceId: gMgr.deviceId as string } });
+  const manager = await tokenFor('manager', 'u-r2-mgr');
+  const mgrConvert = await convertApi.POST(
+    req(manager, { method: 'POST', body: { firstName: 'M1', lastName: 'Mgr', email: 'm1.mgr@company.com' }, ip: '198.51.100.22' }),
+    { params: Promise.resolve({ id: mgrGuest!.id }) }
+  );
+  assert.equal(mgrConvert.status, 200, 'manager may convert guests (guests.manage)');
+  assert.equal((await db.employee.findUnique({ where: { id: mgrGuest!.employeeId } }))!.type, 'employee');
 });
 
 // ─── RBAC-3: admin lifecycle works; cross-org concealed ─────────────────────

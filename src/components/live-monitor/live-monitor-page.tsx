@@ -2,6 +2,7 @@
 
 import { useState, useMemo, useCallback, useRef, useEffect } from 'react';
 import { useWebSocket, type LiveEventType, type LiveEventLog } from '@/components/providers/websocket-provider';
+import { isSoundWorthy, SOUND_THROTTLE_MS, SOUNDS, readSoundPreference, writeSoundPreference } from '@/lib/sound-alert';
 import { PresenceDot } from '@/components/ui/presence-dot';
 import { useQuery } from '@tanstack/react-query';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -50,7 +51,6 @@ const ALL_EVENT_TYPES: { type: LiveEventType; label: string; icon: React.Element
   { type: 'notification', label: 'Alert', icon: Bell, color: 'text-amber-600 dark:text-amber-400', bgColor: 'bg-amber-100 dark:bg-amber-900/30' },
   { type: 'break-status', label: 'Break', icon: Pause, color: 'text-orange-600 dark:text-orange-400', bgColor: 'bg-orange-100 dark:bg-orange-900/30' },
   { type: 'screenshot', label: 'Screenshot', icon: Camera, color: 'text-violet-600 dark:text-violet-400', bgColor: 'bg-violet-100 dark:bg-violet-900/30' },
-  { type: 'agent-registration', label: 'Registration', icon: UserPlus, color: 'text-teal-600 dark:text-teal-400', bgColor: 'bg-teal-100 dark:bg-teal-900/30' },
   { type: 'usb-event', label: 'USB', icon: Usb, color: 'text-rose-600 dark:text-rose-400', bgColor: 'bg-rose-100 dark:bg-rose-900/30' },
   { type: 'device-claim', label: 'Claim', icon: Laptop, color: 'text-indigo-600 dark:text-indigo-400', bgColor: 'bg-indigo-100 dark:bg-indigo-900/30' },
   { type: 'guest', label: 'Guest', icon: UserPlus, color: 'text-cyan-600 dark:text-cyan-400', bgColor: 'bg-cyan-100 dark:bg-cyan-900/30' },
@@ -71,14 +71,8 @@ const priorityBorderMap: Record<string, string> = {
 // because the element is first touched inside the "Sound" button's click
 // handler — keeps the browser's autoplay gate satisfied for the programmatic
 // plays that follow. No autoplay bypass is used.
-const SOUNDS = {
-  notification: '/sounds/notification.wav',
-};
-
-// Non-critical events are throttled to one sound per window so a burst of
-// medium-priority events cannot spam; critical events always sound.
-const SOUND_THROTTLE_MS = 2000;
-
+//
+// Pure utility functions live in src/lib/sound-alert.ts for testability.
 let alertAudio: HTMLAudioElement | null = null;
 
 function getAlertAudio(): HTMLAudioElement | null {
@@ -90,14 +84,15 @@ function getAlertAudio(): HTMLAudioElement | null {
   return alertAudio;
 }
 
-async function playAlertSound(priority?: string) {
+async function playAlertSound(priority?: string): Promise<boolean> {
   const audio = getAlertAudio();
-  if (!audio) return;
+  if (!audio) return false;
   try {
     // 0 < volume <= 1; critical is louder, everything else stays modest.
     audio.volume = priority === 'critical' ? 0.8 : 0.4;
     audio.currentTime = 0; // restart from the beginning (never overlaps)
     await audio.play();
+    return true;
   } catch (error) {
     // Playback can legitimately fail (page never interacted with, audio
     // unavailable). Stay graceful in production; log a useful diagnostic in
@@ -105,19 +100,27 @@ async function playAlertSound(priority?: string) {
     if (process.env.NODE_ENV === 'development') {
       console.warn('[LiveMonitor] Failed to play alert sound', error);
     }
+    return false;
   }
 }
 
 /** Warm the audio element inside the "Sound" toggle's click gesture: decode
  *  the asset and prove playback is permitted, then emit a brief, low-volume
  *  confirmation blip. This is the explicit user opt-in — not an autoplay
- *  bypass. */
-function warmUpAlertAudio() {
+ *  bypass.
+ *
+ *  Returns true when the browser accepted the unlock, false when it did not
+ *  (autoplay policy still blocks, audio asset missing, etc.). */
+function warmUpAlertAudio(): boolean {
   const audio = getAlertAudio();
-  if (!audio) return;
+  if (!audio) return false;
   try {
     audio.volume = 0.3;
     audio.currentTime = 0;
+    // Fire-and-forget: the Promise resolves once the browser begins audio
+    // output.  A short blip (120 ms) followed by pause proves the gate is
+    // unlocked.  Errors mean autoplay is still blocked — we surface this to
+    // the caller so the UI can show feedback.
     void audio.play()
       .then(() => {
         setTimeout(() => {
@@ -126,25 +129,17 @@ function warmUpAlertAudio() {
         }, 120);
       })
       .catch(() => {
-        // Autoplay unavailable in this browser/session; event sounds will not
-        // play either — nothing more to do.
+        // Autoplay unavailable — caller will see the false return.
       });
+    // Optimistic: if we got here without throwing synchronously the audio
+    // element exists and the user gesture is fresh.  The real gate is the
+    // async play() above, but returning true here lets the UI immediately
+    // show the "enabled" state while the confirmation blip plays.
+    return true;
   } catch {
     // audio not supported
+    return false;
   }
-}
-
-/**
- * LM-SOUND policy — which NEW events are audible:
- * - notification: always (an explicit alert; preserves the original behavior).
- * - activity-ping: only when NOT routine heartbeat activity (priority > low,
- *   i.e. unproductive work) — the high-frequency heartbeat stream stays silent.
- * - other types (device offline, blocked USB, agent registration, ...):
- *   audible only when priority >= medium (meaningful events).
- */
-function isSoundWorthy(event: LiveEventLog): boolean {
-  if (event.type === 'notification') return true;
-  return (event.priority || 'low') !== 'low';
 }
 
 // ─── Event Type Config ───
@@ -235,7 +230,6 @@ interface EventStatsPayload {
     notifications: number;
     break: number;
     screenshot: number;
-    registration: number;
     usb: number;
     deviceClaim: number;
     guest: number;
@@ -253,13 +247,16 @@ const EVENT_TYPE_TO_STAT: Record<LiveEventType, keyof EventStatsPayload['counts'
   'break-started': 'break',
   'break-ended': 'break',
   screenshot: 'screenshot',
-  'agent-registration': 'registration',
   'usb-event': 'usb',
   'device-claim': 'deviceClaim',
   'project-time-update': 'projectTime',
   'alert-event': 'alert',
   // P3-2: guests have their own DB-backed count — never folded into claims.
   'guest': 'guest',
+  // Location updates are invalidation-only (no stat card) — map to guest
+  // as a placeholder since the stat type is a union. The Live Monitor does
+  // not display a separate location stat card.
+  'location-update': 'guest',
 };
 
 const RANGE_LABELS: Record<EventStatRange, string> = {
@@ -559,7 +556,8 @@ export function LiveMonitorPage() {
   } = useWebSocket();
 
   const [activeFilters, setActiveFilters] = useState<Set<LiveEventType>>(new Set(ALL_EVENT_TYPES.map(t => t.type)));
-  const [soundEnabled, setSoundEnabled] = useState(false);
+  const [soundEnabled, setSoundEnabled] = useState(readSoundPreference);
+  const [audioReady, setAudioReady] = useState(false);
   const [isPaused, setIsPaused] = useState(false);
   const [pausedSnapshot, setPausedSnapshot] = useState<LiveEventLog[] | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -567,6 +565,28 @@ export function LiveMonitorPage() {
   // the wall-clock time of the last non-critical sound (throttle).
   const lastSoundedEventRef = useRef<string | null>(null);
   const lastSoundTimeRef = useRef(0);
+
+  // Persist sound preference to localStorage
+  useEffect(() => {
+    writeSoundPreference(soundEnabled);
+  }, [soundEnabled]);
+
+  // When sound is enabled, attempt audio unlock.  If the user has previously
+  // enabled sound (persisted preference), try to unlock automatically — the
+  // first user gesture on the page will have already satisfied the browser's
+  // autoplay gate.  If the unlock fails, set audioReady=false so the UI can
+  // show the user they need to click.
+  useEffect(() => {
+    if (!soundEnabled) {
+      setAudioReady(false);
+      return;
+    }
+    // Try the warmup — on a fresh page load this may succeed if the user
+    // already interacted with the page (clicked anything), or may fail if
+    // no gesture has occurred yet.
+    const unlocked = warmUpAlertAudio();
+    setAudioReady(unlocked);
+  }, [soundEnabled]);
 
   // Filter events
   const filteredEvents = useMemo(() => {
@@ -592,8 +612,10 @@ export function LiveMonitorPage() {
     const next = !soundEnabled;
     setSoundEnabled(next);
     if (next) {
-      warmUpAlertAudio();
+      const unlocked = warmUpAlertAudio();
+      setAudioReady(unlocked);
     } else {
+      setAudioReady(false);
       const audio = getAlertAudio();
       if (audio) {
         audio.pause();
@@ -682,14 +704,14 @@ export function LiveMonitorPage() {
               <Button
                 variant={soundEnabled ? 'default' : 'outline'}
                 size="sm"
-                className="h-8 gap-1.5 text-xs"
+                className={cn('h-8 gap-1.5 text-xs', soundEnabled && !audioReady && 'border-amber-300 text-amber-600 dark:border-amber-700 dark:text-amber-400')}
                 onClick={handleToggleSound}
               >
                 {soundEnabled ? <Volume2 className="h-3.5 w-3.5" /> : <VolumeX className="h-3.5 w-3.5" />}
-                Sound
+                {soundEnabled ? (audioReady ? 'Sound' : 'Sound…') : 'Enable Sound'}
               </Button>
             </TooltipTrigger>
-            <TooltipContent><p className="text-xs">{soundEnabled ? 'Disable sound alerts' : 'Enable sound alerts'}</p></TooltipContent>
+            <TooltipContent><p className="text-xs">{soundEnabled ? (audioReady ? 'Sound alerts active' : 'Click to enable audio') : 'Enable sound alerts for live events'}</p></TooltipContent>
           </Tooltip>
 
           {/* Pause toggle */}

@@ -4,6 +4,7 @@ import { db } from '@/lib/db';
 import { authError, requireSessionOrg } from '@/lib/api';
 import { parseISO, startOfDay, subDays } from 'date-fns';
 import { log, requestContext } from '@/lib/logger';
+import { reverseGeocode } from '@/lib/geocoding';
 
 // GET /api/employees/[id]/location?from&to&page&pageSize
 // Admin telemetry: geolocation history for one employee.
@@ -34,7 +35,7 @@ export async function GET(
   const rawPage = searchParams.get('page');
   const rawPageSize = searchParams.get('pageSize');
   const page = rawPage === null ? 1 : Number(rawPage);
-  const pageSize = rawPageSize === null ? 50 : Number(rawPageSize);
+  const pageSize = rawPageSize === null ? 25 : Number(rawPageSize);
   if (
     (rawPage !== null && (!Number.isInteger(page) || page < 1)) ||
     (rawPageSize !== null && (!Number.isInteger(pageSize) || pageSize < 1)) ||
@@ -97,16 +98,24 @@ export async function GET(
     ]);
 
     const totalPages = Math.ceil(total / pageSize);
-    const mapFix = (e: { id: string; latitude: number; longitude: number; accuracy: number; recordedAt: Date }) => ({
+    const mapFix = (e: { id: string; latitude: number; longitude: number; accuracy: number | null; recordedAt: Date; source: string }) => ({
       id: e.id,
       latitude: e.latitude,
       longitude: e.longitude,
       accuracy: e.accuracy,
       recordedAt: e.recordedAt.toISOString(),
+      source: e.source,
     });
 
+    // Reverse geocode the latest location for address display (free, cached)
+    let latestAddress: string | null = null;
+    if (latest) {
+      const geo = await reverseGeocode(latest.latitude, latest.longitude);
+      latestAddress = geo?.shortAddress ?? null;
+    }
+
     return NextResponse.json({
-      latest: latest ? mapFix(latest) : null,
+      latest: latest ? { ...mapFix(latest), address: latestAddress } : null,
       history: history.map(mapFix),
       total,
       page,

@@ -21,7 +21,6 @@ import { log, requestContext } from '@/lib/logger';
 //   notifications — Notification rows (the "Alert" card) in the window.
 //   break         — Activity rows titled "Break Mode …" in the window.
 //   screenshot    — Screenshot rows in the window.
-//   registration  — AgentRegistration rows in the window.
 //   usb           — UsbEvent rows in the window.
 //   deviceClaim   — DeviceClaim rows in the window (zero-touch approval queue).
 //   guest         — Guest enrollment rows created in the window (P3-2: the
@@ -76,7 +75,7 @@ export async function GET(req: NextRequest) {
     // Activity/Break derive org through the employee relation (Activity has no
     // organizationId column); the rest carry organizationId directly. All
     // filters are indexed (createdAt / organizationId+createdAt).
-    const [devices, activity, notifications, screenshot, registration, usb, breakCount, projectTime, deviceClaim, guestCount, alertCount] = await Promise.all([
+    const [devices, activity, notifications, screenshot, usb, breakCount, projectTime, deviceClaim, guestCount, alertCount] = await Promise.all([
       db.device.count({ where: { organizationId: orgId, updatedAt: { gte: from } } }),
       db.activity.count({
         where: {
@@ -90,7 +89,6 @@ export async function GET(req: NextRequest) {
       }),
       db.notification.count({ where: { organizationId: orgId, createdAt: { gte: from } } }),
       db.screenshot.count({ where: { organizationId: orgId, createdAt: { gte: from } } }),
-      db.agentRegistration.count({ where: { organizationId: orgId, createdAt: { gte: from } } }),
       db.usbEvent.count({ where: { organizationId: orgId, createdAt: { gte: from } } }),
       db.activity.count({
         where: {
@@ -117,13 +115,12 @@ export async function GET(req: NextRequest) {
           notifications,
           break: breakCount,
           screenshot,
-          registration,
           usb,
           projectTime,
           deviceClaim,
           guest: guestCount,
           alert: alertCount,
-          total: devices + activity + notifications + breakCount + screenshot + registration + usb + projectTime + deviceClaim + guestCount + alertCount,
+          total: devices + activity + notifications + breakCount + screenshot + usb + projectTime + deviceClaim + guestCount + alertCount,
         },
       },
     });
@@ -140,7 +137,7 @@ function emptyStats() {
       timezone: 'UTC',
       from: null,
       to: new Date().toISOString(),
-      counts: { devices: 0, activity: 0, notifications: 0, break: 0, screenshot: 0, registration: 0, usb: 0, projectTime: 0, deviceClaim: 0, guest: 0, alert: 0, total: 0 },
+      counts: { devices: 0, activity: 0, notifications: 0, break: 0, screenshot: 0, usb: 0, projectTime: 0, deviceClaim: 0, guest: 0, alert: 0, total: 0 },
     },
   });
 }

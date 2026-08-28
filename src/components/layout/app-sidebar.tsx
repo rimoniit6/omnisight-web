@@ -29,7 +29,6 @@ import {
   Radio,
   FileCheck,
   UserCircle,
-  UserPlus,
   FolderKanban,
   HeartPulse,
   Mic,
@@ -86,7 +85,6 @@ const navGroups: NavGroup[] = [
     section: 'Security',
     items: [
       { page: 'agent-approvals', label: 'Agent Approvals', icon: ShieldCheck, showBadge: true },
-      { page: 'guests', label: 'Guests', icon: UserPlus, showBadge: true },
       { page: 'notifications', label: 'Notifications', icon: Bell, showBadge: true },
       { page: 'alerts', label: 'Alerts', icon: AlertTriangle },
       { page: 'audit', label: 'Audit Logs', icon: ScrollText },
@@ -142,14 +140,13 @@ export function AppSidebar({ onNavigate }: AppSidebarProps) {
     }))
     .filter((group) => group.items.length > 0);
 
-  // Agent Approvals badge — the SUM of both pending queues (zero-touch device
-  // claims + legacy agent registrations). TanStack Query keys are
-  // prefix-matched by the realtime invalidation mapping
-  // (src/lib/ws-invalidation.ts: deviceClaimInvalidation /
-  // agentRegistrationInvalidation), so a claim/registration event refreshes
-  // the badge without any manual refetch wiring. `pageSize=1` makes each call
-  // a cheap count probe — the endpoint is the same one the approvals page
-  // uses, so the badge can never disagree with the list.
+  // Agent Approvals badge — the pending zero-touch device claims queue.
+  // TanStack Query keys are prefix-matched by the realtime invalidation
+  // mapping (src/lib/ws-invalidation.ts: deviceClaimInvalidation), so a
+  // claim event refreshes the badge without any manual refetch wiring.
+  // `pageSize=1` makes each call a cheap count probe — the endpoint is the
+  // same one the approvals page uses, so the badge can never disagree with
+  // the list.
   const pendingClaimsQuery = useQuery({
     queryKey: ['device-claims', 'badge-count'],
     queryFn: async () => {
@@ -159,21 +156,7 @@ export function AppSidebar({ onNavigate }: AppSidebarProps) {
       return json.total ?? json.data?.length ?? 0;
     },
   });
-  const pendingRegistrationsQuery = useQuery({
-    queryKey: ['agent-registrations', 'badge-count'],
-    queryFn: async () => {
-      const res = await fetch('/api/agent-registrations?status=pending&pageSize=1');
-      if (!res.ok) return 0;
-      const json = await res.json();
-      return json.total ?? json.data?.length ?? 0;
-    },
-  });
-  const pendingApprovals =
-    (pendingClaimsQuery.data ?? 0) + (pendingRegistrationsQuery.data ?? 0);
-  // Guests badge = the pending zero-touch claims queue (pending guest
-  // enrollments awaiting admin approval — the same org-scoped set the Guests
-  // page "Pending" tab shows).
-  const pendingGuests = pendingClaimsQuery.data ?? 0;
+  const pendingApprovals = pendingClaimsQuery.data ?? 0;
 
   useEffect(() => {
     const fetchCounts = async () => {
@@ -247,9 +230,7 @@ export function AppSidebar({ onNavigate }: AppSidebarProps) {
                   const badgeCount =
                     item.page === 'agent-approvals'
                       ? pendingApprovals
-                      : item.page === 'guests'
-                        ? pendingGuests
-                        : unreadCount;
+                      : unreadCount;
                   const btn = (
                     <button
                       key={item.page}

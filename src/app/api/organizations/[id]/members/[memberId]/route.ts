@@ -2,14 +2,24 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { getRoleLabel } from '@/lib/auth';
 import { requireMembershipAdmin, apiError, apiSuccess } from '@/lib/api';
+import { revokeAllUserSessions } from '@/lib/session';
+import { isOrgRole, canAssignRole, resolveActorDbRole } from '@/lib/org-members';
 import { log, requestContext } from '@/lib/logger';
 
-const ORG_ROLES = ['owner', 'admin', 'manager', 'viewer'];
 const MEMBERSHIP_STATUSES = ['ACTIVE', 'SUSPENDED'];
 
 // ─── PATCH /api/organizations/[id]/members/[memberId] ───────────────────────
 // Change an organization-specific role, or suspend/reactivate a membership.
 // Uses DB-verified role (P2/P3 #11) for sensitive mutations.
+//
+// Hardened per the Guest→Employee spec (Section 14):
+//   - self-role-change is rejected: a member cannot raise/lower their own role
+//   - privilege escalation is rejected: the actor (DB-verified) may only assign
+//     a role at or below their own level
+//   - super_admin can never be assigned as a per-org role
+//   - a role change REVOKES the target user's web sessions so a stale JWT that
+//     still carries the old role is rejected by the backend immediately —
+//     closing the audit's stale-role window (no reliance on browser refresh).
 export async function PATCH(
   req: NextRequest,
   { params }: { params: Promise<{ id: string; memberId: string }> }
@@ -35,13 +45,27 @@ export async function PATCH(
     const updateData: { role?: string; status?: string } = {};
 
     if (body.role !== undefined) {
-      if (!ORG_ROLES.includes(body.role)) {
-        return apiError(`Invalid role. Must be one of: ${ORG_ROLES.join(', ')}`, 400);
+      const targetRole = typeof body.role === 'string' ? body.role.trim().toLowerCase() : '';
+      if (!isOrgRole(targetRole)) {
+        return apiError(`Invalid role. Must be one of: owner, admin, manager, viewer`, 400);
       }
-      if (body.role === 'super_admin') {
-        return apiError('Cannot assign super_admin as a per-organization role', 400);
+      // super_admin is a global role and is never a per-org membership;
+      // isOrgRole above already excludes it.
+
+      const changed = targetRole !== membership.role;
+      if (changed) {
+        // Self-role-change guard: a member must not change their own role.
+        if (memberId === auth.userId && !auth.isSuperAdmin) {
+          return apiError('You cannot change your own role', 400);
+        }
+        // Privilege-elevation guard (actor level from DB membership, not JWT).
+        const actorRole = await resolveActorDbRole(req, orgId);
+        if (!actorRole || !canAssignRole(actorRole, targetRole)) {
+          return apiError(`Insufficient permissions to assign role '${targetRole}'`, 403);
+        }
       }
-      updateData.role = body.role;
+
+      updateData.role = targetRole;
     }
 
     if (body.status !== undefined) {
@@ -70,6 +94,12 @@ export async function PATCH(
         organizationId: orgId,
       },
     });
+
+    // Stale-role fix: if the role changed, revoke the target user's sessions so
+    // their old JWT (with the old role claim) is immediately rejected.
+    if (updateData.role !== undefined && updateData.role !== membership.role) {
+      await revokeAllUserSessions(memberId);
+    }
 
     return apiSuccess({
       userId: memberId,

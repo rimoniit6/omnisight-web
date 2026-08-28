@@ -26,7 +26,6 @@ export const BROADCAST_TABLES = [
   'Activity',
   'Notification',
   'Screenshot',
-  'AgentRegistration',
   'UsbEvent',
   'TimeEntry',
   'DeviceClaim',
@@ -35,6 +34,7 @@ export const BROADCAST_TABLES = [
   'PolicyViolation',
   'Alert',
   'Guest',
+  'LocationEvent',
 ] as const;
 
 const TRIGGER_FUNCTION_SQL = `

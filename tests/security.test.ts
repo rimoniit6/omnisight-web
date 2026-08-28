@@ -52,9 +52,6 @@ let signJWT: (payload: { userId: string; email: string; role: string; organizati
 
 type DevicesApi = typeof import('../src/app/api/devices/route');
 type DeviceIdApi = typeof import('../src/app/api/devices/[id]/route');
-type AgentRegsApi = typeof import('../src/app/api/agent-registrations/route');
-type AgentApproveApi = typeof import('../src/app/api/agent-registrations/[id]/approve/route');
-type AgentRejectApi = typeof import('../src/app/api/agent-registrations/[id]/reject/route');
 type EmployeesApi = typeof import('../src/app/api/employees/route');
 type EmployeeIdApi = typeof import('../src/app/api/employees/[id]/route');
 type DepartmentsApi = typeof import('../src/app/api/departments/route');
@@ -66,9 +63,6 @@ type ProjectMemberIdApi = typeof import('../src/app/api/projects/[id]/members/[m
 
 let devicesApi: DevicesApi;
 let deviceIdApi: DeviceIdApi;
-let agentRegsApi: AgentRegsApi;
-let agentApproveApi: AgentApproveApi;
-let agentRejectApi: AgentRejectApi;
 let employeesApi: EmployeesApi;
 let employeeIdApi: EmployeeIdApi;
 let departmentsApi: DepartmentsApi;
@@ -84,15 +78,12 @@ before(async () => {
   signJWT = (await import('../src/lib/auth')).signJWT;
 
   const [
-    dApi, dIdApi, arApi, aaApi, arjApi,
+    dApi, dIdApi,
     eApi, eIdApi, depApi, depIdApi,
     pApi, pIdApi, pmApi, pmiApi,
   ] = await Promise.all([
     import('../src/app/api/devices/route'),
     import('../src/app/api/devices/[id]/route'),
-    import('../src/app/api/agent-registrations/route'),
-    import('../src/app/api/agent-registrations/[id]/approve/route'),
-    import('../src/app/api/agent-registrations/[id]/reject/route'),
     import('../src/app/api/employees/route'),
     import('../src/app/api/employees/[id]/route'),
     import('../src/app/api/departments/route'),
@@ -104,9 +95,6 @@ before(async () => {
   ]);
   devicesApi = dApi;
   deviceIdApi = dIdApi;
-  agentRegsApi = arApi;
-  agentApproveApi = aaApi;
-  agentRejectApi = arjApi;
   employeesApi = eApi;
   employeeIdApi = eIdApi;
   departmentsApi = depApi;
@@ -180,11 +168,6 @@ async function seedDevice(orgId: string, name: string, employeeId: string | null
   });
 }
 
-async function seedRegistration(orgId: string, employeeId: string, hostname = 'pc-a') {
-  return db.agentRegistration.create({
-    data: { employeeId, hostname, organizationId: orgId, status: 'pending', deviceName: hostname, agentVersion: '1.0.0' },
-  });
-}
 
 async function statusOf(res: Response) {
   return { status: res.status, json: await res.json().catch(() => ({})) };
@@ -457,52 +440,18 @@ test('DEPARTMENT-20: cross-org manager reference rejected (422) + cross-org depa
   assert.equal(delB.status, 404);
 });
 
-// ─── AGENT REGISTRATION tests ───────────────────────────────────────────────
+// ─── AGENT REGISTRATION tests (removed — PATH B decommissioned) ─────────────
+// REG-21 through REG-24 tested the now-removed /api/agent-registrations routes.
+// REG-25 (credential serialization) is covered by device-claims-only tests.
+// REG-26 (proxy RBAC) is covered below.
 
-test('REG-21: unauthenticated admin registration list -> 401', async () => {
-  const res = await agentRegsApi.GET(req(null));
-  assert.equal(res.status, 401);
-});
-
-test('REG-22: Org A cannot approve Org B registration (404); lists are org-scoped', async () => {
-  const orgA = await seedOrg('reg-a');
-  const orgB = await seedOrg('reg-b');
-  const empB = await seedEmployee(orgB.id, 'REG-B');
-  const regB = await seedRegistration(orgB.id, empB.id, 'pc-b');
-  const adminA = await tokenFor(orgA.id, 'admin', 'u-reg-a');
-
-  const approve = await agentApproveApi.POST(req(adminA, { method: 'POST' }), { params: Promise.resolve({ id: regB.id }) });
-  assert.equal(approve.status, 404);
-
-  const list = await agentRegsApi.GET(req(adminA, { url: 'http://localhost:3000/api/agent-registrations?pageSize=50' }));
-  const body = await list.json();
-  assert.equal(body.total, 0, 'Org A sees zero of Org B\'s registrations');
-
-  const reject = await agentRejectApi.POST(req(adminA, { method: 'POST', body: { reason: 'x' } }), { params: Promise.resolve({ id: regB.id }) });
-  assert.equal(reject.status, 404);
-});
-
-test('REG-23: viewer cannot approve/reject registration (403)', async () => {
-  const orgA = await seedOrg('regv-a');
-  const emp = await seedEmployee(orgA.id, 'REG-V');
-  const reg = await seedRegistration(orgA.id, emp.id, 'pc-v');
-  const viewer = await tokenFor(orgA.id, 'viewer', 'u-regv-viewer');
-
-  const approve = await agentApproveApi.POST(req(viewer, { method: 'POST' }), { params: Promise.resolve({ id: reg.id }) });
-  assert.equal(approve.status, 403);
-
-  const reject = await agentRejectApi.POST(req(viewer, { method: 'POST', body: {} }), { params: Promise.resolve({ id: reg.id }) });
-  assert.equal(reject.status, 403);
-});
-
-test('REG-25: agent-registrations + device-claims responses never serialize agentPassword', async () => {
+test('REG-25: device-claims responses never serialize agentPassword', async () => {
   const orgA = await seedOrg('regs-a');
   const emp = await seedEmployee(orgA.id, 'REG-S');
   await db.employee.update({
     where: { id: emp.id },
     data: { agentPassword: '$2b$12$REG-SECRET-HASH-NEVER-SERIALIZED' },
   });
-  const reg = await seedRegistration(orgA.id, emp.id, 'pc-sec');
   const device = await seedDevice(orgA.id, 'dev-sec', emp.id);
   await db.deviceClaim.create({
     data: {
@@ -513,22 +462,6 @@ test('REG-25: agent-registrations + device-claims responses never serialize agen
     },
   });
   const admin = await tokenFor(orgA.id, 'admin', 'u-regs-admin');
-
-  // Legacy registration list + approve response.
-  const list = await agentRegsApi.GET(req(admin, { url: 'http://localhost:3000/api/agent-registrations?pageSize=50' }));
-  const listBody = await list.json();
-  assert.ok(
-    !JSON.stringify(listBody).includes('agentPassword'),
-    'agent-registrations list must never serialize agentPassword'
-  );
-  assert.equal(listBody.data[0].employee.firstName, 'REG', 'safe employee display fields still present');
-
-  const approve = await agentApproveApi.POST(req(admin, { method: 'POST' }), { params: Promise.resolve({ id: reg.id }) });
-  const approveBody = await approve.json();
-  assert.ok(
-    !JSON.stringify(approveBody).includes('agentPassword'),
-    'agent-registrations approve response must never serialize agentPassword'
-  );
 
   // Zero-touch claims list (device + employee includes).
   const claimsList = await import('../src/app/api/device-claims/route').then((m) =>
@@ -541,7 +474,7 @@ test('REG-25: agent-registrations + device-claims responses never serialize agen
   );
 });
 
-test('REG-26: proxy RBAC — device-claims + guests lists are admin-gated like agent-registrations', async () => {
+test('REG-26: proxy RBAC — device-claims + guests lists are admin-gated', async () => {
   const proxy = await import('../src/proxy');
   const mkReq = async (role: string, path: string) =>
     new NextRequest(`http://localhost:3000${path}`, {
@@ -550,8 +483,8 @@ test('REG-26: proxy RBAC — device-claims + guests lists are admin-gated like a
       },
     });
 
-  // Viewer: claims + guests + registrations lists all denied (403).
-  for (const path of ['/api/device-claims', '/api/guests', '/api/agent-registrations']) {
+  // Viewer: claims + guests lists denied (403).
+  for (const path of ['/api/device-claims', '/api/guests']) {
     const res = await proxy.proxy(await mkReq('viewer', path));
     assert.equal(res.status, 403, `viewer must be denied ${path}`);
   }
@@ -572,23 +505,6 @@ test('REG-26: proxy RBAC — device-claims + guests lists are admin-gated like a
     })
   );
   assert.equal(cancel.status, 200, 'cancel path must remain proxy-public');
-});
-
-test('REG-24: admin can approve own-org registration (device created + employee approved)', async () => {
-  const orgA = await seedOrg('regc-a');
-  const emp = await seedEmployee(orgA.id, 'REG-C');
-  const reg = await seedRegistration(orgA.id, emp.id, 'pc-c');
-  const admin = await tokenFor(orgA.id, 'admin', 'u-regc-admin');
-
-  const res = await agentApproveApi.POST(req(admin, { method: 'POST' }), { params: Promise.resolve({ id: reg.id }) });
-  const body = await res.json();
-  assert.equal(res.status, 200);
-  assert.equal(body.success, true);
-  assert.equal(body.data.status, 'approved');
-  assert.equal((await db.employee.findUnique({ where: { id: emp.id } }))!.agentApproved, true);
-  const device = await db.device.findFirst({ where: { organizationId: orgA.id } });
-  assert.ok(device, 'approval must create a Device record');
-  assert.equal(device!.hostname, 'pc-c');
 });
 
 // ─── Positive paths + super_admin global scope ──────────────────────────────

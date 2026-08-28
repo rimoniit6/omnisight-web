@@ -5,9 +5,10 @@ import { findOrgGuest, requireGuestWriteScope } from '@/lib/guests';
 import { log, requestContext } from '@/lib/logger';
 
 // POST /api/guests/[id]/convert
-// Convert a guest to a normal employee (admin-only, org-scoped, explicit).
+// Convert a guest workforce identity to a normal employee (Org Admin or Manager,
+// org-scoped, explicit). This is a WORKFORCE STATUS CONVERSION ONLY.
 //
-// Conversion semantics:
+// Conversion semantics (preserved guarantees):
 //   - Employee.type -> "employee" (the SAME row id and ALL telemetry history
 //     are preserved — no duplicate telemetry records, no org change)
 //   - Identity fields are updated from the provided valid values; the
@@ -16,7 +17,15 @@ import { log, requestContext } from '@/lib/logger';
 //     disappears from guest listings
 //   - Collision checks: email unique per org, employeeId globally unique,
 //     department (if provided) belongs to the org
+//   - NEVER provisions a web account: no AppUser, no OrganizationMembership, no
+//     password, no login, no invitation. An Employee is a monitored workforce
+//     identity — NOT an Admin Panel login account.
 //   - NEVER creates an AgentAccount automatically and NEVER grants consent
+//
+// Authorization (DB-authoritative via requireGuestWriteScope):
+//   - Super Admin / Organization Admin / Manager -> ALLOW
+//   - Viewer / Guest / Employee -> DENY
+//   - Stale JWT role claims cannot bypass the current DB role.
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const MAX_IDENTITY_LENGTH = 80;
 
@@ -43,6 +52,7 @@ export async function POST(
     const newEmployeeId = typeof body.employeeId === 'string' ? body.employeeId.trim() : '';
     const departmentId = typeof body.departmentId === 'string' && body.departmentId ? body.departmentId : null;
 
+    // ── Identity validation ──────────────────────────────────────────────────
     if (!firstName || firstName.length > MAX_IDENTITY_LENGTH) {
       return NextResponse.json({ error: 'firstName is required (max 80 chars)' }, { status: 422 });
     }
@@ -56,6 +66,7 @@ export async function POST(
       return NextResponse.json({ error: 'employeeId must be at most 64 characters' }, { status: 422 });
     }
 
+    // Cross-org guest ids are indistinguishable from missing ones → 404.
     const guest = await findOrgGuest(id, scope.organizationId);
     if (!guest) {
       return NextResponse.json({ error: 'Guest not found' }, { status: 404 });
@@ -142,7 +153,7 @@ export async function POST(
 
     return NextResponse.json({ success: true, data: result });
   } catch (error) {
-    log.error('api.guests.id.convert.', { error: String('Guest convert error:') }, requestContext(req));
+    log.error('api.guests.id.convert', { error: error instanceof Error ? error.message : String(error) }, requestContext(req));
     return NextResponse.json({ error: 'Failed to convert guest' }, { status: 500 });
   }
 }

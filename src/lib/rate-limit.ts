@@ -40,7 +40,6 @@ const SECURITY_CRITICAL_PREFIXES = [
   'agent-discover:',
   'orgCreate:',
   'device-claim:',
-  'agent-registration:',
   'guest:',
   'enrollment-code:',
   'agent-account-write:',
@@ -104,7 +103,6 @@ export const RATE_LIMITS = {
   agentRegister: { limit: 10, windowMs: 60 * 1000 }, // 10 / min / IP
   agentDiscover: { limit: 20, windowMs: 60 * 1000 }, // 20 / min / IP+deviceKey (zero-touch bootstrap)
   deviceClaimWrite: { limit: 30, windowMs: 60 * 1000 }, // approve/reject/revoke claim / IP
-  agentRegistrationWrite: { limit: 30, windowMs: 60 * 1000 }, // legacy approve/reject registration / IP
   orgCreate: { limit: 10, windowMs: 60 * 1000 }, // org creation / min / IP+admin (bootstrap path)
   aiTestConnection: { limit: 10, windowMs: 60 * 1000 }, // 10 / min / IP
 

@@ -19,7 +19,6 @@ import {
   activityPingInvalidation,
   projectTimeUpdateInvalidation,
   deviceClaimInvalidation,
-  agentRegistrationInvalidation,
 } from '../src/lib/ws-invalidation';
 
 const EMP_A = 'emp-a';
@@ -117,7 +116,6 @@ test('no event type produces an empty invalidation list', () => {
   assert.ok(activityPingInvalidation(EMP_A).length > 0);
   assert.ok(projectTimeUpdateInvalidation('proj-1', EMP_A).length > 0);
   assert.ok(deviceClaimInvalidation().length > 0);
-  assert.ok(agentRegistrationInvalidation().length > 0);
 });
 
 test('device-claim invalidates the approvals list, badge count and global aggregates', () => {
@@ -131,19 +129,6 @@ test('device-claim invalidates the approvals list, badge count and global aggreg
   // pagination variants) and the sidebar badge must prefix-match.
   const realListKey = ['device-claims', 'pending', '', 2];
   const realBadgeKey = ['device-claims', 'badge-count'];
-  assert.deepEqual(realListKey.slice(0, 1), keys[0]);
-  assert.deepEqual(realBadgeKey.slice(0, 1), keys[0]);
-});
-
-test('agent-registration invalidates the approvals list, badge count and global aggregates', () => {
-  const keys = agentRegistrationInvalidation();
-  assert.deepEqual(keys, [
-    ['agent-registrations'],
-    ['dashboard'],
-    ['event-stats'],
-  ]);
-  const realListKey = ['agent-registrations', 'pending', '', 1];
-  const realBadgeKey = ['agent-registrations', 'badge-count'];
   assert.deepEqual(realListKey.slice(0, 1), keys[0]);
   assert.deepEqual(realBadgeKey.slice(0, 1), keys[0]);
 });

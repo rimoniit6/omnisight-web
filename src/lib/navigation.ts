@@ -49,7 +49,6 @@ export const PAGE_MIN_ROLE: Record<PageType, NavMinRole> = {
   // org_admin+
   'ai-provider': 'org_admin',
   'agent-approvals': 'org_admin',
-  guests: 'org_admin',
   organization: 'org_admin',
   security: 'org_admin',
   settings: 'org_admin',

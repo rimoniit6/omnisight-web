@@ -102,7 +102,7 @@ test('ES-00: seed ORG A + ORG B with known event counts', async () => {
   tokenB = await signJWT({ userId: 'u-b', email: 'admin-b@example.com', role: 'admin', organizationId: orgBId });
 
   // ORG A events (all within the last hour): 3 activities, 2 notifications,
-  // 1 screenshot, 1 registration, 1 usb, 1 break activity, 1 device updated,
+  // 1 screenshot, 1 usb, 1 break activity, 1 device updated,
   // 1 guest enrollment.
   const now = new Date();
   for (let i = 0; i < 3; i++) {
@@ -112,7 +112,6 @@ test('ES-00: seed ORG A + ORG B with known event counts', async () => {
   await db.notification.create({ data: { title: 'ES-notif-1', message: 'm', type: 'system', organizationId: orgAId, createdAt: now } });
   await db.notification.create({ data: { title: 'ES-notif-2', message: 'm', type: 'system', organizationId: orgAId, createdAt: now } });
   await db.screenshot.create({ data: { employeeId: empAId, filePath: 'es.png', fileName: 'es.png', fileSize: 1, organizationId: orgAId, capturedAt: now, createdAt: now } });
-  await db.agentRegistration.create({ data: { employeeId: empAId, hostname: 'es-host', organizationId: orgAId, createdAt: now } });
   await db.usbEvent.create({ data: { eventType: 'usb_insert', organizationId: orgAId, employeeId: empAId, createdAt: now } });
   await db.device.create({ data: { name: 'ES-device-A', organizationId: orgAId, employeeId: empAId, status: 'online', updatedAt: now } });
   const guestDevice = await db.device.create({ data: { name: 'ES-guest-device', organizationId: orgAId, status: 'online', updatedAt: now } });
@@ -147,12 +146,11 @@ test('ES-03: org A sees exactly its own counts (today)', async () => {
   assert.equal(json.data.counts.break, 1, 'break activities');
   assert.equal(json.data.counts.notifications, 2);
   assert.equal(json.data.counts.screenshot, 1);
-  assert.equal(json.data.counts.registration, 1);
   assert.equal(json.data.counts.usb, 1);
   assert.equal(json.data.counts.guest, 1, 'guest enrollments counted under their own stat (P3-2)');
   // Two devices were created at `now` (ES-device-A + the guest's device).
   assert.equal(json.data.counts.devices, 2, 'devices updated in window');
-  assert.equal(json.data.counts.total, 3 + 1 + 2 + 1 + 1 + 1 + 2 + 1);
+  assert.equal(json.data.counts.total, 3 + 1 + 2 + 1 + 1 + 2 + 1);
 });
 
 test('ES-04: tenant isolation — org B sees only its own counts', async () => {
@@ -160,7 +158,6 @@ test('ES-04: tenant isolation — org B sees only its own counts', async () => {
   assert.equal(json.data.counts.activity, 1, 'org B activity only');
   assert.equal(json.data.counts.notifications, 0);
   assert.equal(json.data.counts.screenshot, 0);
-  assert.equal(json.data.counts.registration, 0);
   assert.equal(json.data.counts.usb, 0);
   assert.equal(json.data.counts.guest, 0, 'org B has no guests');
   assert.equal(json.data.counts.devices, 0);
@@ -179,7 +176,7 @@ test('ES-05: 7d window includes old in-window rows but not 10-day-old', async ()
 test('ES-06: 24h window equals today for freshly-created data', async () => {
   const { json } = await getStats(tokenA, '24h');
   assert.equal(json.data.counts.activity, 3);
-  assert.equal(json.data.counts.total, 12);
+  assert.equal(json.data.counts.total, 11);
 });
 
 test('ES-07: >80 events are fully counted (no 80-cap)', async () => {

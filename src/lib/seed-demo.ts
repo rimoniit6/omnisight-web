@@ -209,7 +209,7 @@ async function seedDemo() {
     'LocationEvent', 'BreakSession', 'WebcamSession', 'AgentCommand', 'UsbEvent',
     'AppListEntry', 'Screenshot', 'Anomaly', 'Notification', 'NotificationPreference',
     'Alert', 'AiInsight', 'AuditLog', 'Report', 'Activity', 'DeviceClaim',
-    'AgentRegistration', 'AgentToken', 'Device', 'OrganizationSetting', 'Employee',
+    'AgentToken', 'Device', 'OrganizationSetting', 'Employee',
     'Department', 'UserSession', 'OrganizationMembership', 'AppUser', 'Organization',
   ];
   for (const model of deleteOrder) {
@@ -232,7 +232,6 @@ async function seedDemo() {
   console.log('👤 Creating admin users...');
   const superAdminHash = hashPasswordSync('Rimon2714');
   const demoHash = hashPasswordSync('demo1234');
-  const now = new Date();
 
   // Super Admin account (platform-level, no organization)
   const superAdminEmail = 'rimon@admin.com';
@@ -708,30 +707,7 @@ async function seedDemo() {
   });
   console.log('   ✅ 5 system settings\n');
 
-  // ── 22. Create Agent Registrations (batch) ──
-  console.log('🔐 Creating agent registrations...');
-  const pendingEmps = EMPLOYEES_RAW.slice(20, 25);
-  const pendingEmpIds = pendingEmps.map(e => empIds.get(e.email)).filter(Boolean) as string[];
-  if (pendingEmpIds.length > 0) {
-    await db.agentRegistration.createMany({
-      data: pendingEmpIds.map((empId, i) => {
-        const tpl = DEVICE_TEMPLATES[i % DEVICE_TEMPLATES.length];
-        const emp = pendingEmps[i];
-        return {
-          employeeId: empId, hostname: `ACME-${emp.firstName.toLowerCase()}-new`,
-          operatingSystem: tpl.os, osVersion: tpl.osVer,
-          processor: tpl.processor, memory: tpl.memory,
-          ipAddress: ipAddress(), macAddress: macAddress(),
-          agentVersion: tpl.agent, status: 'pending',
-          deviceName: `${emp.firstName}-${emp.lastName}-New-Device`,
-          organizationId: orgId,
-        };
-      }),
-    });
-  }
-  console.log(`   ✅ ${pendingEmpIds.length} pending agent registrations\n`);
-
-  // ── 23. Create USB Events (batch) ──
+  // ── 22. Create USB Events (batch) ──
   console.log('🔌 Creating USB events...');
   await db.usbEvent.createMany({
     data: [
@@ -797,7 +773,7 @@ async function seedDemo() {
     breakSessions: await db.breakSession.count(),
     orgSettings: await db.organizationSetting.count(),
     sysSettings: await db.systemSetting.count(),
-    agentRegistrations: await db.agentRegistration.count(),
+
     usbEvents: await db.usbEvent.count(),
     screenshots: await db.screenshot.count(),
   };

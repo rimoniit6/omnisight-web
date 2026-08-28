@@ -11,7 +11,6 @@ export {
   type NotificationEvent,
   type BreakStatusEvent,
   type ScreenshotEvent,
-  type AgentRegistrationEvent,
   type ConnectedEvent,
   type LiveEventLog,
   type LiveEventType,

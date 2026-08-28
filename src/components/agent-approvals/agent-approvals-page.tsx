@@ -10,7 +10,6 @@ import { EmptyState } from '@/components/ui/empty-state';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import { Input } from '@/components/ui/input';
-import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Label } from '@/components/ui/label';
 import { PaginationControls } from '@/components/ui/pagination-controls';
@@ -37,9 +36,9 @@ import {
   CheckCircle2,
   XCircle,
   Clock,
+  ShieldAlert,
   ShieldCheck,
   ShieldX,
-  ShieldAlert,
   Cpu,
   HardDrive,
   Globe,
@@ -53,10 +52,14 @@ import {
   FolderKanban,
   PowerOff,
   Search,
+  PauseCircle,
+  PlayCircle,
+  ArrowRightLeft,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { EmployeeCombobox, type EmployeeOption } from '@/components/employees/employee-combobox';
 import { toast } from 'sonner';
+import { getPermissionDeniedMessage } from '@/lib/permissions';
 
 interface EmployeeData {
   id: string;
@@ -70,25 +73,7 @@ interface EmployeeData {
   department?: { id: string; name: string } | null;
 }
 
-interface RegistrationData {
-  id: string;
-  employeeId: string;
-  hostname: string;
-  operatingSystem?: string | null;
-  osVersion?: string | null;
-  processor?: string | null;
-  memory?: string | null;
-  ipAddress?: string | null;
-  macAddress?: string | null;
-  agentVersion?: string | null;
-  status: string;
-  deviceName?: string | null;
-  rejectionReason?: string | null;
-  organizationId: string;
-  createdAt: string;
-  updatedAt: string;
-  employee: EmployeeData;
-}
+
 
 // ─── Zero-touch device claim types ──────────────────────────────────────────
 interface ClaimEmployee {
@@ -100,6 +85,16 @@ interface ClaimEmployee {
   status: string;
   departmentId: string | null;
   department: { id: string; name: string } | null;
+}
+
+interface GuestData {
+  id: string;
+  deviceId: string;
+  employeeId: string;
+  status: string; // ACTIVE | SUSPENDED | REVOKED | REJECTED
+  approvedAt: string | null;
+  suspendedAt: string | null;
+  revokedAt: string | null;
 }
 
 interface DeviceClaimData {
@@ -128,6 +123,9 @@ interface DeviceClaimData {
   };
   employee: ClaimEmployee | null;
   projects: Array<{ id: string; name: string; status: string; color: string; role: string }>;
+  // Guest enrichment (populated client-side from /api/guests)
+  guestId?: string;
+  guestStatus?: string;
 }
 
 const statusConfig: Record<string, { icon: React.ElementType; color: string; bg: string; borderAccent: string; label: string }> = {
@@ -187,6 +185,12 @@ function ZeroTouchDevicesTab() {
   const [revokeTarget, setRevokeTarget] = useState<DeviceClaimData | null>(null);
   const [rejectReason, setRejectReason] = useState('');
   const [revokeReason, setRevokeReason] = useState('');
+  // Guest lifecycle state
+  const [guestActionTarget, setGuestActionTarget] = useState<{ id: string; action: 'suspend' | 'reactivate' | 'revoke'; hostname: string } | null>(null);
+  const [guestActionReason, setGuestActionReason] = useState('');
+  const [convertTarget, setConvertTarget] = useState<DeviceClaimData | null>(null);
+  const [convertForm, setConvertForm] = useState({ firstName: '', lastName: '', email: '', employeeId: '' });
+  const [converting, setConverting] = useState(false);
   // Approval dialog state
   const [approveMode, setApproveMode] = useState<'employee' | 'guest'>('employee');
   const [selectedEmployeeId, setSelectedEmployeeId] = useState('');
@@ -221,6 +225,26 @@ function ZeroTouchDevicesTab() {
     },
   });
 
+  // Fetch active guests to enrich approved guest claims with lifecycle data
+  const { data: guestsData } = useQuery({
+    queryKey: ['guests', 'approval-enrichment'],
+    queryFn: async () => {
+      const res = await fetch('/api/guests?pageSize=200');
+      if (!res.ok) return { data: [] };
+      return res.json();
+    },
+    staleTime: 30_000,
+  });
+
+  // Build a deviceId → guest lookup map for quick enrichment
+  const guestByDeviceId = useMemo(() => {
+    const map = new Map<string, GuestData>();
+    for (const g of (guestsData?.data ?? []) as GuestData[]) {
+      map.set(g.deviceId, g);
+    }
+    return map;
+  }, [guestsData]);
+
   // Server-side status counts (groupBy) — complete queue, never a first-page
   // projection. Prefix-invalidated by the realtime device-claim event.
   const { data: summaryData } = useQuery({
@@ -241,7 +265,19 @@ function ZeroTouchDevicesTab() {
     },
   });
 
-  const claims: DeviceClaimData[] = data?.data || [];
+  // Enrich approved claims with guest data
+  const claims: DeviceClaimData[] = useMemo(() => {
+    const raw: DeviceClaimData[] = data?.data || [];
+    return raw.map((claim) => {
+      if (claim.status === 'approved') {
+        const guest = guestByDeviceId.get(claim.deviceId);
+        if (guest) {
+          return { ...claim, guestId: guest.id, guestStatus: guest.status };
+        }
+      }
+      return claim;
+    });
+  }, [data?.data, guestByDeviceId]);
   const summary = summaryData?.summary;
 
   const pendingCount = summary?.pending ?? 0;
@@ -265,10 +301,10 @@ function ZeroTouchDevicesTab() {
 
   const invalidateAll = () => {
     queryClient.invalidateQueries({ queryKey: ['device-claims'] });
-    queryClient.invalidateQueries({ queryKey: ['agent-registrations'] });
     queryClient.invalidateQueries({ queryKey: ['employees'] });
     queryClient.invalidateQueries({ queryKey: ['devices'] });
     queryClient.invalidateQueries({ queryKey: ['dashboard'] });
+    queryClient.invalidateQueries({ queryKey: ['guests'] });
   };
 
   const openApprove = (claim: DeviceClaimData) => {
@@ -314,7 +350,7 @@ function ZeroTouchDevicesTab() {
         throw new Error(err.error || 'Failed to approve device');
       }
       if (approveMode === 'guest') {
-        toast.success('Device approved as guest — awaiting consent before telemetry starts');
+        toast.success('Device approved as guest — enrolled without employee credentials, monitoring consent auto-granted');
       } else {
         const emp = selectedEmployee;
         toast.success(`Device approved and assigned to ${emp ? `${emp.firstName} ${emp.lastName}` : 'employee'}`);
@@ -352,6 +388,7 @@ function ZeroTouchDevicesTab() {
     }
   };
 
+  // ─── Employee-mode device revoke (device claim revoke) ───────────────────
   const handleRevoke = async () => {
     if (!revokeTarget) return;
     setActionLoading(revokeTarget.id);
@@ -373,6 +410,81 @@ function ZeroTouchDevicesTab() {
       setActionLoading(null);
       setRevokeTarget(null);
       setRevokeReason('');
+    }
+  };
+
+  // ─── Guest lifecycle handlers ───────────────────────────────────────────
+
+  const handleGuestAction = async () => {
+    if (!guestActionTarget) return;
+    setActionLoading(guestActionTarget.id);
+    try {
+      const res = await fetch(`/api/guests/${guestActionTarget.id}/${guestActionTarget.action}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reason: guestActionReason || undefined }),
+      });
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.error || `Failed to ${guestActionTarget.action} guest`);
+      }
+      const actionLabel = guestActionTarget.action === 'suspend' ? 'Suspended' : guestActionTarget.action === 'reactivate' ? 'Reactivated' : 'Revoked';
+      toast.success(`${actionLabel} guest — ${guestActionTarget.hostname}`);
+      invalidateAll();
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : 'Guest action failed');
+    } finally {
+      setActionLoading(null);
+      setGuestActionTarget(null);
+      setGuestActionReason('');
+    }
+  };
+
+  const openConvert = (claim: DeviceClaimData) => {
+    setConvertTarget(claim);
+    setConvertForm({
+      firstName: claim.employee?.firstName === 'Guest' ? '' : (claim.employee?.firstName ?? ''),
+      lastName: claim.employee?.lastName === claim.device.hostname ? '' : (claim.employee?.lastName ?? ''),
+      email: claim.employee?.email && !claim.employee.email.endsWith('@guests.invalid') ? claim.employee.email : '',
+      employeeId: claim.employee?.employeeId?.startsWith('GUEST-') ? '' : (claim.employee?.employeeId ?? ''),
+    });
+  };
+
+  const submitConvert = async () => {
+    if (!convertTarget?.guestId) return;
+    if (!convertForm.firstName.trim() || !convertForm.lastName.trim() || !convertForm.email.trim()) {
+      toast.error('First name, last name and email are required');
+      return;
+    }
+    setConverting(true);
+    try {
+      const res = await fetch(`/api/guests/${convertTarget.guestId}/convert`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          firstName: convertForm.firstName.trim(),
+          lastName: convertForm.lastName.trim(),
+          email: convertForm.email.trim(),
+          employeeId: convertForm.employeeId.trim() || undefined,
+        }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        if (res.status === 403) {
+          const permissionMsg = getPermissionDeniedMessage('guests.manage', '');
+          toast.error(permissionMsg.title, { description: permissionMsg.message });
+        } else {
+          toast.error(body.error || 'Failed to convert guest');
+        }
+        return;
+      }
+      toast.success('Guest converted to employee — telemetry history preserved');
+      setConvertTarget(null);
+      invalidateAll();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to convert guest');
+    } finally {
+      setConverting(false);
     }
   };
 
@@ -615,16 +727,82 @@ function ZeroTouchDevicesTab() {
                               </>
                             )}
                             {isApproved && (
-                              <Button
-                                size="sm"
-                                variant="outline"
-                                className="h-8 gap-1.5 border-gray-300 text-gray-600 hover:bg-gray-50 hover:text-gray-700 text-xs"
-                                onClick={() => { setRevokeTarget(claim); setRevokeReason(''); }}
-                                disabled={actionLoading === claim.id}
-                              >
-                                <PowerOff className="w-3.5 h-3.5" />
-                                Revoke Access
-                              </Button>
+                              <>
+                                {/* Guest lifecycle actions for approved guest claims */}
+                                {claim.guestStatus === 'ACTIVE' && (
+                                  <>
+                                    <Button
+                                      size="sm"
+                                      variant="outline"
+                                      className="h-8 gap-1.5 text-xs"
+                                      onClick={() => openConvert(claim)}
+                                      disabled={actionLoading === claim.id}
+                                    >
+                                      <ArrowRightLeft className="w-3.5 h-3.5" />
+                                      Convert to Employee
+                                    </Button>
+                                    <Button
+                                      size="sm"
+                                      variant="outline"
+                                      className="h-8 gap-1.5 border-amber-300 text-amber-600 hover:bg-amber-50 hover:text-amber-700 text-xs"
+                                      onClick={() => setGuestActionTarget({ id: claim.guestId!, action: 'suspend', hostname: deviceName })}
+                                      disabled={actionLoading === claim.id}
+                                    >
+                                      <PauseCircle className="w-3.5 h-3.5" />
+                                      Suspend
+                                    </Button>
+                                    <Button
+                                      size="sm"
+                                      variant="outline"
+                                      className="h-8 gap-1.5 border-gray-300 text-gray-600 hover:bg-gray-50 hover:text-gray-700 text-xs"
+                                      onClick={() => setGuestActionTarget({ id: claim.guestId!, action: 'revoke', hostname: deviceName })}
+                                      disabled={actionLoading === claim.id}
+                                    >
+                                      <PowerOff className="w-3.5 h-3.5" />
+                                      Revoke
+                                    </Button>
+                                  </>
+                                )}
+                                {claim.guestStatus === 'SUSPENDED' && (
+                                  <>
+                                    <Button
+                                      size="sm"
+                                      className="h-8 gap-1.5 text-xs"
+                                      onClick={() => setGuestActionTarget({ id: claim.guestId!, action: 'reactivate', hostname: deviceName })}
+                                      disabled={actionLoading === claim.id}
+                                    >
+                                      <PlayCircle className="w-3.5 h-3.5" />
+                                      Reactivate
+                                    </Button>
+                                    <Button
+                                      size="sm"
+                                      variant="outline"
+                                      className="h-8 gap-1.5 border-gray-300 text-gray-600 hover:bg-gray-50 hover:text-gray-700 text-xs"
+                                      onClick={() => setGuestActionTarget({ id: claim.guestId!, action: 'revoke', hostname: deviceName })}
+                                      disabled={actionLoading === claim.id}
+                                    >
+                                      <PowerOff className="w-3.5 h-3.5" />
+                                      Revoke
+                                    </Button>
+                                  </>
+                                )}
+                                {/* Employee-only approved claims: revoke device access */}
+                                {!claim.guestStatus && (
+                                  <Button
+                                    size="sm"
+                                    variant="outline"
+                                    className="h-8 gap-1.5 border-gray-300 text-gray-600 hover:bg-gray-50 hover:text-gray-700 text-xs"
+                                    onClick={() => {
+                                      setRevokeTarget(claim);
+                                      setRevokeReason('');
+                                    }}
+                                    disabled={actionLoading === claim.id}
+                                  >
+                                    <PowerOff className="w-3.5 h-3.5" />
+                                    Revoke Access
+                                  </Button>
+                                )}
+                              </>
                             )}
                           </div>
                         </div>
@@ -659,7 +837,7 @@ function ZeroTouchDevicesTab() {
               <div className="space-y-3">
                 <p>
                   {approveMode === 'guest'
-                    ? 'Approve this device as a guest. A guest-backed identity is created automatically — no employee account is required. The device activates, but no monitoring consent is granted.'
+                    ? 'Approve this device as a guest. A guest workforce state is created automatically — no employee account and no Admin Panel login. The person joins as a Guest and can be converted to an Employee later. Standard monitoring consent is auto-granted.'
                     : 'Assign this device to an employee and optionally to projects. The employee will be notified automatically — no action is required on their PC.'}
                 </p>
                 {approveTarget && (
@@ -707,7 +885,7 @@ function ZeroTouchDevicesTab() {
                       <Fingerprint className="w-4 h-4 shrink-0" />
                       <span className="text-left">
                         <span className="block font-medium">Guest</span>
-                        <span className="block text-[10px] font-normal">No employee account</span>
+                        <span className="block text-[10px] font-normal">Join as guest, convert later</span>
                       </span>
                     </button>
                   </div>
@@ -782,7 +960,7 @@ function ZeroTouchDevicesTab() {
                   <ShieldAlert className="w-3.5 h-3.5 mt-0.5 shrink-0" />
                   <span>
                     {approveMode === 'guest'
-                      ? 'Guests are approved for device access only. No monitoring consent is granted and no telemetry is collected until consent is explicitly given.'
+                      ? 'The person joins the organization as a Guest. No Admin Panel login is created. A Guest can be converted to an Employee at any time by an Org Admin or Manager.'
                       : 'Approval activates the device only. Monitoring consent is managed separately and remains the employee&apos;s right to control.'}
                   </span>
                 </div>
@@ -858,7 +1036,7 @@ function ZeroTouchDevicesTab() {
         </DialogContent>
       </Dialog>
 
-      {/* Revoke Dialog */}
+      {/* Revoke Device Dialog (for employee-mode approved claims) */}
       <AlertDialog open={!!revokeTarget} onOpenChange={(open) => { if (!open) { setRevokeTarget(null); setRevokeReason(''); } }}>
         <AlertDialogContent>
           <AlertDialogHeader>
@@ -910,455 +1088,96 @@ function ZeroTouchDevicesTab() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* Guest Action Confirm Dialog (suspend/reactivate/revoke guest) */}
+      <AlertDialog open={!!guestActionTarget} onOpenChange={(open) => { if (!open) { setGuestActionTarget(null); setGuestActionReason(''); } }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle className="flex items-center gap-2">
+              {guestActionTarget?.action === 'suspend' && <PauseCircle className="w-5 h-5 text-amber-600" />}
+              {guestActionTarget?.action === 'reactivate' && <PlayCircle className="w-5 h-5 text-emerald-600" />}
+              {guestActionTarget?.action === 'revoke' && <PowerOff className="w-5 h-5 text-gray-600" />}
+              {guestActionTarget?.action === 'suspend' ? 'Suspend Guest?' : guestActionTarget?.action === 'reactivate' ? 'Reactivate Guest?' : 'Revoke Guest?'}
+            </AlertDialogTitle>
+            <AlertDialogDescription asChild>
+              <div className="space-y-3">
+                <p>
+                  {guestActionTarget?.action === 'suspend' && 'The guest device will lose monitoring access but the record and telemetry history are preserved. You can reactivate later.'}
+                  {guestActionTarget?.action === 'reactivate' && 'The guest device will resume monitoring under its previous consent terms.'}
+                  {guestActionTarget?.action === 'revoke' && 'The guest will be permanently deactivated. This action cannot be undone.'}
+                </p>
+                {guestActionTarget && (
+                  <div className="bg-muted/50 rounded-lg p-3">
+                    <span className="text-sm font-medium">{guestActionTarget.hostname}</span>
+                  </div>
+                )}
+                <Textarea
+                  placeholder="Reason (optional)"
+                  value={guestActionReason}
+                  onChange={(e) => setGuestActionReason(e.target.value)}
+                  rows={2}
+                />
+              </div>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className={guestActionTarget?.action === 'revoke' ? 'bg-gray-700 hover:bg-gray-800 text-white' : ''}
+              onClick={() => guestActionTarget && handleGuestAction()}
+            >
+              {actionLoading === guestActionTarget?.id ? (
+                <Loader2 className="w-4 h-4 animate-spin mr-2" />
+              ) : null}
+              {guestActionTarget?.action === 'suspend' ? 'Suspend Guest' : guestActionTarget?.action === 'reactivate' ? 'Reactivate Guest' : 'Revoke Guest'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Convert Guest → Employee Dialog */}
+      <Dialog open={convertTarget !== null} onOpenChange={(open) => { if (!open) setConvertTarget(null); }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Convert Guest to Employee</DialogTitle>
+            <DialogDescription>
+              The guest becomes an Employee workforce identity. The device, telemetry history and employee record are preserved, and the guest record is removed. No Admin Panel login is created.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div>
+              <Label className="text-xs font-medium">First Name *</Label>
+              <Input value={convertForm.firstName} onChange={(e) => setConvertForm((f) => ({ ...f, firstName: e.target.value }))} />
+            </div>
+            <div>
+              <Label className="text-xs font-medium">Last Name *</Label>
+              <Input value={convertForm.lastName} onChange={(e) => setConvertForm((f) => ({ ...f, lastName: e.target.value }))} />
+            </div>
+            <div>
+              <Label className="text-xs font-medium">Email *</Label>
+              <Input type="email" value={convertForm.email} onChange={(e) => setConvertForm((f) => ({ ...f, email: e.target.value }))} />
+            </div>
+            <div>
+              <Label className="text-xs font-medium">Employee ID (optional)</Label>
+              <Input value={convertForm.employeeId} onChange={(e) => setConvertForm((f) => ({ ...f, employeeId: e.target.value }))} placeholder="Leave empty to keep the synthesized ID" />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setConvertTarget(null)}>Cancel</Button>
+            <Button onClick={submitConvert} disabled={converting}>
+              {converting ? 'Converting…' : 'Convert to Employee'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
 
-// ─── Legacy registrations tab ───────────────────────────────────────────────
 export function AgentApprovalsPage() {
-  const [tab, setTab] = useState('devices');
-  const [statusFilter, setStatusFilter] = useState('pending');
-  const [regPage, setRegPage] = useState(1);
-  const [regSearchInput, setRegSearchInput] = useState('');
-  const [regSearch, setRegSearch] = useState('');
-  const [approveTarget, setApproveTarget] = useState<RegistrationData | null>(null);
-  const [rejectTarget, setRejectTarget] = useState<RegistrationData | null>(null);
-  const [rejectReason, setRejectReason] = useState('');
-  const [actionLoading, setActionLoading] = useState<string | null>(null);
-  const queryClient = useQueryClient();
-
-  useEffect(() => {
-    const t = setTimeout(() => {
-      const trimmed = regSearchInput.trim().slice(0, 100);
-      if (trimmed !== regSearch) {
-        setRegSearch(trimmed);
-        setRegPage(1);
-      }
-    }, 300);
-    return () => clearTimeout(t);
-  }, [regSearchInput, regSearch]);
-
-  const { data, isLoading } = useQuery({
-    queryKey: ['agent-registrations', statusFilter, regSearch, regPage],
-    queryFn: async () => {
-      const params = new URLSearchParams();
-      if (statusFilter && statusFilter !== 'all') params.set('status', statusFilter);
-      if (regSearch) params.set('q', regSearch);
-      params.set('page', String(regPage));
-      params.set('pageSize', '10');
-      const res = await fetch(`/api/agent-registrations?${params}`);
-      if (!res.ok) throw new Error('Failed to fetch');
-      return res.json();
-    },
-    enabled: tab === 'registrations',
-  });
-
-  // Server-side status counts (groupBy) — complete queue, never a first-page
-  // projection. Prefix-invalidated by the realtime agent-registration event.
-  const { data: summaryData } = useQuery({
-    queryKey: ['agent-registrations', 'summary'],
-    queryFn: async () => {
-      const res = await fetch('/api/agent-registrations?summary=true');
-      if (!res.ok) throw new Error('Failed to fetch');
-      return res.json();
-    },
-    enabled: tab === 'registrations',
-  });
-
-  const registrations: RegistrationData[] = data?.data || [];
-  const summary = summaryData?.summary;
-  const pendingCount = summary?.pending ?? 0;
-  const approvedCount = summary?.approved ?? 0;
-  const rejectedCount = summary?.rejected ?? 0;
-  const totalCount = summary?.total ?? 0;
-
-  const stats: QuickStat[] = [
-    { label: 'Pending', value: pendingCount, icon: Clock, color: 'amber' },
-    { label: 'Approved', value: approvedCount, icon: CheckCircle2, color: 'emerald' },
-    { label: 'Rejected', value: rejectedCount, icon: XCircle, color: 'rose' },
-    { label: 'Total', value: totalCount, icon: Monitor, color: 'blue' },
-  ];
-
-  const handleApprove = async (reg: RegistrationData) => {
-    setActionLoading(reg.id);
-    try {
-      const res = await fetch(`/api/agent-registrations/${reg.id}/approve`, { method: 'POST' });
-      if (!res.ok) {
-        const err = await res.json();
-        throw new Error(err.error || 'Failed to approve');
-      }
-      toast.success(`Approved registration for ${reg.employee.firstName} ${reg.employee.lastName}`);
-      queryClient.invalidateQueries({ queryKey: ['agent-registrations'] });
-      queryClient.invalidateQueries({ queryKey: ['employees'] });
-      queryClient.invalidateQueries({ queryKey: ['devices'] });
-      queryClient.invalidateQueries({ queryKey: ['dashboard'] });
-    } catch (err: unknown) {
-      toast.error(err instanceof Error ? err.message : 'Failed to approve registration');
-    } finally {
-      setActionLoading(null);
-      setApproveTarget(null);
-    }
-  };
-
-  const handleReject = async () => {
-    if (!rejectTarget) return;
-    setActionLoading(rejectTarget.id);
-    try {
-      const res = await fetch(`/api/agent-registrations/${rejectTarget.id}/reject`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ reason: rejectReason || undefined }),
-      });
-      if (!res.ok) {
-        const err = await res.json();
-        throw new Error(err.error || 'Failed to reject');
-      }
-      toast.success(`Rejected registration for ${rejectTarget.employee.firstName} ${rejectTarget.employee.lastName}`);
-      queryClient.invalidateQueries({ queryKey: ['agent-registrations'] });
-    } catch (err: unknown) {
-      toast.error(err instanceof Error ? err.message : 'Failed to reject registration');
-    } finally {
-      setActionLoading(null);
-      setRejectTarget(null);
-      setRejectReason('');
-    }
-  };
-
   return (
     <div className="space-y-4">
-      {/* Tabs */}
-      <Tabs value={tab} onValueChange={setTab}>
-        <TabsList>
-          <TabsTrigger value="devices" className="gap-1.5">
-            <Laptop className="w-4 h-4" />
-            Zero-Touch Devices
-          </TabsTrigger>
-          <TabsTrigger value="registrations" className="gap-1.5">
-            <ShieldCheck className="w-4 h-4" />
-            Legacy Registrations
-            <Badge variant="outline" className="text-[10px] h-4 px-1.5 text-muted-foreground">
-              Legacy
-            </Badge>
-          </TabsTrigger>
-        </TabsList>
-
-        <TabsContent value="devices" className="mt-4">
-          <ZeroTouchDevicesTab />
-        </TabsContent>
-
-        <TabsContent value="registrations" className="mt-4 space-y-4">
-          {/* Quick Stats */}
-          <QuickStats stats={stats} />
-
-          {/* Legacy path note: this tab is the OLD enrollment flow, kept for
-              agents already using it. New enrollments use Zero-Touch Devices. */}
-          <div className="flex items-start gap-2 text-xs text-muted-foreground bg-muted/50 rounded-md p-3">
-            <ShieldAlert className="w-4 h-4 mt-0.5 shrink-0" />
-            <span>
-              Legacy enrollment path — kept for agents that still register through it.
-              New enrollments should use Zero-Touch Devices instead.
-            </span>
-          </div>
-
-          {/* Filters */}
-          <div className="flex justify-between items-center gap-3 flex-wrap">
-            <div>
-              <h2 className="text-sm font-medium text-muted-foreground">
-                {statusFilter === 'all' ? 'All Registrations' : `${statusFilter.charAt(0).toUpperCase() + statusFilter.slice(1)} Registrations`}
-                <span className="ml-2 text-xs text-muted-foreground/60">({data?.total ?? 0})</span>
-              </h2>
-            </div>
-            <div className="flex items-center gap-2">
-              <div className="relative">
-                <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
-                <Input
-                  value={regSearchInput}
-                  onChange={(e) => setRegSearchInput(e.target.value)}
-                  placeholder="Search hostname, employee…"
-                  className="h-8 w-52 pl-8 text-xs"
-                />
-              </div>
-              <Select
-                value={statusFilter}
-                onValueChange={(value) => {
-                  setStatusFilter(value);
-                  setRegPage(1);
-                }}
-              >
-                <SelectTrigger className="w-40">
-                  <SelectValue placeholder="Filter Status" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="pending">Pending</SelectItem>
-                  <SelectItem value="approved">Approved</SelectItem>
-                  <SelectItem value="rejected">Rejected</SelectItem>
-                  <SelectItem value="all">All Status</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-          </div>
-
-          {/* Registration Cards */}
-          {isLoading ? (
-            <div className="space-y-3">
-              {Array.from({ length: 3 }).map((_, i) => (
-                <div key={i} className="h-32 bg-muted/30 rounded-lg animate-pulse" />
-              ))}
-            </div>
-          ) : registrations.length === 0 ? (
-            <EmptyState
-              icon={ShieldCheck}
-              title="No registrations found"
-              description={statusFilter === 'pending'
-                ? 'No pending agent registrations. All clear!'
-                : 'No registrations match your current filter.'}
-            />
-          ) : (
-            <div className="space-y-3">
-              <AnimatePresence mode="popLayout">
-                {registrations.map((reg, idx) => {
-                  const sc = statusConfig[reg.status] || statusConfig.pending;
-                  const Icon = sc.icon;
-                  const isPending = reg.status === 'pending';
-                  const fullName = `${reg.employee.firstName} ${reg.employee.lastName}`;
-
-                  return (
-                    <motion.div
-                      key={reg.id}
-                      initial={{ opacity: 0, y: 12 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      exit={{ opacity: 0, y: -12 }}
-                      transition={{ duration: 0.25, delay: idx * 0.05 }}
-                    >
-                      <Card className={`border shadow-sm border-l-4 ${sc.borderAccent} overflow-hidden`}>
-                        <CardContent className="p-4 md:p-5">
-                          <div className="flex flex-col lg:flex-row lg:items-start gap-4">
-                            {/* Left: Employee Info */}
-                            <div className="flex items-start gap-3 flex-1 min-w-0">
-                              {/* Status Icon */}
-                              <div className={`h-10 w-10 rounded-lg ${sc.bg} flex items-center justify-center shrink-0`}>
-                                <Icon className={`w-5 h-5 ${sc.color}`} />
-                              </div>
-
-                              {/* Employee Details */}
-                              <div className="flex-1 min-w-0">
-                                <div className="flex items-center gap-2 flex-wrap">
-                                  <h3 className="text-sm font-semibold">{fullName}</h3>
-                                  <Badge variant="outline" className="text-[10px] h-5 px-1.5 font-mono">
-                                    {reg.employee.employeeId}
-                                  </Badge>
-                                  <Badge className={`${sc.bg} ${sc.color} border-0 text-[10px] h-5 px-1.5`} variant="secondary">
-                                    {sc.label}
-                                  </Badge>
-                                </div>
-
-                                <div className="flex items-center gap-4 mt-1.5 text-xs text-muted-foreground flex-wrap">
-                                  <span className="flex items-center gap-1">
-                                    <User className="w-3 h-3" />
-                                    {reg.employee.designation || 'No designation'}
-                                  </span>
-                                  {reg.employee.department && (
-                                    <span className="flex items-center gap-1">
-                                      <Building2 className="w-3 h-3" />
-                                      {reg.employee.department.name}
-                                    </span>
-                                  )}
-                                  <span className="flex items-center gap-1">
-                                    <Clock className="w-3 h-3" />
-                                    {getTimeAgo(reg.createdAt)}
-                                  </span>
-                                </div>
-
-                                <p className="text-xs text-muted-foreground mt-0.5">{reg.employee.email}</p>
-
-                                {/* Rejection Reason */}
-                                {reg.status === 'rejected' && reg.rejectionReason && (
-                                  <div className="mt-2 p-2 rounded-md bg-rose-50 dark:bg-rose-900/15 border border-rose-200 dark:border-rose-800/30">
-                                    <p className="text-xs text-rose-700 dark:text-rose-300">
-                                      <span className="font-medium">Rejection reason: </span>
-                                      {reg.rejectionReason}
-                                    </p>
-                                  </div>
-                                )}
-                              </div>
-                            </div>
-
-                            {/* Right: Device Info + Actions */}
-                            <div className="lg:border-l lg:pl-4 lg:min-w-[280px] space-y-3">
-                              {/* System Info */}
-                              <div className="space-y-1.5">
-                                <h4 className="text-[11px] font-medium text-muted-foreground uppercase tracking-wider flex items-center gap-1.5">
-                                  <Monitor className="w-3 h-3" />
-                                  Device Information
-                                </h4>
-                                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-1 gap-1.5">
-                                  <SystemInfoRow icon={Monitor} label="Hostname" value={reg.hostname} />
-                                  <SystemInfoRow icon={Cpu} label="OS" value={reg.operatingSystem && reg.osVersion ? `${reg.operatingSystem} ${reg.osVersion}` : reg.operatingSystem} />
-                                  <SystemInfoRow icon={Cpu} label="Processor" value={reg.processor} />
-                                  <SystemInfoRow icon={HardDrive} label="Memory" value={reg.memory} />
-                                  <SystemInfoRow icon={Globe} label="IP Address" value={reg.ipAddress} />
-                                  <SystemInfoRow icon={Network} label="MAC" value={reg.macAddress} />
-                                  <SystemInfoRow icon={ShieldCheck} label="Agent" value={reg.agentVersion} />
-                                </div>
-                              </div>
-
-                              {/* Actions */}
-                              {isPending && (
-                                <div className="flex items-center gap-2 pt-1">
-                                  <Button
-                                    size="sm"
-                                    className="h-8 gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs"
-                                    onClick={() => setApproveTarget(reg)}
-                                    disabled={actionLoading === reg.id}
-                                  >
-                                    {actionLoading === reg.id ? (
-                                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                                    ) : (
-                                      <CheckCircle2 className="w-3.5 h-3.5" />
-                                    )}
-                                    Approve
-                                  </Button>
-                                  <Button
-                                    size="sm"
-                                    variant="outline"
-                                    className="h-8 gap-1.5 border-rose-300 text-rose-600 hover:bg-rose-50 hover:text-rose-700 text-xs"
-                                    onClick={() => { setRejectTarget(reg); setRejectReason(''); }}
-                                    disabled={actionLoading === reg.id}
-                                  >
-                                    <XCircle className="w-3.5 h-3.5" />
-                                    Reject
-                                  </Button>
-                                </div>
-                              )}
-                            </div>
-                          </div>
-                        </CardContent>
-                      </Card>
-                    </motion.div>
-                  );
-                })}
-              </AnimatePresence>
-            </div>
-          )}
-
-          {/* Server-side pagination for the filtered list */}
-          <PaginationControls
-            currentPage={regPage}
-            totalPages={data?.totalPages ?? 1}
-            totalItems={data?.total ?? 0}
-            pageSize={10}
-            onPageChange={setRegPage}
-          />
-
-          {/* Approve Confirmation Dialog */}
-          <AlertDialog open={!!approveTarget} onOpenChange={(open) => { if (!open) setApproveTarget(null); }}>
-            <AlertDialogContent>
-              <AlertDialogHeader>
-                <AlertDialogTitle className="flex items-center gap-2">
-                  <ShieldCheck className="w-5 h-5 text-emerald-600" />
-                  Approve Agent Registration
-                </AlertDialogTitle>
-                <AlertDialogDescription asChild>
-                  <div className="space-y-3">
-                    <p>
-                      Are you sure you want to approve this agent registration?
-                    </p>
-                    {approveTarget && (
-                      <div className="bg-muted/50 rounded-lg p-3 space-y-2">
-                        <div className="flex items-center gap-2">
-                          <User className="w-4 h-4 text-muted-foreground" />
-                          <span className="text-sm font-medium">{approveTarget.employee.firstName} {approveTarget.employee.lastName}</span>
-                          <Badge variant="outline" className="text-[10px] h-5 px-1.5 font-mono">{approveTarget.employee.employeeId}</Badge>
-                        </div>
-                        <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                          <Monitor className="w-3.5 h-3.5" />
-                          <span>{approveTarget.hostname} — {approveTarget.operatingSystem} {approveTarget.osVersion}</span>
-                        </div>
-                        {approveTarget.ipAddress && (
-                          <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                            <Globe className="w-3.5 h-3.5" />
-                            <span>{approveTarget.ipAddress}</span>
-                          </div>
-                        )}
-                      </div>
-                    )}
-                    <div className="flex items-start gap-2 text-xs text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-900/15 rounded-md p-2">
-                      <ChevronRight className="w-3.5 h-3.5 mt-0.5 shrink-0" />
-                      <span>A device will be created and the employee will be able to authenticate their agent.</span>
-                    </div>
-                  </div>
-                </AlertDialogDescription>
-              </AlertDialogHeader>
-              <AlertDialogFooter>
-                <AlertDialogCancel>Cancel</AlertDialogCancel>
-                <AlertDialogAction
-                  className="bg-emerald-600 hover:bg-emerald-700 text-white"
-                  onClick={() => approveTarget && handleApprove(approveTarget)}
-                >
-                  {actionLoading === approveTarget?.id ? (
-                    <Loader2 className="w-4 h-4 animate-spin mr-2" />
-                  ) : null}
-                  Approve Registration
-                </AlertDialogAction>
-              </AlertDialogFooter>
-            </AlertDialogContent>
-          </AlertDialog>
-
-          {/* Reject Dialog with Reason */}
-          <Dialog open={!!rejectTarget} onOpenChange={(open) => { if (!open) { setRejectTarget(null); setRejectReason(''); } }}>
-            <DialogContent>
-              <DialogHeader>
-                <DialogTitle className="flex items-center gap-2">
-                  <ShieldX className="w-5 h-5 text-rose-600" />
-                  Reject Agent Registration
-                </DialogTitle>
-                <DialogDescription asChild>
-                  <div className="space-y-3">
-                    <p>
-                      Rejecting will deny access for this employee&apos;s device. You may optionally provide a reason.
-                    </p>
-                    {rejectTarget && (
-                      <div className="bg-muted/50 rounded-lg p-3 space-y-2">
-                        <div className="flex items-center gap-2">
-                          <User className="w-4 h-4 text-muted-foreground" />
-                          <span className="text-sm font-medium">{rejectTarget.employee.firstName} {rejectTarget.employee.lastName}</span>
-                          <Badge variant="outline" className="text-[10px] h-5 px-1.5 font-mono">{rejectTarget.employee.employeeId}</Badge>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                </DialogDescription>
-              </DialogHeader>
-              <div className="space-y-2">
-                <label className="text-sm font-medium">Rejection Reason (optional)</label>
-                <Textarea
-                  placeholder="e.g., Unrecognized device, please contact IT support..."
-                  value={rejectReason}
-                  onChange={(e) => setRejectReason(e.target.value)}
-                  rows={3}
-                />
-              </div>
-              <DialogFooter>
-                <Button variant="ghost" onClick={() => { setRejectTarget(null); setRejectReason(''); }}>
-                  Cancel
-                </Button>
-                <Button
-                  variant="destructive"
-                  onClick={handleReject}
-                  disabled={actionLoading === rejectTarget?.id}
-                >
-                  {actionLoading === rejectTarget?.id ? (
-                    <Loader2 className="w-4 h-4 animate-spin mr-2" />
-                  ) : (
-                    <XCircle className="w-4 h-4 mr-2" />
-                  )}
-                  Reject Registration
-                </Button>
-              </DialogFooter>
-            </DialogContent>
-          </Dialog>
-        </TabsContent>
-      </Tabs>
+      <ZeroTouchDevicesTab />
     </div>
   );
 }

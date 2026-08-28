@@ -17,7 +17,6 @@ export type PageType =
   | 'reports'
   | 'organization'
   | 'agent-approvals'
-  | 'guests'
   | 'screenshots'
   | 'break-status'
   | 'live-monitor'

@@ -507,30 +507,39 @@ test('G-10: cross-org guest approval concealed (404); guests list is org-scoped'
   assert.equal(foreignRevoke.status, 404);
 });
 
-test('G-11: RBAC — viewer/employee/manager cannot approve guests or mutate them; admin can', async () => {
+test('G-11: RBAC — approval is admin-only; guest lifecycle mutation is Org Admin OR Manager', async () => {
   const { body } = await discover('key-g-0011-rbac-abcdef', '203.0.113.11');
   const viewer = await tokenFor('viewer', 'u-g11-viewer');
   const employee = await tokenFor('employee', 'u-g11-emp');
   const manager = await tokenFor('manager', 'u-g11-mgr');
 
+  // Approval (device-claims) is admin-only — manager is still denied here.
   for (const [label, token] of [['viewer', viewer], ['employee', employee], ['manager', manager]] as const) {
     const res = await approveGuest(token, body.claimId as string);
     assert.equal(res.status, 403, `${label} must not approve guests`);
   }
 
-  // Admin approves, then non-admins cannot mutate.
+  // Admin approves; then guest lifecycle mutations (guests.manage) allow
+  // Org Admin OR Manager, but deny viewer/employee.
   const admin = await tokenFor('admin', 'u-g11-admin');
   const ok = await approveGuest(admin, body.claimId as string);
   assert.equal(ok.status, 200);
   const guest = await db.guest.findFirst({ where: { deviceId: body.deviceId as string } });
 
-  for (const [label, token] of [['viewer', viewer], ['employee', employee], ['manager', manager]] as const) {
+  for (const [label, token] of [['viewer', viewer], ['employee', employee]] as const) {
     const res = await revokeApi.POST(
       req(token, { method: 'POST', body: { reason: 'x' }, ip: '198.51.100.11' }),
       { params: Promise.resolve({ id: guest!.id }) }
     );
     assert.equal(res.status, 403, `${label} must not revoke guests`);
   }
+
+  // Manager may manage guest lifecycle.
+  const mgrRes = await revokeApi.POST(
+    req(manager, { method: 'POST', body: { reason: 'x' }, ip: '198.51.100.11' }),
+    { params: Promise.resolve({ id: guest!.id }) }
+  );
+  assert.equal(mgrRes.status, 200, 'manager may revoke guests (guests.manage)');
 });
 
 // ─── G-12: duplicate / concurrency protection ───────────────────────────────

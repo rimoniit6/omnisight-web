@@ -101,7 +101,7 @@ test.describe('Authorization — direct API access matrix', () => {
 
   test('admin-only endpoints reject manager sessions', async ({ playwright }) => {
     const mgr = await apiAs(playwright, 'manager');
-    for (const path of ['/api/organization', '/api/guests', '/api/agent-registrations']) {
+    for (const path of ['/api/organization', '/api/guests']) {
       const res = await mgr.get(path);
       expect(res.status(), `GET ${path} as manager`).toBe(403);
     }

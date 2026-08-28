@@ -12,10 +12,10 @@ import {
   activityPingInvalidation,
   projectTimeUpdateInvalidation,
   deviceClaimInvalidation,
-  agentRegistrationInvalidation,
   anomalyInvalidation,
   alertEventInvalidation,
   guestInvalidation,
+  locationUpdateInvalidation,
 } from '@/lib/ws-invalidation';
 
 // ─── Event Types ───
@@ -73,15 +73,6 @@ export interface ScreenshotEvent {
   employeeId: string;
   employeeName: string;
   appWindow: string;
-  timestamp: string;
-}
-
-export interface AgentRegistrationEvent {
-  id: string;
-  employeeName: string;
-  hostname: string;
-  operatingSystem: string;
-  status: string;
   timestamp: string;
 }
 
@@ -163,7 +154,7 @@ export interface PolicyViolationEvent {
   timestamp: string;
 }
 
-export type LiveEventType = 'device-status' | 'activity-ping' | 'notification' | 'break-status' | 'break-started' | 'break-ended' | 'screenshot' | 'agent-registration' | 'usb-event' | 'project-time-update' | 'device-claim' | 'alert-event' | 'guest';
+export type LiveEventType = 'device-status' | 'activity-ping' | 'notification' | 'break-status' | 'break-started' | 'break-ended' | 'screenshot' | 'usb-event' | 'project-time-update' | 'device-claim' | 'alert-event' | 'guest' | 'location-update';
 
 export interface LiveEventLog {
   id: string;
@@ -187,7 +178,6 @@ interface WebSocketState {
   lastNotification: NotificationEvent | null;
   lastBreakStatus: BreakStatusEvent | null;
   lastScreenshot: ScreenshotEvent | null;
-  lastAgentRegistration: AgentRegistrationEvent | null;
   lastDeviceClaim: DeviceClaimEvent | null;
   lastGuest: GuestEvent | null;
   lastUsbEvent: UsbEventEvent | null;
@@ -244,7 +234,6 @@ export function WebSocketProvider({ children }: { children: ReactNode }) {
   const [lastNotification, setLastNotification] = useState<NotificationEvent | null>(null);
   const [lastBreakStatus, setLastBreakStatus] = useState<BreakStatusEvent | null>(null);
   const [lastScreenshot, setLastScreenshot] = useState<ScreenshotEvent | null>(null);
-  const [lastAgentRegistration, setLastAgentRegistration] = useState<AgentRegistrationEvent | null>(null);
   const [lastDeviceClaim, setLastDeviceClaim] = useState<DeviceClaimEvent | null>(null);
   const [lastGuest, setLastGuest] = useState<GuestEvent | null>(null);
   const [lastUsbEvent, setLastUsbEvent] = useState<UsbEventEvent | null>(null);
@@ -428,29 +417,6 @@ export function WebSocketProvider({ children }: { children: ReactNode }) {
     });
 
     // ─── Agent Registration (legacy path: creation + approve/reject) ───
-    socket.on('agent-registration', (event: AgentRegistrationEvent) => {
-      setLastAgentRegistration(event);
-      const title =
-        event.status === 'approved'
-          ? 'Registration Approved'
-          : event.status === 'rejected'
-            ? 'Registration Rejected'
-            : 'New Agent Registration';
-      addEventLog({
-        type: 'agent-registration',
-        title,
-        description: `${event.employeeName} — ${event.hostname}`,
-        timestamp: event.timestamp,
-        priority: 'medium',
-      });
-      // Centralized mapping (src/lib/ws-invalidation.ts): the approvals list
-      // (prefix-matched 'agent-registrations'), the sidebar pending badge and
-      // the global aggregates are refreshed.
-      for (const key of agentRegistrationInvalidation()) {
-        queryClient.invalidateQueries({ queryKey: key });
-      }
-    });
-
     // ─── Device Claim (zero-touch path: creation + lifecycle transitions) ───
     socket.on('device-claim', (event: DeviceClaimEvent) => {
       setLastDeviceClaim(event);
@@ -500,6 +466,15 @@ export function WebSocketProvider({ children }: { children: ReactNode }) {
     });
 
 
+
+    // ─── Location Update (new GPS fix arrived) ───
+    // The event carries NO coordinates (privacy); the client refetches the
+    // employee's location API to get the actual data.
+    socket.on('location-update', (event: { id: string; employeeId: string; timestamp: string }) => {
+      for (const key of locationUpdateInvalidation(event.employeeId)) {
+        queryClient.invalidateQueries({ queryKey: key });
+      }
+    });
 
     // ─── Anomaly (new anomaly detected/reported) ───
     // Refreshes the Anomalies page (any list/filter/pagination variant, via
@@ -603,7 +578,6 @@ export function WebSocketProvider({ children }: { children: ReactNode }) {
         lastNotification,
         lastBreakStatus,
         lastScreenshot,
-        lastAgentRegistration,
         lastDeviceClaim,
         lastGuest,
         lastUsbEvent,

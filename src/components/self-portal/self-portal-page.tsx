@@ -195,7 +195,7 @@ interface TelemetrySummary {
     available: boolean;
     consentGranted: boolean;
     configEnabled: boolean;
-    latest: { latitude: number; longitude: number; accuracy: number; recordedAt: string } | null;
+    latest: { latitude: number; longitude: number; accuracy: number | null; recordedAt: string; source: string } | null;
   };
   webcam: {
     available: boolean;
@@ -1100,7 +1100,7 @@ export function SelfPortalPage() {
         icon: MapPin,
         title: 'Location',
         detail: location.latest
-          ? `${num(location.latest.latitude).toFixed(5)}, ${num(location.latest.longitude).toFixed(5)} · ±${num(location.latest.accuracy).toFixed(0)}m · ${formatRelativeTime(location.latest.recordedAt)}`
+          ? `${location.latest.source === 'native' ? '📡 Device' : '🌐 IP'} · ${num(location.latest.latitude).toFixed(5)}, ${num(location.latest.longitude).toFixed(5)} · ${location.latest.accuracy !== null ? `±${num(location.latest.accuracy).toFixed(0)}m` : 'approximate'} · ${formatRelativeTime(location.latest.recordedAt)}`
           : 'No location fix recorded',
         tab: 'location',
         gate: gateLabel(location),

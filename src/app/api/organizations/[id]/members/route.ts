@@ -1,10 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
-import { hasRolePermission, getRoleLabel } from '@/lib/auth';
+import { getRoleLabel } from '@/lib/auth';
 import { requireOrgAdmin, apiError, apiSuccess } from '@/lib/api';
+import { isOrgRole, canAssignRole, resolveActorDbRole } from '@/lib/org-members';
 import { log, requestContext } from '@/lib/logger';
-
-const ORG_ROLES = ['owner', 'admin', 'manager', 'viewer'];
 
 // ─── GET /api/organizations/[id]/members ────────────────────────────────────
 // List members of an organization. Admin+ within the org, or super_admin.
@@ -70,17 +69,24 @@ export async function POST(
       role?: string;
     };
     const email = typeof body.email === 'string' ? body.email.toLowerCase().trim() : '';
-    const role = body.role as string | undefined;
+    const rawRole = body.role;
+    const role = typeof rawRole === 'string' ? rawRole.trim().toLowerCase() : (rawRole as string | undefined);
 
     if (!email || !role) {
       return apiError('email and role are required', 400);
     }
-    if (!ORG_ROLES.includes(role)) {
-      return apiError(`Invalid role. Must be one of: ${ORG_ROLES.join(', ')}`, 400);
+    if (!isOrgRole(role)) {
+      return apiError(`Invalid role. Must be one of: owner, admin, manager, viewer`, 400);
     }
-    // super_admin is a global role and is never a per-org membership.
-    if (role === 'super_admin') {
-      return apiError('Cannot assign super_admin as a per-organization role', 400);
+    // super_admin is a global role and is never a per-org membership; isOrgRole
+    // above already excludes it.
+
+    // Privilege-elevation guard: the actor (DB-verified membership role) may
+    // only add a member at or below their own level. Prevents an org admin
+    // from creating an owner (or higher) via a crafted request.
+    const actorRole = await resolveActorDbRole(req, orgId);
+    if (!actorRole || !canAssignRole(actorRole, role)) {
+      return apiError(`Insufficient permissions to assign role '${role}'`, 403);
     }
 
     const user = await db.appUser.findFirst({ where: { email } });

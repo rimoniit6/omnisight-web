@@ -370,7 +370,175 @@ test('LOC-B3: invalid coordinates rejected (422, nothing persisted)', async () =
   assert.equal(await db.locationEvent.count({ where: { employeeId: emp.id } }), 0);
 });
 
-// ─── Command channel ────────────────────────────────────────────────────────
+test('LOC-B4: full pipeline — agent POST creates LocationEvent, GET /employees/[id]/location returns it with correct contract', async () => {
+  const { emp, token } = await setupActiveDevice('LB04');
+  await publishPolicy(orgA.id, 'location', 'v1');
+  await setConsent(emp.id, orgA.id, 'location', 'granted');
+  await setMonitoring(orgA.id, 'location_tracking', 'true');
+
+  // 1) Agent submits a valid location fix
+  const locationApi = getApis().locationApi;
+  const body = { latitude: 40.7128, longitude: -74.006, accuracy: 12, timestamp: new Date().toISOString() };
+  const postRes = await (locationApi.POST as (r: NextRequest) => Promise<Response>)(req(token, { method: 'POST', body }));
+  const postJson = await postRes.json() as Record<string, unknown>;
+  assert.equal(postRes.status, 200, JSON.stringify(postJson));
+
+  // 2) Verify LocationEvent row exists with correct fields
+  const rows = await db.locationEvent.findMany({ where: { employeeId: emp.id } });
+  assert.equal(rows.length, 1, 'one LocationEvent must exist');
+  assert.equal(rows[0].latitude, 40.7128);
+  assert.equal(rows[0].longitude, -74.006);
+  assert.equal(rows[0].accuracy, 12);
+  assert.equal(rows[0].organizationId, orgA.id);
+  assert.ok(rows[0].recordedAt instanceof Date);
+
+  // 3) Admin GET endpoint returns the event with the correct contract
+  const admin = await tokenFor('admin', 'u-lb04-admin');
+  const getRes = await (await import('../src/app/api/employees/[id]/location/route')).GET(
+    req(admin, { url: `http://localhost:3000/api/employees/${emp.id}/location` }),
+    { params: Promise.resolve({ id: emp.id }) },
+  );
+  const getJson = await getRes.json() as { latest: { latitude: number; longitude: number; accuracy: number | null; recordedAt: string }; history: unknown[]; total: number };
+  assert.equal(getRes.status, 200, JSON.stringify(getJson));
+  assert.ok(getJson.latest, 'latest must be non-null');
+  assert.equal(getJson.latest.latitude, 40.7128);
+  assert.equal(getJson.latest.longitude, -74.006);
+  assert.equal(getJson.latest.accuracy, 12);
+  assert.ok(typeof getJson.latest.recordedAt === 'string', 'recordedAt must be ISO string');
+  assert.ok(new Date(getJson.latest.recordedAt).getTime() > 0, 'recordedAt must be valid ISO');
+  assert.equal(getJson.total, 1);
+  assert.equal(getJson.history.length, 1);
+
+  // 4) Contract mismatch guard: response fields must match LocationPanel interface
+  const expectedFields = ['id', 'latitude', 'longitude', 'accuracy', 'recordedAt'];
+  const actualFields = Object.keys(getJson.latest);
+  for (const f of expectedFields) {
+    assert.ok(actualFields.includes(f), `response missing field '${f}': got ${actualFields.join(',')}`);
+  }
+});
+
+test('LOC-B5: cross-org isolation — Org B admin cannot retrieve Org A employee location', async () => {
+  const { emp, token } = await setupActiveDevice('LB05');
+  await publishPolicy(orgA.id, 'location', 'v1');
+  await setConsent(emp.id, orgA.id, 'location', 'granted');
+  await setMonitoring(orgA.id, 'location_tracking', 'true');
+
+  // Submit a location fix from Org A agent
+  const locationApi = getApis().locationApi;
+  await (locationApi.POST as (r: NextRequest) => Promise<Response>)(req(token, {
+    method: 'POST',
+    body: { latitude: 51.5074, longitude: -0.1278, accuracy: 8, timestamp: new Date().toISOString() },
+  }));
+
+  // Org B admin tries to read Org A employee's location → must get 404 (concealed)
+  const adminB = await tokenFor('admin', 'u-lb05-admin', orgB.id);
+  const getRes = await (await import('../src/app/api/employees/[id]/location/route')).GET(
+    req(adminB, { url: `http://localhost:3000/api/employees/${emp.id}/location` }),
+    { params: Promise.resolve({ id: emp.id }) },
+  );
+  assert.equal(getRes.status, 404, 'cross-org location access must return 404');
+});
+
+test('LOC-B6: tracking-status endpoint returns correct consent+tracking state', async () => {
+  const { emp } = await setupActiveDevice('LB06');
+
+  // Ensure tracking is OFF at the start (previous tests may have set it on)
+  await setMonitoring(orgA.id, 'location_tracking', 'false');
+
+  // Default: no consent, tracking off
+  const locationRoute = await import('../src/app/api/employees/[id]/location/tracking-status/route');
+  const admin = await tokenFor('admin', 'u-lb06-admin');
+  let res = await locationRoute.GET(
+    req(admin, { url: `http://localhost:3000/api/employees/${emp.id}/location/tracking-status` }),
+    { params: Promise.resolve({ id: emp.id }) },
+  );
+  let json = await res.json() as { consentGranted: boolean; trackingEnabled: boolean };
+  assert.equal(res.status, 200);
+  assert.equal(json.consentGranted, false, 'no consent by default');
+  assert.equal(json.trackingEnabled, false, 'tracking off by default');
+
+  // Enable tracking
+  await setMonitoring(orgA.id, 'location_tracking', 'true');
+  res = await locationRoute.GET(
+    req(admin, { url: `http://localhost:3000/api/employees/${emp.id}/location/tracking-status` }),
+    { params: Promise.resolve({ id: emp.id }) },
+  );
+  json = await res.json() as { consentGranted: boolean; trackingEnabled: boolean };
+  assert.equal(json.trackingEnabled, true, 'tracking should now be true');
+  assert.equal(json.consentGranted, false, 'consent still not granted');
+
+  // Grant consent
+  await publishPolicy(orgA.id, 'location', 'v1');
+  await setConsent(emp.id, orgA.id, 'location', 'granted');
+  res = await locationRoute.GET(
+    req(admin, { url: `http://localhost:3000/api/employees/${emp.id}/location/tracking-status` }),
+    { params: Promise.resolve({ id: emp.id }) },
+  );
+  json = await res.json() as { consentGranted: boolean; trackingEnabled: boolean };
+  assert.equal(json.consentGranted, true, 'consent should be granted');
+  assert.equal(json.trackingEnabled, true, 'tracking should be true');
+});
+
+test('LOC-B7: IP fallback location with null accuracy is accepted and persisted', async () => {
+  const { emp, token } = await setupActiveDevice('LB07');
+  await publishPolicy(orgA.id, 'location', 'v1');
+  await setConsent(emp.id, orgA.id, 'location', 'granted');
+  await setMonitoring(orgA.id, 'location_tracking', 'true');
+  const { locationApi } = getApis();
+  // Simulate IP fallback: accuracy is null (no GPS accuracy available)
+  const res = await (locationApi.POST as (r: NextRequest) => Promise<Response>)(req(token, {
+    method: 'POST',
+    body: { latitude: 23.8103, longitude: 90.4125, accuracy: null, timestamp: new Date().toISOString(), source: 'ip' },
+  }));
+  assert.equal(res.status, 200, JSON.stringify(await res.json().catch(() => ({}))));
+  const rows = await db.locationEvent.findMany({ where: { employeeId: emp.id } });
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].latitude, 23.8103);
+  assert.equal(rows[0].longitude, 90.4125);
+  assert.equal(rows[0].accuracy, null, 'IP fallback accuracy must be null');
+  assert.equal(rows[0].source, 'ip', 'source must be ip');
+});
+
+test('LOC-B8: native location with accuracy is accepted and source is native', async () => {
+  const { emp, token } = await setupActiveDevice('LB08');
+  await publishPolicy(orgA.id, 'location', 'v1');
+  await setConsent(emp.id, orgA.id, 'location', 'granted');
+  await setMonitoring(orgA.id, 'location_tracking', 'true');
+  const { locationApi } = getApis();
+  const res = await (locationApi.POST as (r: NextRequest) => Promise<Response>)(req(token, {
+    method: 'POST',
+    body: { latitude: 23.8103, longitude: 90.4125, accuracy: 35, timestamp: new Date().toISOString(), source: 'native' },
+  }));
+  assert.equal(res.status, 200, JSON.stringify(await res.json().catch(() => ({}))));
+  const rows = await db.locationEvent.findMany({ where: { employeeId: emp.id } });
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].accuracy, 35, 'native accuracy must be preserved');
+  assert.equal(rows[0].source, 'native', 'source must be native');
+});
+
+test('LOC-B9: GET location returns null accuracy for IP fallback events', async () => {
+  const { emp, token } = await setupActiveDevice('LB09');
+  await publishPolicy(orgA.id, 'location', 'v1');
+  await setConsent(emp.id, orgA.id, 'location', 'granted');
+  await setMonitoring(orgA.id, 'location_tracking', 'true');
+  const { locationApi } = getApis();
+  // Submit IP fallback location
+  await (locationApi.POST as (r: NextRequest) => Promise<Response>)(req(token, {
+    method: 'POST',
+    body: { latitude: 51.5074, longitude: -0.1278, accuracy: null, timestamp: new Date().toISOString(), source: 'ip' },
+  }));
+  const admin = await tokenFor('admin', 'u-lb09-admin');
+  const getRes = await (await import('../src/app/api/employees/[id]/location/route')).GET(
+    req(admin, { url: `http://localhost:3000/api/employees/${emp.id}/location` }),
+    { params: Promise.resolve({ id: emp.id }) },
+  );
+  const getJson = await getRes.json() as { latest: { latitude: number; longitude: number; accuracy: number | null; source: string; recordedAt: string }; history: Array<{ accuracy: number | null; source: string }>; total: number };
+  assert.equal(getRes.status, 200);
+  assert.ok(getJson.latest, 'latest must be present');
+  assert.equal(getJson.latest.accuracy, null, 'IP fallback accuracy must be null in GET response');
+  assert.equal(getJson.latest.source, 'ip', 'source must be ip');
+  assert.equal(getJson.history[0].accuracy, null, 'history accuracy must be null');
+});
 
 test('CMD-B1: device receives only its own PENDING commands; delivery is atomic', async () => {
   const d1 = await setupActiveDevice('CB1');

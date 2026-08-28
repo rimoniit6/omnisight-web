@@ -396,21 +396,6 @@ test('B-06: a revoked device and a deleted device never trigger a false 409', as
   assert.notEqual(rD.body.error, 'ACTIVE_DEVICE_EXISTS');
 });
 
-// ─── B-07: invalid credentials stay 401 ─────────────────────────────────────
-
-test('B-07: a wrong password stays a uniform 401, never 409, no token mutation', async () => {
-  const emp = await seedPathBEmployee(org.id, 'B07-EMP');
-  const r = await doAuthenticate(
-    { employeeId: 'B07-EMP', password: 'Wrong-Pass!x', hostname: 'PC-B07' },
-    '203.0.113.701'
-  );
-  assert.equal(r.status, 401, JSON.stringify(r.body));
-  assert.equal(r.body.error, 'Invalid credentials');
-  assert.notEqual(r.body.error, 'ACTIVE_DEVICE_EXISTS');
-  assert.equal(await db.agentToken.count({ where: { employeeId: emp.id } }), 0, 'no token may be created');
-  assert.equal(await db.device.count({ where: { employeeId: emp.id } }), 0, 'no device row may be created');
-});
-
 // ─── B-08: disabled AgentAccount stays blocked ──────────────────────────────
 
 test('B-08: a disabled AgentAccount fails closed with 403, never 409', async () => {
@@ -497,10 +482,9 @@ test('B-10: B cannot revoke, replace or mutate A token; A stays usable', async (
 // ─── CRITICAL-01 regression guards ──────────────────────────────────────────
 // The STEP 5/6 active-device work added an AgentAccount eligibility pre-check
 // that rejected employees WITHOUT an AgentAccount row (403 'Agent account is
-// disabled'). Zero-touch PATH A and legacy PATH B onboarding never create
-// AgentAccount rows (device-claims/approve and agent-registrations/approve
-// only set employee.agentApproved), so legitimate devices could not
-// authenticate. The correct boundary (matching validateAgentToken /
+// disabled'). Zero-touch PATH A onboarding never creates AgentAccount rows
+// (device-claims/approve only sets employee.agentApproved), so legitimate
+// devices could not authenticate. The correct boundary (matching validateAgentToken /
 // validateAgentSession): an ABSENT account is fine; only a present-but-DISABLED
 // account fails closed. These guards keep that boundary pinned: they use
 // employees with NO AgentAccount row at all.
@@ -523,42 +507,9 @@ test('CRITICAL-01: PATH A zero-touch authenticates WITHOUT an AgentAccount row',
   assert.equal(beat.status, 200, 'token must work on heartbeat without an AgentAccount');
 });
 
-test('CRITICAL-01: PATH B legacy authenticates WITHOUT an AgentAccount row', async () => {
-  const emp = await seedEmployee(org.id, 'CR01B-EMP'); // no AgentAccount created
-  await db.employee.update({
-    where: { id: emp.id },
-    data: { agentPassword: await hashPassword(PASSWORD) },
-  });
-  const r = await doAuthenticate(
-    { employeeId: emp.employeeId, password: PASSWORD, hostname: 'PC-CR01B' },
-    '203.0.113.2012'
-  );
-  assert.equal(r.status, 200, `PATH B must authenticate without an AgentAccount: ${JSON.stringify(r.body)}`);
-  assert.equal(typeof r.body.token, 'string');
-  assert.equal(
-    await db.agentAccount.count({ where: { employeeId: emp.id } }),
-    0,
-    'fixture sanity: the employee really has no AgentAccount row'
-  );
-});
 
-test('CRITICAL-01: PATH B legacy with a DISABLED AgentAccount fails closed (403, never 409)', async () => {
-  const emp = await seedEmployee(org.id, 'CR01BD-EMP');
-  await db.employee.update({
-    where: { id: emp.id },
-    data: { agentPassword: await hashPassword(PASSWORD) },
-  });
-  await createAgentAccount({ employeeId: emp.id, agentId: 'CR01BD-EMP', password: PASSWORD, status: 'disabled' });
 
-  const r = await doAuthenticate(
-    { employeeId: emp.employeeId, password: PASSWORD, hostname: 'PC-CR01BD' },
-    '203.0.113.2013'
-  );
-  assert.equal(r.status, 403, `disabled account must fail closed on PATH B: ${JSON.stringify(r.body)}`);
-  assert.equal(r.body.error, 'Agent account is disabled');
-  assert.notEqual(r.body.error, 'ACTIVE_DEVICE_EXISTS', 'never a conflict marker');
-  assert.equal(await db.agentToken.count({ where: { employeeId: emp.id } }), 0, 'no token may be issued');
-});
+
 
 // ─── TASK 3: the exact HTTP contract ────────────────────────────────────────
 

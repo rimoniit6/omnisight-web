@@ -224,6 +224,10 @@ const MONITORING_LABELS: Record<string, string> = {
   usb_monitoring: 'USB Device Monitoring',
   app_policy_enforcement: 'App Policy Enforcement',
   app_policy_terminate: 'Terminate Blocked Apps',
+  location_tracking: 'Location Tracking',
+  keystroke_logging_enabled: 'Keystroke Logging',
+  webcam_capture_enabled: 'Webcam Capture',
+  website_native_tracking: 'Website Tracking (Native)',
 };
 
 interface MonitoringRowProps {
@@ -456,6 +460,16 @@ function AgentMonitoringCard() {
                       title: 'Enable webcam capture?',
                       description: 'Enabling this setting allows authorized webcam sessions on managed devices. Webcam access remains subject to employee consent — enabling this does not bypass employee consent requirements. The server re-validates consent and this setting during active sessions.',
                     },
+                  }
+                : {})}
+              {...(s.key === 'location_tracking'
+                ? {
+                    helper: 'When enabled, the desktop agent periodically reports GPS coordinates from managed devices. Requires active location consent per employee — the server re-checks both on every upload. Location data is visible in Employee Details → Location.',
+                  }
+                : {})}
+              {...(s.key === 'keystroke_logging_enabled'
+                ? {
+                    helper: 'When enabled (AND the employee holds active keystroke consent), the desktop agent reports aggregate typing metrics (keystroke count, active typing seconds) per interval. No raw key data is ever collected or stored.',
                   }
                 : {})}
             />

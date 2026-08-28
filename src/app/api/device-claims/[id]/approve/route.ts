@@ -17,23 +17,28 @@ import {
 // Two strongly-typed modes:
 //
 //   { mode: "employee", employeeId, projectIds? }   (DEFAULT — existing flow)
-//     Binds the device to an EXISTING employee and activates it.
+//     Binds the device to an EXISTING employee and activates it. The Employee
+//     row keeps type = 'employee' (the default) and NO web account is created.
 //
 //   { mode: "guest" }
-//     Creates a NEW person-level Guest enrollment backed by a synthesized
-//     Employee row (Employee.type = 'guest') so every existing runtime
-//     mechanism (AgentToken, AgentSession, Consent, telemetry, config,
-//     heartbeat) works unchanged. NO employeeId is required and NO AgentAccount
-//     is created. Monitoring consent (monitoring + activity_tracking) is
-//     AUTO-GRANTED at approval, bound to the org's current published policies
-//     — a guest has no employee portal, so the approving admin is the consent
-//     authority. Types without a published policy are skipped (fail-closed).
+//     Creates a NEW person-level GUEST enrollment backed by a synthesized
+//     Employee row with Employee.type = 'guest' (GUEST is a valid, intentional
+//     workforce state, NOT an error). An ACTIVE Guest lifecycle row is also
+//     created so the enrollment stays manageable in the Guests view and can be
+//     converted to an Employee later. Every existing runtime mechanism
+//     (AgentToken, AgentSession, Consent, telemetry, config, heartbeat) works
+//     unchanged. NO employeeId is required and NO AgentAccount / AppUser /
+//     password / login is created. Monitoring consent (monitoring +
+//     activity_tracking) is AUTO-GRANTED at approval, bound to the org's current
+//     published policies — a guest has no employee portal, so the approving
+//     admin is the consent authority. Types without a published policy are
+//     skipped (fail-closed).
 //
-// Guest approval transaction (atomic, serialized per device):
+// Guest-mode approval transaction (atomic, serialized per device):
 //   1. Authenticate admin + org scope.
 //   2. Lock the Device row FOR UPDATE (serializes concurrent approvals for
 //      the same device — the existing Employee lock pattern doesn't apply
-//      because a guest has no pre-existing employee).
+//      because there is no pre-existing employee to lock).
 //   3. Re-read the claim under the lock; verify it is still PENDING and not
 //      expired.
 //   4. Verify the Device belongs to the admin's organization.
@@ -43,15 +48,17 @@ import {
 //   6. Verify the org's pending-guest cap is not reached.
 //   7. Guarded claim update (pending → approved) — a concurrent approve of
 //      the same claim matches zero rows and surfaces the existing 409.
-//   8. Create Guest + guest-backed Employee; link Guest ↔ Employee; bind the
-//      Device; set agentApproved (required by validateAgentToken / PATH A).
+//   8. Create Guest + guest-backed Employee (type='guest'); link Guest ↔
+//      Employee; bind the Device; set agentApproved (required by
+//      validateAgentToken / PATH A).
 //   9. Auto-grant monitoring consent (via the audited state machine, bound to
 //      the current published policies — see grantGuestMonitoringConsents).
 //  10. Write audit log + notification.
 //
 // Approval means "this person/device is enrolled AND consented to standard
-// monitoring". Only the two standard monitoring types are auto-granted;
-// screenshot/keystroke/location/etc. remain separate, deliberate grants.
+// monitoring" as a GUEST. Only the two standard monitoring types are
+// auto-granted; screenshot/keystroke/location/etc. remain separate, deliberate
+// grants.
 export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -372,7 +379,7 @@ export async function POST(
           action: 'guest_approved',
           resource: 'guest',
           resourceId: guest.id,
-          description: `Device "${deviceHostname}" approved as GUEST (${employee.employeeId}) — enrolled without employee credentials; monitoring consent auto-granted${grantedConsents.length ? ` (${grantedConsents.join(', ')})` : ' (none: no published policies)'}`,
+          description: `Device "${deviceHostname}" approved as GUEST (${employee.employeeId}) — enrolled as a guest without employee credentials; monitoring consent auto-granted${grantedConsents.length ? ` (${grantedConsents.join(', ')})` : ' (none: no published policies)'}`,
           userId: admin.userId,
           ipAddress: clientIp,
           organizationId: admin.organizationId,

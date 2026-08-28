@@ -24,7 +24,6 @@ import {
   ShieldCheck,
   FileCheck,
   UserCircle,
-  UserPlus,
   FolderKanban,
   HeartPulse,
   Radio,
@@ -72,7 +71,6 @@ const navGroups: NavGroup[] = [
     section: 'Security',
     items: [
       { page: 'agent-approvals', label: 'Agent Approvals', icon: ShieldCheck },
-      { page: 'guests', label: 'Guests', icon: UserPlus },
       { page: 'notifications', label: 'Notifications', icon: Bell },
       { page: 'alerts', label: 'Alerts', icon: AlertTriangle },
       { page: 'audit', label: 'Audit Logs', icon: ScrollText },

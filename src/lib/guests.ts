@@ -20,7 +20,8 @@
 import { randomBytes } from 'crypto';
 import type { Prisma } from '@prisma/client';
 import { db } from '@/lib/db';
-import { authError, requireAdminOrg } from '@/lib/api';
+import { authError, authenticateRequest } from '@/lib/api';
+import { hasRolePermission } from '@/lib/auth';
 import { checkRateLimit, RATE_LIMITS, getClientIpFromHeaders } from '@/lib/rate-limit';
 import { getPublishedPolicy, applyConsentTransition } from '@/lib/consent';
 import type { ConsentStatus } from '@/lib/consent';
@@ -77,20 +78,55 @@ export function synthesizeGuestIdentity(hostname: string): GuestIdentity {
   };
 }
 
-// ─── Guest mutation guard (admin-only, org-scoped, rate-limited) ────────────
+// ─── Guest mutation guard (Org Admin or Manager, org-scoped, rate-limited) ──
 
 export type GuestWriteScope =
   | { ok: true; organizationId: string; userId: string; email: string; clientIp: string }
   | { ok: false; response: NextResponse };
 
 /**
- * Shared guard for guest lifecycle mutations: authenticate an ORG-BOUND admin
- * session and apply the same per-IP write rate limit the device-claim routes
- * use. Returns an error response when unauthorized/rate-limited.
+ * Shared guard for guest lifecycle mutations (suspend / revoke / reactivate /
+ * convert). Authentication is the JWT entry gate; the AUTHORIZATION decision is
+ * DB-authoritative:
+ *   - The caller must be acting within an organization (from the session).
+ *   - The effective role is re-read from the DATABASE (AppUser.role), so a
+ *     revoked/downgraded role is honored immediately even if the JWT still
+ *     carries stale claims. When no AppUser record exists (legacy / claim-only
+ *     sessions) the JWT claim is the fallback.
+ *   - Guest management requires "Organization Admin or Manager" (manager+ in the
+ *     shared role hierarchy). Viewer, Employee and Guest identities are denied.
+ *   - The same per-IP write rate limit the device-claim routes use is applied.
+ * Returns an error response when unauthorized/rate-limited.
  */
 export async function requireGuestWriteScope(req: NextRequest): Promise<GuestWriteScope> {
-  const admin = await requireAdminOrg(req);
-  if (!admin.ok) return { ok: false, response: authError(admin) };
+  const auth = await authenticateRequest(req);
+  if (!auth) return { ok: false, response: authError({ ok: false, status: 401 }) };
+
+  // JWT is only the entry gate; the elevation authority is the DB role below.
+  let effectiveRole = auth.role;
+  const dbUser = await db.appUser.findUnique({
+    where: { id: auth.userId },
+    select: { role: true, isActive: true },
+  });
+  if (dbUser) {
+    if (!dbUser.isActive) return { ok: false, response: authError({ ok: false, status: 401 }) };
+    effectiveRole = dbUser.role;
+  }
+
+  // Guest lifecycle management requires Organization Admin OR Manager.
+  if (!hasRolePermission(effectiveRole, 'manager')) {
+    return {
+      ok: false,
+      response: authError({ ok: false, status: 403 }, { permission: 'guests.manage', userRole: effectiveRole }),
+    };
+  }
+
+  const callerOrg = auth.activeOrganizationId || auth.organizationId;
+  if (!callerOrg) return { ok: false, response: authError({ ok: false, status: 403 }, { permission: 'guests.manage', userRole: effectiveRole }) };
+
+  const org = await db.organization.findUnique({ where: { id: callerOrg }, select: { status: true } });
+  if (!org || org.status !== 'active') return { ok: false, response: authError({ ok: false, status: 403 }, { permission: 'guests.manage', userRole: effectiveRole }) };
+
   const clientIp = getClientIpFromHeaders(req.headers);
   const rl = await checkRateLimit(`guest:${clientIp}`, RATE_LIMITS.deviceClaimWrite.limit, RATE_LIMITS.deviceClaimWrite.windowMs);
   if (!rl.allowed) {
@@ -102,7 +138,7 @@ export async function requireGuestWriteScope(req: NextRequest): Promise<GuestWri
       ),
     };
   }
-  return { ok: true, organizationId: admin.organizationId, userId: admin.userId, email: admin.email, clientIp };
+  return { ok: true, organizationId: callerOrg, userId: auth.userId, email: auth.email, clientIp };
 }
 
 /**
@@ -117,8 +153,15 @@ export async function findOrgGuest(guestId: string, organizationId: string) {
 }
 
 /**
- * Create the guest + guest-backed Employee atomically inside the caller's
- * transaction. The caller is responsible for:
+ * Create the Guest + guest-backed Employee atomically inside the caller's
+ * transaction. "Approve as Guest" yields a GUEST workforce state: an
+ * Employee row with Employee.type = 'guest', plus an ACTIVE Guest lifecycle
+ * row so the enrollment stays addressable/manageable in the Guests view
+ * (Active / Suspended / Rejected / Convert to Employee). A Guest may remain a
+ * Guest indefinitely, or an authorized Org Admin/Manager may convert it to an
+ * Employee later.
+ *
+ * The caller is responsible for:
  *   - admin org scope (requireAdminOrg),
  *   - the Device row lock + claim pending/expiry checks (concurrency),
  *   - the pending-guest cap check,
@@ -129,7 +172,8 @@ export async function findOrgGuest(guestId: string, organizationId: string) {
  * Employee is created with guestId = NULL, then the Guest row is created, then
  * the Employee is back-linked.
  *
- * NEVER creates an AgentAccount. Monitoring consent is granted separately via
+ * NEVER creates an AgentAccount, AppUser, OrganizationMembership, password or
+ * Admin Panel login. Monitoring consent is granted separately via
  * grantGuestMonitoringConsents (auto-grant at approval).
  */
 export async function createGuestBackedEmployee(
@@ -152,10 +196,13 @@ export async function createGuestBackedEmployee(
       lastName: identity.lastName,
       email: identity.email,
       status: 'active',
+      // GUEST is a legitimate, intentional workforce state (not an error).
+      // It is converted to 'employee' only when an authorized user chooses
+      // "Convert to Employee" via the secure conversion endpoint.
       type: 'guest',
       organizationId: input.organizationId,
       // Approved devices authenticate via PATH A device-secret — an
-      // AgentAccount is deliberately NEVER created for guests.
+      // AgentAccount is deliberately NEVER created.
       agentApproved: true,
     },
     select: { id: true, employeeId: true },

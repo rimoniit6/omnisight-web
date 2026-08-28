@@ -268,7 +268,7 @@ st('AT-20: location returns latest + history with coordinates only', async () =>
   const res = await callGet('../src/app/api/employees/[id]/location/route', adminA, `/api/employees/${empA.id}/location`);
   assert.equal(res.status, 200);
   const body = (await res.json()) as {
-    latest: { latitude: number; longitude: number; accuracy: number; recordedAt: string };
+    latest: { latitude: number; longitude: number; accuracy: number | null; recordedAt: string };
     history: Array<Record<string, unknown>>;
     total: number;
   };

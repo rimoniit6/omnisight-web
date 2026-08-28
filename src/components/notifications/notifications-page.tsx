@@ -300,7 +300,7 @@ export function NotificationsPage() {
           setCurrentPage('consent');
           break;
         case 'guest':
-          setCurrentPage('guests');
+          setCurrentPage('agent-approvals');
           break;
         case 'alert':
           setCurrentPage('alerts');
@@ -322,7 +322,7 @@ export function NotificationsPage() {
           else if (url.startsWith('/anomalies')) setCurrentPage('anomalies');
           else if (url.startsWith('/projects')) setCurrentPage('projects');
           else if (url.startsWith('/consent')) setCurrentPage('consent');
-          else if (url.startsWith('/guests')) setCurrentPage('guests');
+          else if (url.startsWith('/guests')) setCurrentPage('agent-approvals');
           else if (url.startsWith('/alerts')) setCurrentPage('alerts');
           else if (url.startsWith('/reports')) setCurrentPage('reports');
           else if (url.startsWith('/screenshots')) setCurrentPage('screenshots');
@@ -813,7 +813,7 @@ export function NotificationsPage() {
                                       setCurrentPage('consent');
                                       break;
                                     case 'guest':
-                                      setCurrentPage('guests');
+                                      setCurrentPage('agent-approvals');
                                       break;
                                     case 'alert':
                                       setCurrentPage('alerts');

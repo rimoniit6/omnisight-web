@@ -21,7 +21,7 @@ function buildContentSecurityPolicy(): string {
     "default-src 'self'; " +
     scriptSrc +
     "style-src 'self' 'unsafe-inline'; " +
-    "img-src 'self' data: blob:; " +
+    "img-src 'self' data: blob: https://*.tile.openstreetmap.org; " +
     "font-src 'self' data:; " +
     "connect-src 'self' ws: wss:; " +
     "frame-ancestors 'none'; " +

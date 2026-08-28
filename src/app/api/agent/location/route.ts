@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
 import { validateAgentToken } from '@/lib/agent/auth';
 import { hasActiveConsent } from '@/lib/consent';
 import { resolveOrgMonitoring } from '@/lib/jobs/settings';
+import { recordAgentLocation } from '@/lib/location-service';
 import { log, requestContext } from '@/lib/logger';
 
 // POST /api/agent/location
@@ -16,11 +16,21 @@ import { log, requestContext } from '@/lib/logger';
 //
 // Enforcement chain:
 //   validateAgentToken → location consent (403) → org `location_tracking`
-//   (403) → strict coordinate/timestamp validation → LocationEvent row.
+//   (403) → strict coordinate/timestamp validation → 5 KM movement filter
+//   (server-authoritative) → LocationEvent row (only when the fix is a
+//   significant movement from the previously *accepted* location).
+//
+// The 5 KM filter is enforced HERE, server-side, not in the Agent UI. The
+// Agent keeps sending fixes normally; the server decides whether a fix
+// becomes an accepted history event. This keeps behaviour consistent across
+// all agents and prevents repeated/duplicate uploads from bloating history.
+//
+// Movement < 5 KM returns HTTP 200 with `{ accepted: false, ... }` (NOT an
+// error) so the Agent client keeps working unchanged.
 
 const FUTURE_SKEW_MS = 5 * 60 * 1000;
 const MAX_ACCURACY_METERS = 1_000_000;
-const ALLOWED_KEYS = new Set(['latitude', 'longitude', 'accuracy', 'timestamp']);
+const ALLOWED_KEYS = new Set(['latitude', 'longitude', 'accuracy', 'timestamp', 'source']);
 const FORBIDDEN_KEYS = new Set(['address', 'reverseGeocodedAddress', 'rawDeviceLocationMetadata', 'street', 'city', 'postalCode', 'country']);
 
 function isIsoTime(value: unknown): value is string {
@@ -67,15 +77,16 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    const { latitude, longitude, accuracy, timestamp } = body;
+    const { latitude, longitude, accuracy, timestamp, source } = body;
     if (!isFiniteNumber(latitude) || latitude < -90 || latitude > 90) {
       return NextResponse.json({ error: 'latitude must be a number in [-90, 90]' }, { status: 422 });
     }
     if (!isFiniteNumber(longitude) || longitude < -180 || longitude > 180) {
       return NextResponse.json({ error: 'longitude must be a number in [-180, 180]' }, { status: 422 });
     }
-    if (!isFiniteNumber(accuracy) || accuracy < 0 || accuracy > MAX_ACCURACY_METERS) {
-      return NextResponse.json({ error: `accuracy must be a number in [0, ${MAX_ACCURACY_METERS}] meters` }, { status: 422 });
+    // Accuracy: nullable — null when source='ip' (no GPS accuracy available)
+    if (accuracy !== null && (!isFiniteNumber(accuracy) || accuracy < 0 || accuracy > MAX_ACCURACY_METERS)) {
+      return NextResponse.json({ error: `accuracy must be null or a number in [0, ${MAX_ACCURACY_METERS}] meters` }, { status: 422 });
     }
     if (!isIsoTime(timestamp)) {
       return NextResponse.json({ error: 'timestamp must be an ISO timestamp' }, { status: 422 });
@@ -84,20 +95,44 @@ export async function POST(req: NextRequest) {
     if (recordedAt.getTime() > Date.now() + FUTURE_SKEW_MS) {
       return NextResponse.json({ error: 'timestamp is in the future' }, { status: 422 });
     }
+    // Source: 'native' or 'ip' — defaults to 'ip' for backward compatibility
+    const locationSource = source === 'native' ? 'native' : 'ip';
 
-    const created = await db.locationEvent.create({
-      data: {
-        employeeId: employee.id,
-        deviceId: authResult.deviceId || null,
-        organizationId: employee.organizationId,
-        latitude,
-        longitude,
-        accuracy,
-        recordedAt,
-      },
+    const result = await recordAgentLocation({
+      employeeId: employee.id,
+      organizationId: employee.organizationId,
+      deviceId: authResult.deviceId || null,
+      latitude,
+      longitude,
+      accuracy,
+      recordedAt,
+      source: locationSource,
     });
 
-    return NextResponse.json({ success: true, id: created.id, message: 'Location recorded' });
+    if (result.accepted) {
+      return NextResponse.json({
+        success: true,
+        accepted: true,
+        id: result.id,
+        first: result.first,
+        distanceKm: result.distanceKm,
+        thresholdKm: result.thresholdKm,
+        message: result.first
+          ? 'First location recorded'
+          : 'Location recorded — significant movement accepted',
+      });
+    }
+
+    // Below the movement threshold: not an error. The Agent keeps sending
+    // fixes; only significant movements become history events.
+    return NextResponse.json({
+      success: false,
+      accepted: false,
+      reason: result.reason,
+      thresholdKm: result.thresholdKm,
+      distanceKm: result.distanceKm,
+      message: 'Movement below threshold — not recorded as a new history event',
+    });
   } catch (error) {
     log.error('api.agent.location.', { error: String('Agent location error:') }, requestContext(req));
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });

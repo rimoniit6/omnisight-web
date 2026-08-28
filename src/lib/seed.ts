@@ -28,7 +28,6 @@ async function seed() {
   await db.organizationSetting.deleteMany();
   await db.jobRun.deleteMany();
   await db.agentToken.deleteMany();
-  await db.agentRegistration.deleteMany();
   await db.usbEvent.deleteMany();
   await db.appListEntry.deleteMany();
   await db.screenshot.deleteMany();

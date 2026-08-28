@@ -9,8 +9,8 @@ import { getRolesWithPermission, getRoleLabelFromPermissions } from '@/lib/permi
 
 // ─── Safe employee projection (approval lists / responses) ─────────────────
 // Employee rows carry credential material (`agentPassword`) that must never be
-// serialized. The approval list/response paths (agent-registrations,
-// device-claims) whitelist exactly the display fields the UI needs instead of
+// serialized. The approval list/response paths (device-claims) whitelist
+// exactly the display fields the UI needs instead of
 // including the full row — mirroring the `agentPassword` strip already done in
 // the employees API. Any future employee serialization must use a select/
 // destructure that excludes credential fields.

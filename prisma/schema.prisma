@@ -48,7 +48,6 @@ model Organization {
   auditLogs     AuditLog[]
   reports       Report[]
   aiInsights    AiInsight[]
-  agentRegistrations AgentRegistration[]
   deviceClaims       DeviceClaim[]
   guests             Guest[]
   screenshots   Screenshot[]
@@ -144,7 +143,6 @@ model Employee {
   activities     Activity[]
   departmentAsManager Department[] @relation("DepartmentManager")
   agentTokens    AgentToken[]
-  agentRegistrations AgentRegistration[]
   deviceClaims   DeviceClaim[]
   screenshots    Screenshot[]
   anomalies      Anomaly[]
@@ -397,9 +395,11 @@ model LocationEvent {
   deviceId       String?
   latitude       Float
   longitude      Float
-  accuracy       Float
+  accuracy       Float?  // null when source='ip' (no GPS accuracy available)
   recordedAt     DateTime
   organizationId String
+  /** Location source: 'native' = Windows/device GPS, 'ip' = IP-based geolocation fallback. */
+  source         String   @default("ip")
   createdAt      DateTime @default(now())
 
   // Relations
@@ -734,34 +734,6 @@ model RateLimitCounter {
 
 
 // ==================== Agent Registration (Pending Approval) ====================
-
-model AgentRegistration {
-  id              String   @id @default(cuid())
-  employeeId      String   @unique // Employee trying to register
-  hostname        String
-  operatingSystem String?
-  osVersion       String?
-  processor       String?
-  memory          String?
-  ipAddress       String?
-  macAddress      String?
-  agentVersion    String?
-  status          String   @default("pending") // pending, approved, rejected, expired
-  deviceName      String?  // Proposed device name
-  rejectionReason String?
-  organizationId  String
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
-
-  // Relations
-  employee    Employee     @relation(fields: [employeeId], references: [id], onDelete: Cascade)
-  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-
-  @@index([organizationId])
-  @@index([status])
-  // Live-updates poll: new registrations since cursor (LM-6)
-  @@index([createdAt])
-}
 
 // ==================== Agent Token (Authenticated Sessions) ====================
 

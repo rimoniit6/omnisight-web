@@ -103,21 +103,6 @@ export function deviceClaimInvalidation(): string[][] {
 }
 
 /**
- * Query keys invalidated by an `agent-registration` transition (a legacy
- * registration was created, approved, or rejected).
- *
- * Same target set as device-claims: the approvals page list (prefix-matched
- * 'agent-registrations'), the sidebar pending badge, and global aggregates.
- */
-export function agentRegistrationInvalidation(): string[][] {
-  return [
-    ['agent-registrations'],
-    ['dashboard'],
-    ['event-stats'],
-  ];
-}
-
-/**
  * Query keys invalidated by a `guest` transition (a guest enrollment was
  * created, suspended, reactivated, or revoked).
  *
@@ -174,6 +159,19 @@ export function policyViolationInvalidation(): string[][] {
  */
 export function usbEventInvalidation(): string[][] {
   return [['usb-events']];
+}
+
+/**
+ * Query keys invalidated by a `location-update` event (a new GPS fix arrived
+ * for an employee). The LocationPanel refetches the employee's location API
+ * to get the actual coordinates — coordinates are NEVER sent through the
+ * WebSocket for privacy.
+ */
+export function locationUpdateInvalidation(employeeId: string): string[][] {
+  return [
+    ['employee-location', employeeId],
+    ['tracking-status', employeeId],
+  ];
 }
 
 /**

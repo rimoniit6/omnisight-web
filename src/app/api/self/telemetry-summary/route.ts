@@ -93,12 +93,12 @@ export async function GET(req: NextRequest) {
     }
 
     // ── Location (latest fix only — no history, no reverse geocoding) ──
-    let latestLocation: { latitude: number; longitude: number; accuracy: number; recordedAt: string } | null = null;
+    let latestLocation: { latitude: number; longitude: number; accuracy: number | null; recordedAt: string; source: string } | null = null;
     if (locationConsent && monitoring.location_tracking) {
       const latest = await db.locationEvent.findFirst({
         where: { employeeId },
         orderBy: { recordedAt: 'desc' },
-        select: { latitude: true, longitude: true, accuracy: true, recordedAt: true },
+        select: { latitude: true, longitude: true, accuracy: true, recordedAt: true, source: true },
       });
       if (latest) latestLocation = { ...latest, recordedAt: latest.recordedAt.toISOString() };
     }

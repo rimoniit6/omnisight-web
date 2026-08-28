@@ -12,7 +12,6 @@ import {
   Bell,
   Pause,
   Camera,
-  UserPlus,
   Wifi,
   WifiOff,
   Radio,
@@ -29,7 +28,6 @@ const eventIcons: Record<string, { icon: React.ElementType; color: string; bgCol
   'notification': { icon: Bell, color: 'text-amber-600 dark:text-amber-400', bgColor: 'bg-amber-100 dark:bg-amber-900/30' },
   'break-status': { icon: Pause, color: 'text-orange-600 dark:text-orange-400', bgColor: 'bg-orange-100 dark:bg-orange-900/30' },
   'screenshot': { icon: Camera, color: 'text-purple-600 dark:text-purple-400', bgColor: 'bg-purple-100 dark:bg-purple-900/30' },
-  'agent-registration': { icon: UserPlus, color: 'text-teal-600 dark:text-teal-400', bgColor: 'bg-teal-100 dark:bg-teal-900/30' },
 };
 
 const priorityStyles: Record<string, string> = {
@@ -84,7 +82,6 @@ export function LiveFeedPanel({ isOpen, onClose }: LiveFeedPanelProps) {
     lastBreakStatus,
     lastNotification,
     lastScreenshot,
-    lastAgentRegistration,
   } = useWebSocket();
 
   if (!isOpen) return null;
@@ -189,12 +186,6 @@ export function LiveFeedPanel({ isOpen, onClose }: LiveFeedPanelProps) {
             <span className="flex items-center gap-0.5">
               <Camera className="h-2.5 w-2.5" />
               Screenshot
-            </span>
-          )}
-          {lastAgentRegistration && (
-            <span className="flex items-center gap-0.5">
-              <UserPlus className="h-2.5 w-2.5" />
-              Registration
             </span>
           )}
         </div>

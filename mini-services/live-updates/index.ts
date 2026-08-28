@@ -259,10 +259,6 @@ io.on('connection', async (socket) => {
 
 // Last known device status per device — only real status changes are emitted.
 const deviceStatus = new Map<string, string>();
-// Last known registration status per registration — the poll runs on
-// `updatedAt` (creation AND approve/reject transitions), so only real status
-// changes are emitted.
-const registrationStatus = new Map<string, string>();
 // Last known claim status per device claim — only real status transitions
 // (pending → approved/rejected/cancelled/expired, and back to pending on
 // re-registration) are emitted. Deliberately NOT warm at startup (same
@@ -326,7 +322,7 @@ async function pollOnce(): Promise<void> {
   const now = new Date();
 
   try {
-    const [changedDevices, newActivities, newNotifications, newScreenshots, newRegistrations, newUsbEvents, breakActivities, newAutoTimeEntries, newClaims, newAnomalies, changedAppPolicy, newPolicyViolations, newAlerts,        newGuests] =
+    const [changedDevices, newActivities, newNotifications, newScreenshots, newUsbEvents, breakActivities, newAutoTimeEntries, newClaims, newAnomalies, changedAppPolicy, newPolicyViolations, newAlerts,        newGuests, newLocations] =
       await Promise.all([
         db.device.findMany({
           where: { updatedAt: { gt: since } },
@@ -353,20 +349,6 @@ async function pollOnce(): Promise<void> {
             employee: { select: { firstName: true, lastName: true, organizationId: true } },
           },
           orderBy: { createdAt: 'desc' },
-          take: 5,
-        }),
-        // Legacy agent registrations — creation AND approve/reject transitions.
-        // Polled on `updatedAt` (NOT createdAt): an admin approving/rejecting a
-        // registration mutates only its status, and the approvals queue must
-        // reflect that in real time (Prisma sets updatedAt = createdAt on
-        // create, so creation is covered). Emission is transition-only via
-        // registrationStatus, so re-fetched rows are never re-broadcast.
-        db.agentRegistration.findMany({
-          where: { updatedAt: { gt: since } },
-          include: {
-            employee: { select: { id: true, firstName: true, lastName: true, organizationId: true } },
-          },
-          orderBy: { updatedAt: 'desc' },
           take: 5,
         }),
         // UsbEvent has no `employee` relation in the schema — it carries the
@@ -508,6 +490,22 @@ async function pollOnce(): Promise<void> {
           orderBy: { updatedAt: 'desc' },
           take: 5,
         }),
+        // Location events — new GPS fixes from agents. Polled on createdAt
+        // (each row is immutable). Emission is org-scoped so only the
+        // affected organization's admin receives the update. The client uses
+        // the event as a signal to refetch the employee's location API —
+        // coordinates are NEVER sent through the WebSocket (privacy).
+        db.locationEvent.findMany({
+          where: { createdAt: { gt: since } },
+          select: {
+            id: true,
+            employeeId: true,
+            organizationId: true,
+            createdAt: true,
+          },
+          orderBy: { createdAt: 'desc' },
+          take: 20,
+        }),
       ]);
 
     // Advance the poll cursor past every EVENT row this round actually
@@ -517,15 +515,14 @@ async function pollOnce(): Promise<void> {
     // duplicate activity-ping / live-feed entry bug). Device rows are
     // deliberately excluded: their status/presence broadcasts are already
     // transition-only (in-memory maps), so re-fetching is harmless and
-    // leaving them out keeps this change surgical. Registrations and claims
-    // are likewise transition-only (registrationStatus / claimStatus), so
-    // their rows contribute their `updatedAt` (the poll filter) for cursor
-    // hygiene but can never double-broadcast.
+    // leaving them out keeps this change surgical. Claims are likewise
+    // transition-only (claimStatus), so their rows contribute their
+    // `updatedAt` (the poll filter) for cursor hygiene but can never
+    // double-broadcast.
     cursor = nextPollCursor(now, [
       ...newActivities.map((a) => ({ ts: a.createdAt })),
       ...newNotifications.map((n) => ({ ts: n.createdAt })),
       ...newScreenshots.map((s) => ({ ts: s.createdAt })),
-      ...newRegistrations.map((r) => ({ ts: r.updatedAt })),
       ...newUsbEvents.map((u) => ({ ts: u.createdAt })),
       ...breakActivities.map((b) => ({ ts: b.createdAt })),
       ...newAutoTimeEntries.map((te) => ({ ts: te.updatedAt })),
@@ -534,6 +531,7 @@ async function pollOnce(): Promise<void> {
       ...changedAppPolicy.map((p) => ({ ts: p.updatedAt })),
       ...newPolicyViolations.map((v) => ({ ts: v.createdAt })),
       ...newGuests.map((g) => ({ ts: g.updatedAt })),
+      ...newLocations.map((l) => ({ ts: l.createdAt })),
     ]);
 
     // Persist the new cursor AFTER the round's broadcasts. Failure is logged
@@ -654,25 +652,6 @@ async function pollOnce(): Promise<void> {
       });
     }
 
-    // Agent registrations (creation AND approve/reject transitions — the
-    // registrationStatus map keeps re-fetched rows silent; status is included
-    // so the client can title the event accurately).
-    for (const r of newRegistrations) {
-      const prev = registrationStatus.get(r.id);
-      if (prev === r.status) continue;
-      registrationStatus.set(r.id, r.status);
-      const emp = r.employee;
-      if (!emp) continue;
-      io.to(`org:${emp.organizationId}`).emit('agent-registration', {
-        id: r.id,
-        employeeName: `${emp.firstName} ${emp.lastName}`,
-        hostname: r.hostname,
-        operatingSystem: r.operatingSystem || 'Unknown',
-        status: r.status,
-        timestamp: r.updatedAt.toISOString(),
-      });
-    }
-
     // Zero-touch device claims (creation AND lifecycle transitions — the
     // claimStatus map keeps re-fetched rows silent; status is included so the
     // client can render approved/rejected/cancelled/expired accurately).
@@ -784,6 +763,17 @@ async function pollOnce(): Promise<void> {
       });
     }
 
+    // Location events — notify the admin's org that a new location fix
+    // arrived. The event carries NO coordinates (privacy); the client
+    // refetches the employee's location API to get the actual data.
+    for (const loc of newLocations) {
+      io.to(`org:${loc.organizationId}`).emit('location-update', {
+        id: loc.id,
+        employeeId: loc.employeeId,
+        timestamp: loc.createdAt.toISOString(),
+      });
+    }
+
   } catch (err) {
     console.error('[live-updates] pollOnce error:', err);
   }
@@ -803,7 +793,6 @@ const REQUIRED_POLL_MODELS: (keyof PrismaClient)[] = [
   'notification',
   'alert',
   'screenshot',
-  'agentRegistration',
   'usbEvent',
   'guest',
   'timeEntry',
@@ -812,6 +801,7 @@ const REQUIRED_POLL_MODELS: (keyof PrismaClient)[] = [
   'department',
   'appListEntry',
   'policyViolation',
+  'locationEvent',
 ];
 
 async function assertPollModels(): Promise<void> {
