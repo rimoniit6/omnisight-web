@@ -281,6 +281,7 @@ CREATE TABLE "AgentToken" (
     "id" TEXT NOT NULL,
     "token" TEXT NOT NULL,
     "employeeId" TEXT NOT NULL,
+    "organizationId" TEXT NOT NULL,
     "deviceId" TEXT,
     "ipAddress" TEXT,
     "userAgent" TEXT,
@@ -661,6 +662,9 @@ CREATE UNIQUE INDEX "AgentToken_token_key" ON "AgentToken"("token");
 CREATE INDEX "AgentToken_employeeId_idx" ON "AgentToken"("employeeId");
 
 -- CreateIndex
+CREATE INDEX "AgentToken_organizationId_idx" ON "AgentToken"("organizationId");
+
+-- CreateIndex
 CREATE INDEX "Screenshot_organizationId_idx" ON "Screenshot"("organizationId");
 
 -- CreateIndex
@@ -848,6 +852,9 @@ ALTER TABLE "AgentRegistration" ADD CONSTRAINT "AgentRegistration_organizationId
 
 -- AddForeignKey
 ALTER TABLE "AgentToken" ADD CONSTRAINT "AgentToken_employeeId_fkey" FOREIGN KEY ("employeeId") REFERENCES "Employee"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "AgentToken" ADD CONSTRAINT "AgentToken_organizationId_fkey" FOREIGN KEY ("organizationId") REFERENCES "Organization"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "Screenshot" ADD CONSTRAINT "Screenshot_employeeId_fkey" FOREIGN KEY ("employeeId") REFERENCES "Employee"("id") ON DELETE CASCADE ON UPDATE CASCADE;

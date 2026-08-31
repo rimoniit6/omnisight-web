@@ -12,6 +12,7 @@
 import { db } from '@/lib/db';
 import { hashPasswordSync } from '@/lib/auth';
 import { randomBytes } from 'crypto';
+import { bootstrapSuperAdmin } from '@/lib/super-admin';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 function pick<T>(arr: T[]): T {
@@ -230,28 +231,34 @@ async function seedDemo() {
 
   // ── 3. Create Admin Users ──
   console.log('👤 Creating admin users...');
-  const superAdminHash = hashPasswordSync('Rimon2714');
   const demoHash = hashPasswordSync('demo1234');
 
-  // Super Admin account (platform-level, no organization)
-  const superAdminEmail = 'rimon@admin.com';
+  // Use the existing Super Admin bootstrap mechanism — never create a duplicate.
+  const superAdminResult = await bootstrapSuperAdmin();
+  const superAdminUser = await db.appUser.findFirst({
+    where: { email: { equals: superAdminResult.email, mode: 'insensitive' } },
+  });
+  if (!superAdminUser) throw new Error('Super Admin bootstrap failed — user not found after bootstrap');
+  if (superAdminResult.created) {
+    console.log(`   ✅ Super Admin created: ${superAdminUser.email}`);
+  } else {
+    console.log(`   ℹ️  Super Admin already exists — left unchanged: ${superAdminUser.email} (role=${superAdminUser.role})`);
+  }
 
+  // Organization-level admin users (platform role remains 'user')
   await db.appUser.createMany({
     data: [
-      { email: superAdminEmail, name: 'Rimon Admin', password: superAdminHash, role: 'super_admin', organizationId: null, isActive: true },
-      { email: 'org.admin@acmetech.com', name: 'Jordan Blake', password: demoHash, role: 'admin', organizationId: orgId, isActive: true },
-      { email: 'manager@acmetech.com', name: 'Casey Rivera', password: demoHash, role: 'manager', organizationId: orgId, isActive: true },
-      { email: 'viewer@acmetech.com', name: 'Pat Morgan', password: demoHash, role: 'viewer', organizationId: orgId, isActive: true },
+      { email: 'org.admin@acmetech.com', name: 'Jordan Blake', password: demoHash, role: 'user', organizationId: null, isActive: true },
+      { email: 'manager@acmetech.com', name: 'Casey Rivera', password: demoHash, role: 'user', organizationId: null, isActive: true },
+      { email: 'viewer@acmetech.com', name: 'Pat Morgan', password: demoHash, role: 'user', organizationId: null, isActive: true },
     ],
     skipDuplicates: true,
   });
   const users = await db.appUser.findMany({ where: { organizationId: orgId } });
-  const allUsers = await db.appUser.findMany({ where: { organizationId: null } });
-  const superAdminUser = allUsers.find(u => u.role === 'super_admin')!;
-  const orgAdminUser = users.find(u => u.role === 'admin')!;
-  const managerUser = users.find(u => u.role === 'manager')!;
-  const viewerUser = users.find(u => u.role === 'viewer')!;
-  console.log(`   ✅ ${4} admin users created\n`);
+  const orgAdminUser = (await db.appUser.findFirst({ where: { email: 'org.admin@acmetech.com' } }))!;
+  const managerUser = (await db.appUser.findFirst({ where: { email: 'manager@acmetech.com' } }))!;
+  const viewerUser = (await db.appUser.findFirst({ where: { email: 'viewer@acmetech.com' } }))!;
+  console.log(`   ✅ 3 organization admin users created\n`);
 
   // ── 3b. Create OrganizationMemberships (authoritative role source) ──
   console.log('🔗 Creating organization memberships...');
@@ -785,7 +792,7 @@ async function seedDemo() {
 
   console.log('\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
   console.log('  🔑 Login Credentials:');
-  console.log(`  Super Admin: ${superAdminEmail} / ${process.env.SUPER_ADMIN_PASSWORD || 'admin1234'}`);
+  console.log(`  Super Admin: ${superAdminUser.email} (use configured SUPER_ADMIN_PASSWORD)`);
   console.log(`  Org Admin:   org.admin@acmetech.com / demo1234`);
   console.log(`  Manager:     manager@acmetech.com / demo1234`);
   console.log(`  Viewer:      viewer@acmetech.com / demo1234`);

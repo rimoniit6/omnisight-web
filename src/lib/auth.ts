@@ -306,15 +306,17 @@ export function getRequestToken(req: NextRequest): string | null {
 }
 
 /**
- * Check if a role has the required permission level
- * Roles hierarchy: super_admin > owner > admin > manager > viewer
+ * Check if a role has the required permission level.
+ * Global roles: super_admin, user.
+ * Organization roles: org_admin, manager, viewer.
+ * Legacy roles (owner, admin) are mapped to org_admin for backward compat.
  */
 export function hasRolePermission(userRole: string, requiredRole: string): boolean {
   const hierarchy: Record<string, number> = {
     super_admin: 50,
-    owner: 40,
     org_admin: 35,
-    admin: 30,
+    owner: 35,   // legacy alias → same level as org_admin
+    admin: 35,   // legacy alias → same level as org_admin
     manager: 20,
     viewer: 10,
   };
@@ -331,9 +333,10 @@ export function hasRolePermission(userRole: string, requiredRole: string): boole
 export function getRoleLabel(role: string): string {
   const labels: Record<string, string> = {
     super_admin: 'Super Admin',
+    user: 'User',
     org_admin: 'Organization Admin',
-    admin: 'Admin',
-    owner: 'Owner',
+    admin: 'Organization Admin',  // legacy alias
+    owner: 'Organization Admin',  // legacy alias
     manager: 'Manager',
     viewer: 'Viewer',
   };

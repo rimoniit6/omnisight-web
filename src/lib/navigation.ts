@@ -50,9 +50,11 @@ export const PAGE_MIN_ROLE: Record<PageType, NavMinRole> = {
   'ai-provider': 'org_admin',
   'agent-approvals': 'org_admin',
   organization: 'org_admin',
+  users: 'org_admin',
   security: 'org_admin',
   settings: 'org_admin',
-  // Super Admin pages — only super_admin role can access
+  // Super Admin pages — PAGE_MIN_ROLE is 'org_admin' for the type requirement,
+  // but canAccessPage() has a special case that enforces exact 'super_admin' role.
   'super-admin-organizations': 'org_admin',
   'super-admin-organization-detail': 'org_admin',
 };

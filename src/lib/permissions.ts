@@ -225,9 +225,10 @@ export function getPermissionsForRole(role: string): Permission[] {
 
 export const ROLE_LABELS: Record<string, string> = {
   super_admin: 'Super Admin',
+  user: 'User',
   org_admin: 'Organization Admin',
-  admin: 'Admin',
-  owner: 'Owner',
+  admin: 'Organization Admin',  // legacy alias
+  owner: 'Organization Admin',  // legacy alias
   manager: 'Manager',
   viewer: 'Viewer',
 };

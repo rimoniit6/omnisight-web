@@ -7,9 +7,9 @@ import { log, requestContext } from '@/lib/logger';
 /** Role hierarchy levels for C-2 privilege-escalation guard. */
 const ROLE_LEVELS: Record<string, number> = {
   super_admin: 50,
-  owner: 40,
   org_admin: 35,
-  admin: 30,
+  owner: 35,   // legacy alias
+  admin: 35,   // legacy alias
   manager: 20,
   viewer: 10,
 };
@@ -128,7 +128,7 @@ export async function PUT(
     if (isActive !== undefined) updateData.isActive = isActive;
 
     if (role !== undefined) {
-      const validRoles = ['super_admin', 'owner', 'org_admin', 'admin', 'manager', 'viewer'];
+      const validRoles = ['org_admin', 'manager', 'viewer'];
       if (!validRoles.includes(role)) {
         return NextResponse.json({ error: 'Invalid role' }, { status: 400 });
       }
@@ -152,6 +152,18 @@ export async function PUT(
           { status: 403 }
         );
       }
+
+      // Spec §26: Last Super Admin protection — prevent demoting the last
+      // active Super Admin account.
+      if (user.role === 'super_admin' && role !== 'super_admin') {
+        const activeSuperAdminCount = await db.appUser.count({
+          where: { role: 'super_admin', isActive: true },
+        });
+        if (activeSuperAdminCount <= 1) {
+          return NextResponse.json({ error: 'Cannot demote the last Super Admin' }, { status: 403 });
+        }
+      }
+
       updateData.role = role;
     }
 
@@ -266,6 +278,17 @@ export async function DELETE(
     // Cannot delete super_admin
     if (user.role === 'super_admin') {
       return NextResponse.json({ error: 'Cannot delete Super Admin' }, { status: 403 });
+    }
+
+    // Spec §26: Last Super Admin protection — prevent deactivating the last
+    // active Super Admin account.
+    if (user.role === 'super_admin' || payload.role === 'super_admin') {
+      const activeSuperAdminCount = await db.appUser.count({
+        where: { role: 'super_admin', isActive: true },
+      });
+      if (activeSuperAdminCount <= 1) {
+        return NextResponse.json({ error: 'Cannot deactivate the last Super Admin' }, { status: 403 });
+      }
     }
 
     await db.appUser.update({

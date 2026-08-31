@@ -2,14 +2,15 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { getRequestToken, hashPassword, hasRolePermission, getRoleLabel } from '@/lib/auth';
 import { verifySessionToken } from '@/lib/session';
+import { normalizeEmail } from '@/lib/email';
 import { log, requestContext } from '@/lib/logger';
 
 /** Role hierarchy levels for C-2 privilege-escalation guard. */
 const ROLE_LEVELS: Record<string, number> = {
   super_admin: 50,
-  owner: 40,
   org_admin: 35,
-  admin: 30,
+  owner: 35,   // legacy alias
+  admin: 35,   // legacy alias
   manager: 20,
   viewer: 10,
 };
@@ -125,12 +126,15 @@ export async function POST(req: NextRequest) {
     }
 
     const body = await req.json();
-    const { email, name, password, role } = body as {
+    const { name, password, role } = body as {
       email?: string;
       name?: string;
       password?: string;
       role?: string;
     };
+
+    // E-01: Normalize email — trim + lowercase for consistent storage.
+    const email = normalizeEmail(body.email);
 
     if (!email || !name || !password || !role) {
       return NextResponse.json(
@@ -139,17 +143,16 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const validRoles = ['super_admin', 'owner', 'org_admin', 'admin', 'manager', 'viewer'];
+    // Spec §14: Only org-level roles can be assigned through user creation.
+    // super_admin must be provisioned through the bootstrap or a separate
+    // protected operation — never through the normal user-creation API.
+    const validRoles = ['org_admin', 'manager', 'viewer'];
     if (!validRoles.includes(role)) {
       return NextResponse.json({ error: `Invalid role. Must be one of: ${validRoles.join(', ')}` }, { status: 400 });
     }
 
-    // Only super_admin can create super_admin users
-    if (role === 'super_admin' && payload.role !== 'super_admin') {
-      return NextResponse.json({ error: 'Only Super Admin can create Super Admin users' }, { status: 403 });
-    }
-
     // C-2: Privilege escalation guard — assigner must have >= target role level.
+    // Only super_admin can create org_admin users.
     const assignerLevel = ROLE_LEVELS[payload.role] ?? 0;
     const targetLevel = ROLE_LEVELS[role] ?? 0;
     if (payload.role !== 'super_admin' && assignerLevel < targetLevel) {
@@ -169,14 +172,12 @@ export async function POST(req: NextRequest) {
       ? (body.organizationId as string | undefined) || payload.organizationId || null
       : payload.organizationId || null;
 
-    // Check if email already exists within the same organization scope
-    const existing = await db.appUser.findFirst({
+    // Check if email already exists (case-insensitive).
+    const existingUser = await db.appUser.findFirst({
       where: {
-        email: { contains: email },
-        ...(targetOrgId ? { organizationId: targetOrgId } : {}),
+        email: { equals: email, mode: 'insensitive' },
       },
     });
-    const existingUser = existing && existing.email.toLowerCase() === email.toLowerCase();
 
     if (existingUser) {
       return NextResponse.json({ error: 'Email already exists' }, { status: 409 });
@@ -185,24 +186,25 @@ export async function POST(req: NextRequest) {
     const hashedPassword = await hashPassword(password);
 
     const user = await db.$transaction(async (tx) => {
+      // AppUser.role is always "user" for normal accounts. The organization-
+      // specific role (org_admin, manager, viewer) belongs to OrganizationMembership,
+      // NOT to AppUser.role. Only the bootstrap Super Admin gets role="super_admin".
       const created = await tx.appUser.create({
         data: {
-          email,
+          email: email, // already normalized via normalizeEmail above
           name,
           password: hashedPassword,
-          role,
+          role: 'user',
           organizationId: targetOrgId,
           isActive: true,
         },
       });
 
-      // P1: OrganizationMembership is now the authoritative membership layer.
-      // For org-bound roles, create an ACTIVE membership in the target org so
-      // the user is genuinely multi-org capable (different roles per org).
-      // super_admin is a global role and intentionally has no per-org
-      // membership. The compound-unique [userId, organizationId] constraint
-      // prevents duplicate memberships; upsert keeps create idempotent.
-      if (role !== 'super_admin' && targetOrgId) {
+      // P1: OrganizationMembership is the authoritative membership layer.
+      // All non-super_admin roles create an ACTIVE membership in the target org.
+      // The compound-unique [userId, organizationId] constraint prevents
+      // duplicate memberships; upsert keeps create idempotent.
+      if (targetOrgId) {
         await tx.organizationMembership.upsert({
           where: {
             userId_organizationId: { userId: created.id, organizationId: targetOrgId },

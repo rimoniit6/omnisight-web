@@ -808,3 +808,152 @@ test('SH-31: rapid-fire uploads produce unique, collision-proof filenames', asyn
     createdFiles.push(f);
   }
 });
+
+// ─── G. Regression: environment + persistence verification ──────────────────
+
+test('SH-33: placeholder Supabase configuration is detected and rejected', async () => {
+  // The resolveStorageDriver function must reject placeholder URLs
+  const { resolveStorageDriver } = await import('../src/lib/storage');
+  const origUrl = process.env.SUPABASE_URL;
+  const origKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  const origDriver = process.env.STORAGE_DRIVER;
+  try {
+    process.env.STORAGE_DRIVER = 'supabase';
+    process.env.SUPABASE_URL = 'REPLACE_WITH_YOUR_SUPABASE_URL';
+    process.env.SUPABASE_SERVICE_ROLE_KEY = 'REPLACE_WITH_YOUR_KEY';
+    assert.throws(
+      () => resolveStorageDriver(),
+      /placeholder/i,
+      'must throw on placeholder Supabase URL'
+    );
+  } finally {
+    if (origUrl !== undefined) process.env.SUPABASE_URL = origUrl; else delete process.env.SUPABASE_URL;
+    if (origKey !== undefined) process.env.SUPABASE_SERVICE_ROLE_KEY = origKey; else delete process.env.SUPABASE_SERVICE_ROLE_KEY;
+    if (origDriver !== undefined) process.env.STORAGE_DRIVER = origDriver; else delete process.env.STORAGE_DRIVER;
+  }
+});
+
+test('SH-34: real local storage upload persists to disk', async () => {
+  const { token, emp } = await setupUploadDevice('SH34');
+  const { status, body } = await postScreenshot(token, PNG_BYTES, { mimeType: 'image/png', fileName: 'persist-test.png' });
+  assert.equal(status, 200, JSON.stringify(body));
+  const filename = body.filename as string;
+  createdFiles.push(filename);
+
+  // File must exist on disk with correct size
+  const onDisk = join(SCREENSHOT_DIR, filename);
+  assert.ok(existsSync(onDisk), `file ${filename} must exist on disk`);
+  const { statSync } = await import('node:fs');
+  const stat = statSync(onDisk);
+  assert.ok(stat.size > 0, 'file must be non-empty');
+  assert.equal(stat.size, PNG_BYTES.length, 'file size must match uploaded bytes');
+});
+
+test('SH-35: DB row maps to physical storage file', async () => {
+  const { token, emp } = await setupUploadDevice('SH35');
+  const { status, body } = await postScreenshot(token, PNG_BYTES, { mimeType: 'image/png', fileName: 'db-map-test.png' });
+  assert.equal(status, 200, JSON.stringify(body));
+  const filename = body.filename as string;
+  createdFiles.push(filename);
+
+  // Find the DB row
+  const row = await db.screenshot.findFirst({
+    where: { employeeId: emp.id },
+    orderBy: { createdAt: 'desc' },
+    select: { id: true, filePath: true, organizationId: true, fileName: true, fileSize: true },
+  });
+  assert.ok(row, 'DB row must exist');
+  assert.equal(row.fileName, 'db-map-test.png', 'fileName must match');
+  assert.equal(row.fileSize, PNG_BYTES.length, 'fileSize must match');
+
+  // filePath basename must match the stored filename
+  const { basename } = await import('node:path');
+  assert.equal(basename(row.filePath), filename, 'filePath basename must match stored filename');
+
+  // Physical file must exist at the path derived from the DB row
+  const onDisk = join(SCREENSHOT_DIR, basename(row.filePath));
+  assert.ok(existsSync(onDisk), 'physical file must exist at DB-derived path');
+});
+
+test('SH-36: admin list API returns newly uploaded screenshot', async () => {
+  const { token, emp } = await setupUploadDevice('SH36');
+  const { status, body } = await postScreenshot(token, PNG_BYTES, { mimeType: 'image/png', fileName: 'list-test.png' });
+  assert.equal(status, 200, JSON.stringify(body));
+  const filename = body.filename as string;
+  createdFiles.push(filename);
+
+  // Find the DB row to get the ID
+  const row = await db.screenshot.findFirst({
+    where: { employeeId: emp.id },
+    orderBy: { createdAt: 'desc' },
+    select: { id: true },
+  });
+  assert.ok(row, 'DB row must exist');
+
+  // Query the admin list API with the correct org session
+  const adminToken = await tokenFor('admin', 'u-SH36-admin');
+  const listReq = new NextRequest(`http://localhost:3000/api/screenshots?page=1&pageSize=50`, {
+    headers: { cookie: `worklens_token=${adminToken}` },
+  });
+  const listRes = await screenshotsApi.GET(listReq);
+  assert.equal(listRes.status, 200, 'list API must return 200');
+  const listBody = await listRes.json() as { data: Array<{ id: string }>; total: number };
+  assert.ok(listBody.data.some((s) => s.id === row.id), 'newly uploaded screenshot must appear in admin list');
+});
+
+test('SH-37: image endpoint serves newly uploaded screenshot', async () => {
+  const { token, emp } = await setupUploadDevice('SH37');
+  const { status, body } = await postScreenshot(token, PNG_BYTES, { mimeType: 'image/png', fileName: 'image-serve-test.png' });
+  assert.equal(status, 200, JSON.stringify(body));
+  const filename = body.filename as string;
+  createdFiles.push(filename);
+
+  // Find the DB row
+  const row = await db.screenshot.findFirst({
+    where: { employeeId: emp.id },
+    orderBy: { createdAt: 'desc' },
+    select: { id: true, mimeType: true },
+  });
+  assert.ok(row, 'DB row must exist');
+
+  // Request the image via the authenticated image endpoint
+  const adminToken = await tokenFor('admin', 'u-SH37-admin');
+  const imgReq = new NextRequest(`http://localhost:3000/api/screenshots/${row.id}/image`, {
+    headers: { cookie: `worklens_token=${adminToken}` },
+  });
+  const imgRes = await screenshotImageApi.GET(imgReq, { params: Promise.resolve({ id: row.id }) });
+  assert.equal(imgRes.status, 200, 'image endpoint must return 200');
+  const ct = imgRes.headers.get('content-type');
+  assert.ok(ct?.includes('image/png'), `Content-Type must be image/png, got: ${ct}`);
+  assert.equal(imgRes.headers.get('x-content-type-options'), 'nosniff');
+  const imgBytes = Buffer.from(await imgRes.arrayBuffer());
+  assert.ok(imgBytes.length > 0, 'response must contain image bytes');
+  assert.equal(imgBytes.length, PNG_BYTES.length, 'response bytes must match uploaded PNG');
+  // Verify magic bytes
+  assert.equal(imgBytes[0], 0x89, 'must be valid PNG (first byte)');
+  assert.equal(imgBytes[1], 0x50, 'must be valid PNG (second byte)');
+});
+
+test('SH-38: organization B cannot see organization A screenshot', async () => {
+  // Upload to org A
+  const { token: tokenA, emp: empA } = await setupUploadDevice('SH38A');
+  const { status, body } = await postScreenshot(tokenA, PNG_BYTES, { mimeType: 'image/png', fileName: 'org-a-only.png' });
+  assert.equal(status, 200, JSON.stringify(body));
+  const filename = body.filename as string;
+  createdFiles.push(filename);
+
+  const row = await db.screenshot.findFirst({
+    where: { employeeId: empA.id },
+    orderBy: { createdAt: 'desc' },
+    select: { id: true },
+  });
+  assert.ok(row, 'DB row must exist');
+
+  // Org B admin must NOT see this screenshot
+  const adminTokenB = await tokenFor('admin', 'u-SH38B-admin', orgB.id);
+  const imgReq = new NextRequest(`http://localhost:3000/api/screenshots/${row.id}/image`, {
+    headers: { cookie: `worklens_token=${adminTokenB}` },
+  });
+  const imgRes = await screenshotImageApi.GET(imgReq, { params: Promise.resolve({ id: row.id }) });
+  assert.equal(imgRes.status, 404, 'org B must get 404 for org A screenshot');
+});

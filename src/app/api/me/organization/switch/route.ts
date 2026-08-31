@@ -29,39 +29,56 @@ export async function POST(req: NextRequest) {
     return apiError('organizationId is required', 422);
   }
 
-  // SECURITY: Verify the user has an ACTIVE membership for the requested org.
-  // Never trust client-supplied organizationId without membership verification.
-  const membership = await prisma.organizationMembership.findUnique({
-    where: {
-      userId_organizationId: {
-        userId: auth.userId,
-        organizationId: requestedOrgId,
-      },
-    },
-    include: {
-      organization: {
-        select: { id: true, name: true, status: true },
-      },
-    },
-  });
+  // SECURITY: Verify access.
+  // Super Admin has global access to any organization (no membership required).
+  // Normal users must have an ACTIVE membership for the requested org.
+  let jwtRole: string;
+  let orgName: string;
 
-  if (!membership || membership.status !== 'ACTIVE') {
-    // Uniform denial — don't reveal whether the org exists
-    return apiError('Not a member of that organization', 403);
+  if (auth.role === 'super_admin') {
+    // Super Admin: verify the organization exists and is active.
+    const org = await prisma.organization.findUnique({
+      where: { id: requestedOrgId },
+      select: { id: true, name: true, status: true },
+    });
+    if (!org) {
+      return apiError('Organization not found', 404);
+    }
+    if (org.status !== 'active') {
+      return apiError('Organization is not active', 403);
+    }
+    jwtRole = 'super_admin'; // Super Admin keeps global role, not membership role
+    orgName = org.name;
+  } else {
+    // Normal user: verify ACTIVE membership for the requested org.
+    const membership = await prisma.organizationMembership.findUnique({
+      where: {
+        userId_organizationId: {
+          userId: auth.userId,
+          organizationId: requestedOrgId,
+        },
+      },
+      include: {
+        organization: {
+          select: { id: true, name: true, status: true },
+        },
+      },
+    });
+
+    if (!membership || membership.status !== 'ACTIVE') {
+      return apiError('Not a member of that organization', 403);
+    }
+
+    if (membership.organization.status !== 'active') {
+      return apiError('Organization is not active', 403);
+    }
+
+    // Use membership role from DB (source of truth, not JWT)
+    jwtRole = membership.role;
+    orgName = membership.organization.name;
   }
 
-  if (membership.organization.status !== 'active') {
-    return apiError('Organization is not active', 403);
-  }
-
-  // Issue a new JWT with the updated activeOrganizationId.
-  // The role is read from the membership (DB source of truth), not from the
-  // JWT-claimed role — this ensures a role change takes effect on the next
-  // switch even if the old JWT hasn't expired (P2/P3 #11).
-  //
   // CRITICAL (P0-01): The sessionId MUST be preserved from the current token.
-  // Without it, the switched session becomes unrevocable — logout, force-logout,
-  // password change, and account disable all fail to revoke the new token.
   const currentToken = extractToken(req) || req.cookies.get(SESSION_COOKIE_NAME)?.value;
   const currentPayload = currentToken ? await verifyJWT(currentToken) : null;
   const sessionId = currentPayload?.sessionId;
@@ -69,14 +86,13 @@ export async function POST(req: NextRequest) {
   const newToken = await signJWT({
     userId: auth.userId,
     email: auth.email,
-    role: membership.role,
+    role: jwtRole,
     organizationId: requestedOrgId,
     activeOrganizationId: requestedOrgId,
     sessionId,
   });
 
   // P2-01: Update the session's server-authoritative activeOrganizationId.
-  // Old tokens with the previous org will be rejected by verifySessionActiveOrg().
   if (sessionId) {
     await prisma.userSession.updateMany({
       where: { id: sessionId, revokedAt: null },
@@ -86,10 +102,10 @@ export async function POST(req: NextRequest) {
 
   const response = apiSuccess({
     activeOrganizationId: requestedOrgId,
-    role: membership.role,
+    role: jwtRole,
     organization: {
-      id: membership.organization.id,
-      name: membership.organization.name,
+      id: requestedOrgId,
+      name: orgName,
     },
   });
 

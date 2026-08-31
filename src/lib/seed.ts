@@ -1,21 +1,64 @@
 import { db } from '@/lib/db';
 import { hashPasswordSync } from '@/lib/auth';
-import { Prisma } from '@prisma/client';
+import { normalizeEmail } from '@/lib/email';
+import { bootstrapSuperAdmin } from '@/lib/super-admin';
 
 // ─── Production guard ─────────────────────────────────────────────────────────
-// This seed creates ONLY the Super Admin account from environment variables.
+// This seed creates the Super Admin account from environment variables and,
+// when DEMO_SEED=1, also creates demo organizations and users.
 // It must NEVER run in production and must NEVER run implicitly.
 // It only runs when BOTH hold:
 //   - NODE_ENV !== 'production'
 //   - SEED_ALLOWED=1  (explicit opt-in)
-// The demo seed is therefore dev-only; production bootstrap is performed by
-// `scripts/bootstrap-super-admin.ts` (migrations + explicit bootstrap, no demo data).
+// Production bootstrap is performed by `scripts/bootstrap-super-admin.ts`.
 export function seedAllowed(): boolean {
   return process.env.NODE_ENV !== 'production' && process.env.SEED_ALLOWED === '1';
 }
 
+// ─── Demo data constants ──────────────────────────────────────────────────────
+const DEMO_PASSWORD = 'Demo@2026Pass'; // Development-only password
+
+interface DemoOrg {
+  name: string;
+  slug: string;
+  users: { name: string; email: string; orgRole: string }[];
+}
+
+const DEMO_ORGS: DemoOrg[] = [
+  {
+    name: 'Acme Corporation',
+    slug: 'acme-corporation',
+    users: [
+      { name: 'Rahim Ahmed', email: 'rahim@acme.local', orgRole: 'org_admin' },
+      { name: 'Karim Hasan', email: 'karim@acme.local', orgRole: 'manager' },
+      { name: 'Salma Akter', email: 'salma@acme.local', orgRole: 'viewer' },
+    ],
+  },
+  {
+    name: 'TechVision Ltd',
+    slug: 'techvision-ltd',
+    users: [
+      { name: 'Nadia Islam', email: 'nadia@techvision.local', orgRole: 'org_admin' },
+      { name: 'Hasan Mahmud', email: 'hasan@techvision.local', orgRole: 'manager' },
+      { name: 'Mitu Rahman', email: 'mitu@techvision.local', orgRole: 'viewer' },
+    ],
+  },
+  {
+    name: 'Demo Manufacturing',
+    slug: 'demo-manufacturing',
+    users: [
+      { name: 'Tanvir Ahmed', email: 'tanvir@manufacturing.local', orgRole: 'org_admin' },
+      { name: 'Jahid Khan', email: 'jahid@manufacturing.local', orgRole: 'manager' },
+      { name: 'Rima Sultana', email: 'rima@manufacturing.local', orgRole: 'viewer' },
+    ],
+  },
+];
+
 async function seed() {
-  console.log('🌱 Seeding database with Super Admin only...');
+  console.log('🌱 Seeding database...');
+
+  const includeDemo = process.env.DEMO_SEED === '1';
+  console.log(`   Mode: Super Admin${includeDemo ? ' + Demo Data' : ' only'}`);
 
   // Clear existing data (reverse dependency order)
   await db.sentimentRecord.deleteMany();
@@ -42,35 +85,101 @@ async function seed() {
   await db.device.deleteMany();
   await db.employee.deleteMany();
   await db.department.deleteMany();
+  await db.organizationMembership.deleteMany();
+  await db.userSession.deleteMany();
   await db.appUser.deleteMany();
   await db.organization.deleteMany();
 
   // ==================== Super Admin ====================
-  // Super Admin credentials come from .env — no fallbacks, ever.
-  const superAdminEmail = process.env.SUPER_ADMIN_EMAIL;
-  const superAdminPassword = process.env.SUPER_ADMIN_PASSWORD;
-  if (!superAdminEmail || !superAdminPassword) {
-    throw new Error(
-      'SUPER_ADMIN_EMAIL and SUPER_ADMIN_PASSWORD must be set in .env to run the seed.'
-    );
+  // Use the existing bootstrap mechanism — never create a duplicate.
+  const adminResult = await bootstrapSuperAdmin();
+  if (adminResult.created) {
+    console.log(`✅ Super Admin created: ${adminResult.email}`);
+  } else {
+    console.log(`ℹ️  Super Admin already exists — left unchanged: ${adminResult.email} (role=${adminResult.user.role})`);
   }
-  const superAdminHashedPassword = hashPasswordSync(superAdminPassword);
 
-  await db.appUser.create({
+  // ==================== Demo Data ====================
+  if (!includeDemo) {
+    console.log('✅ Seed complete: Super Admin only. No demo data created.');
+    return;
+  }
+
+  const demoHashedPassword = hashPasswordSync(DEMO_PASSWORD);
+  const createdUsers: { id: string; email: string; name: string }[] = [];
+
+  // Create organizations
+  for (const orgDef of DEMO_ORGS) {
+    const org = await db.organization.create({
+      data: { name: orgDef.name, slug: orgDef.slug },
+    });
+    console.log(`  📁 Organization: ${orgDef.name}`);
+
+    // Create users for this organization
+    for (const userDef of orgDef.users) {
+      const normalizedEmail = normalizeEmail(userDef.email) || userDef.email;
+      const user = await db.appUser.create({
+        data: {
+          email: normalizedEmail,
+          name: userDef.name,
+          password: demoHashedPassword,
+          role: 'user',
+          avatar: null,
+          organizationId: null, // canonical model: membership is separate
+          isActive: true,
+        },
+      });
+
+      await db.organizationMembership.create({
+        data: {
+          userId: user.id,
+          organizationId: org.id,
+          role: userDef.orgRole,
+          status: 'ACTIVE',
+        },
+      });
+
+      createdUsers.push({ id: user.id, email: normalizedEmail, name: userDef.name });
+      console.log(`    👤 ${userDef.name} (${normalizedEmail}) — ${userDef.orgRole}`);
+    }
+  }
+
+  // ==================== Multi-Organization User ====================
+  // Proves ONE AppUser can belong to MULTIPLE organizations
+  const sharedEmail = normalizeEmail('shared@omnisight.local') || 'shared@omnisight.local';
+  const sharedUser = await db.appUser.create({
     data: {
-      email: superAdminEmail,
-      name: 'Super Admin',
-      password: superAdminHashedPassword,
-      role: 'super_admin',
+      email: sharedEmail,
+      name: 'Shared Demo User',
+      password: demoHashedPassword,
+      role: 'user',
       avatar: null,
-      organizationId: null, // org-less global super admin
+      organizationId: null,
       isActive: true,
-      lastLogin: null,
     },
   });
 
-  console.log(`✅ Super Admin created: ${superAdminEmail} (password from .env, org-less)`);
-  console.log('✅ Seed complete: ONLY Super Admin exists. No demo data created.');
+  // Find Acme and TechVision orgs
+  const acmeOrg = await db.organization.findUnique({ where: { slug: 'acme-corporation' } });
+  const techvisionOrg = await db.organization.findUnique({ where: { slug: 'techvision-ltd' } });
+
+  if (acmeOrg && techvisionOrg) {
+    await db.organizationMembership.createMany({
+      data: [
+        { userId: sharedUser.id, organizationId: acmeOrg.id, role: 'manager', status: 'ACTIVE' },
+        { userId: sharedUser.id, organizationId: techvisionOrg.id, role: 'viewer', status: 'ACTIVE' },
+      ],
+    });
+    console.log(`\n  🔄 Shared Demo User (${sharedEmail})`);
+    console.log(`    → Acme Corporation: Manager`);
+    console.log(`    → TechVision Ltd: Viewer`);
+  }
+
+  console.log(`\n✅ Demo seed complete!`);
+  console.log(`   Organizations: ${DEMO_ORGS.length}`);
+  console.log(`   Users: ${createdUsers.length + 1} (including Shared Demo User)`);
+  console.log(`   Demo password: ${DEMO_PASSWORD}`);
+  console.log(`   ⚠️  Demo credentials are for development only!`);
 }
 
 export { seed };

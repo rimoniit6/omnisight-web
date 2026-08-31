@@ -739,19 +739,20 @@ export function ScreenshotsPage() {
                     <div
                       className={zoom === 1 ? 'flex min-w-full min-h-full items-center justify-center' : 'block'}
                       style={zoom !== 1 && naturalSize ? { width: naturalSize.w * zoom, height: naturalSize.h * zoom } : undefined}
-                    >
-                      <img
-                        src={`/api/screenshots/${selectedScreenshot.id}/image`}
-                        alt={`Screenshot — ${selectedScreenshot.appWindow || 'Unknown Application'}`}
-                        className={zoom === 1 ? 'max-w-full max-h-full object-contain' : 'block'}
-                        style={zoom !== 1 && naturalSize ? { width: '100%', height: '100%' } : undefined}
-                        onLoad={(e) => {
-                          const img = e.currentTarget;
-                          if (img.naturalWidth > 0) setNaturalSize({ w: img.naturalWidth, h: img.naturalHeight });
-                        }}
-                        onError={(e) => { e.currentTarget.style.display = 'none'; }}
-                        draggable={false}
-                      />
+                    >                        <img
+                          src={`/api/screenshots/${selectedScreenshot.id}/image`}
+                          alt={`Screenshot — ${selectedScreenshot.appWindow || 'Unknown Application'}`}
+                          className={zoom === 1 ? 'max-w-full max-h-full object-contain' : 'block'}
+                          style={zoom !== 1 && naturalSize ? { width: '100%', height: '100%' } : undefined}
+                          onLoad={(e) => {
+                            const img = e.currentTarget;
+                            if (img.naturalWidth > 0) setNaturalSize({ w: img.naturalWidth, h: img.naturalHeight });
+                          }}
+                          onError={(e) => {
+                            e.currentTarget.style.display = 'none';
+                          }}
+                          draggable={false}
+                        />
                     </div>
                   )}
                 </div>
@@ -1116,8 +1117,22 @@ function ScreenshotGridCard({
           alt={`Screenshot — ${screenshot.appWindow || 'Unknown Application'}`}
           loading="lazy"
           className="absolute inset-0 w-full h-full object-cover"
-          onError={(e) => { e.currentTarget.style.display = 'none'; }}
+          onError={(e) => {
+            e.currentTarget.style.display = 'none';
+            const fallback = e.currentTarget.nextElementSibling as HTMLElement | null;
+            if (fallback) fallback.style.display = 'flex';
+          }}
         />
+        {/* Unavailable fallback — only visible when the image fails to load */}
+        <div
+          className="absolute inset-0 items-center justify-center bg-muted/80 hidden"
+          aria-label="Screenshot unavailable"
+        >
+          <div className="text-center px-3">
+            <Camera className="w-6 h-6 mx-auto mb-1 text-muted-foreground/50" />
+            <p className="text-[10px] text-muted-foreground">Unavailable</p>
+          </div>
+        </div>
         {/* Batch select checkbox (mutations only — hidden for read-only roles) */}
         {onToggleSelect && (
           <button
@@ -1228,8 +1243,19 @@ function ScreenshotListView({
                         alt=""
                         loading="lazy"
                         className="w-full h-full object-cover"
-                        onError={(e) => { e.currentTarget.style.display = 'none'; }}
+                        onError={(e) => {
+                          e.currentTarget.style.display = 'none';
+                          const fallback = e.currentTarget.nextElementSibling as HTMLElement | null;
+                          if (fallback) fallback.style.display = 'flex';
+                        }}
                       />
+                      {/* Unavailable fallback — only visible when the image fails to load */}
+                      <div
+                        className="absolute inset-0 items-center justify-center bg-muted/80 hidden"
+                        aria-label="Screenshot unavailable"
+                      >
+                        <Camera className="w-4 h-4 text-muted-foreground/50" />
+                      </div>
                     </div>
                   </td>
                   <td className="px-4 py-2.5">

@@ -175,9 +175,10 @@ export function SuperAdminOrganizationsPage() {
   const filtered = organizations; // Server-side filtering now handles this
 
   const openManage = (org: Organization) => {
+    // setCurrentPage clears pageContext — set it AFTER to avoid the clear.
+    setCurrentPage('super-admin-organization-detail');
     setPageContext(org.id);
     setPageContextLabel(org.name);
-    setCurrentPage('super-admin-organization-detail');
   };
 
   return (
@@ -293,7 +294,7 @@ export function SuperAdminOrganizationsPage() {
                   <TableRow>
                     <TableHead>Organization</TableHead>
                     <TableHead>Status</TableHead>
-                    <TableHead className="text-center">Members</TableHead>
+                    <TableHead className="text-center">Users</TableHead>
                     <TableHead className="text-center">Employees</TableHead>
                     <TableHead className="text-center">Devices</TableHead>
                     <TableHead>Created</TableHead>

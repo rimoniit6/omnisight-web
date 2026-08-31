@@ -84,7 +84,11 @@ export async function POST(req: NextRequest) {
     // AppUser.organizationId for pre-migration users).
     const resolved = await resolveActiveMembership(user.id, user.organizationId);
     const activeOrgId = resolved?.organizationId ?? user.organizationId ?? null;
-    const effectiveRole = resolved?.role ?? user.role;
+    // Super Admin keeps their platform-level role in the JWT regardless of
+    // any OrganizationMembership role.  This matches /api/auth/me behavior
+    // and ensures privileged routes (POST /api/organizations) that read the
+    // JWT role can verify super_admin authority.
+    const effectiveRole = user.role === 'super_admin' ? 'super_admin' : (resolved?.role ?? user.role);
 
     // Update last login and create audit log
     await db.$transaction(async (tx) => {

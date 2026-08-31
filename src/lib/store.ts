@@ -29,6 +29,7 @@ export type PageType =
   | 'projects'
   | 'sentiment'
   | 'audio'
+  | 'users'
   | 'super-admin-organizations'
   | 'super-admin-organization-detail';
 
@@ -65,6 +66,10 @@ interface AuthState {
   token: string | null;
   user: AuthUser | null;
   organization: AuthOrg | null;
+  /** Total organization count — populated only for super_admin during hydrate.
+   *  Used by AuthGuard to distinguish "fresh deployment (0 orgs)" from
+   *  "org-less Super Admin with existing organizations". */
+  organizationCount: number | null;
   isAuthenticated: boolean;
   _hydrated: boolean;
   login: (token: string, user: AuthUser, organization: AuthOrg | null) => void;
@@ -86,6 +91,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   token: null,
   user: null,
   organization: null,
+  organizationCount: null,
   isAuthenticated: false,
   _hydrated: false,
 
@@ -97,6 +103,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         set({
           user: data.user,
           organization: data.organization,
+          organizationCount: data.organizationCount ?? null,
           isAuthenticated: true,
           _hydrated: true,
         });

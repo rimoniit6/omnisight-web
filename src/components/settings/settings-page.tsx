@@ -10,19 +10,20 @@ import { Switch } from '@/components/ui/switch';
 import { Badge } from '@/components/ui/badge';
 import { toast } from 'sonner';
 import { useTheme } from 'next-themes';
-import { Save, Shield, Cpu, Bell, Settings, ToggleLeft, Wrench, Sun, Moon, Monitor, Users, Trash2, ShieldCheck, Sparkles, AlertTriangle } from 'lucide-react';
-import { UserManagement } from '@/components/auth/user-management';
+import { Save, Shield, Cpu, Bell, Settings, ToggleLeft, Wrench, Sun, Moon, Monitor, Trash2, ShieldCheck, Sparkles, AlertTriangle } from 'lucide-react';
 import { ChangePasswordDialog } from '@/components/auth/change-password-dialog';
+
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
 import { cn } from '@/lib/utils';
 
-const sections = [
+const ALL_SECTIONS = [
   { key: 'general', label: 'General', icon: Settings },
   { key: 'security', label: 'Security', icon: Shield },
   { key: 'monitoring', label: 'Monitoring', icon: Cpu },
   { key: 'notification', label: 'Notifications', icon: Bell },
-  { key: 'users', label: 'User Management', icon: Users },
 ];
+
+
 
 function ThemeSelector() {
   const { theme, setTheme, resolvedTheme } = useTheme();
@@ -535,8 +536,9 @@ function ServerSideIntelligenceCard() {
 
 export function SettingsPage() {
   const [activeSection, setActiveSection] = useState('general');
-  const [settings, setSettings] = useState<Record<string, string>>({});
-  const queryClient = useQueryClient();
+  const [settings, setSettings] = useState<Record<string, string>>({});  const queryClient = useQueryClient();
+
+  const sections = ALL_SECTIONS;
 
   const { data, isLoading } = useQuery({
     queryKey: ['settings'],
@@ -738,10 +740,7 @@ export function SettingsPage() {
           </Card>
         ) : null}
 
-        {/* User Management Section */}
-        {activeSection === 'users' && (
-          <UserManagement />
-        )}
+
 
         {/* Account Security (Change Password) - shown in Security section */}
         {activeSection === 'security' && (

@@ -3,6 +3,7 @@ import { db } from '@/lib/db';
 import { getRoleLabel } from '@/lib/auth';
 import { requireOrgAdmin, apiError, apiSuccess } from '@/lib/api';
 import { isOrgRole, canAssignRole, resolveActorDbRole } from '@/lib/org-members';
+import { normalizeEmail } from '@/lib/email';
 import { log, requestContext } from '@/lib/logger';
 
 // ─── GET /api/organizations/[id]/members ────────────────────────────────────
@@ -65,18 +66,18 @@ export async function POST(
     if (!auth.ok) return apiError('Insufficient permissions', auth.status);
 
     const body = await req.json().catch(() => ({})) as {
+      userId?: string;
       email?: string;
       role?: string;
     };
-    const email = typeof body.email === 'string' ? body.email.toLowerCase().trim() : '';
     const rawRole = body.role;
     const role = typeof rawRole === 'string' ? rawRole.trim().toLowerCase() : (rawRole as string | undefined);
 
-    if (!email || !role) {
-      return apiError('email and role are required', 400);
+    if (!role) {
+      return apiError('role is required', 400);
     }
     if (!isOrgRole(role)) {
-      return apiError(`Invalid role. Must be one of: owner, admin, manager, viewer`, 400);
+      return apiError(`Invalid role. Must be one of: org_admin, manager, viewer`, 400);
     }
     // super_admin is a global role and is never a per-org membership; isOrgRole
     // above already excludes it.
@@ -89,9 +90,28 @@ export async function POST(
       return apiError(`Insufficient permissions to assign role '${role}'`, 403);
     }
 
-    const user = await db.appUser.findFirst({ where: { email } });
+    // Resolve target user — prefer userId (from UI picker), fall back to
+    // case-insensitive email lookup for backward compatibility.
+    let user: { id: string; email: string } | null = null;
+
+    if (typeof body.userId === 'string' && body.userId.trim().length > 0) {
+      user = await db.appUser.findUnique({
+        where: { id: body.userId.trim() },
+        select: { id: true, email: true },
+      });
+    } else {
+      const email = normalizeEmail(body.email);
+      if (!email) {
+        return apiError('userId or email is required', 400);
+      }
+      user = await db.appUser.findFirst({
+        where: { email: { equals: email, mode: 'insensitive' } },
+        select: { id: true, email: true },
+      });
+    }
+
     if (!user) {
-      return apiError('No user found with that email. Create the user first.', 404);
+      return apiError('No user found. Please search and select an existing user.', 404);
     }
 
     // Idempotent: upsert on the compound-unique [userId, organizationId].
@@ -106,7 +126,7 @@ export async function POST(
         action: 'create',
         resource: 'membership',
         resourceId: membership.id,
-        description: `User ${auth.email} added ${email} to organization ${orgId} as ${role}`,
+        description: `User ${auth.email} added ${user.email} to organization ${orgId} as ${role}`,
         userId: auth.userId,
         organizationId: orgId,
       },

@@ -19,15 +19,14 @@ import { authenticateRequest } from '@/lib/api';
 import type { NextRequest } from 'next/server';
 
 /** Roles assignable as a per-organization membership (never global super_admin). */
-export const ORG_ROLES = ['owner', 'admin', 'manager', 'viewer'] as const;
+export const ORG_ROLES = ['org_admin', 'manager', 'viewer'] as const;
 
 export type OrgRole = (typeof ORG_ROLES)[number];
 
 /** Role hierarchy levels — higher means more privileged. */
 export const ROLE_LEVELS: Record<string, number> = {
   super_admin: 50,
-  owner: 40,
-  admin: 30,
+  org_admin: 35,
   manager: 20,
   viewer: 10,
 };

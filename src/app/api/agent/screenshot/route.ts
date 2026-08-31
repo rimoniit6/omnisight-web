@@ -22,9 +22,14 @@ const MAX_SCREENSHOT_BYTES = 5 * 1024 * 1024; // 5 MB
 //    file is removed (best-effort) so no orphan remains; only safe diagnostic
 //    information is logged (never secrets/tokens/file contents).
 export async function POST(req: NextRequest) {
+  const requestStart = Date.now();
   try {
     const authResult = await validateAgentToken(req);
     if (!authResult.valid) {
+      log.warn('agent.screenshot.auth_failed', {
+        error: authResult.error,
+        ip: getClientIp(req),
+      });
       return NextResponse.json({ error: authResult.error }, { status: 401 });
     }
 
@@ -33,6 +38,10 @@ export async function POST(req: NextRequest) {
     // agent must surface this to the employee and stop capturing.
     const employeeId = authResult.employee!.id;
     if (!(await hasActiveConsent(employeeId, 'screenshot'))) {
+      log.warn('agent.screenshot.consent_denied', {
+        employeeId: authResult.employee!.employeeId,
+        orgId: authResult.employee!.organizationId,
+      });
       return NextResponse.json(
         { error: 'Screenshot capture requires consent. Consent is not granted or has been revoked.' },
         { status: 403 }
@@ -45,11 +54,18 @@ export async function POST(req: NextRequest) {
     const appWindow = formData.get('appWindow') as string | null; // Active app title
 
     if (!file) {
+      log.warn('agent.screenshot.no_file', {
+        employeeId: authResult.employee!.employeeId,
+      });
       return NextResponse.json({ error: 'No screenshot file provided' }, { status: 400 });
     }
 
     // Validate file size (max 5MB) BEFORE reading the whole body.
     if (file.size > MAX_SCREENSHOT_BYTES) {
+      log.warn('agent.screenshot.too_large', {
+        employeeId: authResult.employee!.employeeId,
+        size: file.size,
+      });
       return NextResponse.json({ error: 'Screenshot too large (max 5MB)' }, { status: 400 });
     }
 
@@ -61,6 +77,11 @@ export async function POST(req: NextRequest) {
     // client-declared type alone. SVG/GIF/BMP/TIFF are rejected.
     const validation = validateScreenshotUpload(bytes, file.type);
     if (!validation.ok) {
+      log.warn('agent.screenshot.invalid_type', {
+        employeeId: authResult.employee!.employeeId,
+        claimedType: file.type,
+        error: validation.error,
+      });
       return NextResponse.json({ error: validation.error }, { status: 400 });
     }
     const mimeType = validation.mimeType;
@@ -157,6 +178,18 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
     }
 
+    log.info('agent.screenshot.upload.success', {
+      employeeId: authResult.employee!.employeeId,
+      orgId: orgId.slice(0, 8),
+      filename,
+      bytes: file.size,
+      mime: mimeType,
+      width: dimensions?.width ?? null,
+      height: dimensions?.height ?? null,
+      appWindow: appWindow || null,
+      durationMs: Date.now() - requestStart,
+    });
+
     return NextResponse.json({
       success: true,
       filename,
@@ -166,7 +199,10 @@ export async function POST(req: NextRequest) {
       appWindow: appWindow || null,
     });
   } catch (error) {
-    log.error('api.agent.screenshot.', { error: String('Agent screenshot error:') }, requestContext(req));
+    log.error('api.agent.screenshot.error', {
+      error: String((error as Error)?.message ?? error),
+      durationMs: Date.now() - requestStart,
+    }, requestContext(req));
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }

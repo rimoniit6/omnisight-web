@@ -106,6 +106,7 @@ const navGroups: NavGroup[] = [
     section: 'Admin',
     items: [
       { page: 'organization', label: 'Organization', icon: Building2 },
+      { page: 'users', label: 'Users & Members', icon: Users },
       { page: 'reports', label: 'Reports', icon: FileText },
       { page: 'daily-report', label: 'Daily Report', icon: FileBarChart },
       { page: 'settings', label: 'Settings', icon: Settings },

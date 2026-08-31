@@ -5,37 +5,82 @@ import { authenticateRequest, apiError, apiSuccess } from '@/lib/api';
 /**
  * GET /api/me/organizations
  *
- * Returns all organizations the authenticated user has an ACTIVE membership in.
+ * Returns organizations available to the authenticated user.
+ * - Super Admin: ALL organizations (global access, no membership required)
+ * - Normal users: only organizations where the user has ACTIVE membership
+ *
  * Used by the org-switcher dropdown in the admin UI.
  *
  * Auth: Any authenticated user.
- * Scope: User's own memberships (never cross-tenant).
  */
 export async function GET(req: NextRequest) {
   const auth = await authenticateRequest(req);
   if (!auth) return apiError('Unauthorized', 401);
 
-  const memberships = await prisma.organizationMembership.findMany({
-    where: {
-      userId: auth.userId,
-      status: 'ACTIVE',
-    },
-    include: {
-      organization: {
-        select: {
-          id: true,
-          name: true,
-          slug: true,
-          logo: true,
-          status: true,
+  let organizations: {
+    id: string;
+    name: string;
+    slug: string;
+    logo: string | null;
+    status: string;
+    role: string;
+    membershipId: string | null;
+  }[];
+
+  if (auth.role === 'super_admin') {
+    // Super Admin: return ALL organizations (no membership required).
+    // The role shown is the Super Admin's global role, not a membership role.
+    const allOrgs = await prisma.organization.findMany({
+      select: {
+        id: true,
+        name: true,
+        slug: true,
+        logo: true,
+        status: true,
+      },
+      orderBy: { createdAt: 'asc' },
+    });
+
+    // Check if Super Admin has any memberships to show the correct role label
+    const memberships = await prisma.organizationMembership.findMany({
+      where: { userId: auth.userId, status: 'ACTIVE' },
+      select: { organizationId: true, role: true, id: true },
+    });
+
+    const membershipMap = new Map(
+      memberships.map((m) => [m.organizationId, { role: m.role, id: m.id }])
+    );
+
+    organizations = allOrgs.map((org) => {
+      const membership = membershipMap.get(org.id);
+      return {
+        ...org,
+        role: membership?.role || 'super_admin',
+        membershipId: membership?.id || null,
+      };
+    });
+  } else {
+    // Normal user: only organizations where the user has ACTIVE membership.
+    const memberships = await prisma.organizationMembership.findMany({
+      where: {
+        userId: auth.userId,
+        status: 'ACTIVE',
+      },
+      include: {
+        organization: {
+          select: {
+            id: true,
+            name: true,
+            slug: true,
+            logo: true,
+            status: true,
+          },
         },
       },
-    },
-    orderBy: { createdAt: 'asc' },
-  });
+      orderBy: { createdAt: 'asc' },
+    });
 
-  return apiSuccess({
-    organizations: memberships.map((m) => ({
+    organizations = memberships.map((m) => ({
       id: m.organization.id,
       name: m.organization.name,
       slug: m.organization.slug,
@@ -43,7 +88,11 @@ export async function GET(req: NextRequest) {
       status: m.organization.status,
       role: m.role,
       membershipId: m.id,
-    })),
+    }));
+  }
+
+  return apiSuccess({
+    organizations,
     activeOrganizationId: auth.activeOrganizationId || auth.organizationId || null,
   });
 }

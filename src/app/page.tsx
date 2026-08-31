@@ -44,6 +44,7 @@ const SelfPortalPage = dynamic(() => import('@/components/self-portal/self-porta
 const ProjectsPage = dynamic(() => import('@/components/projects/projects-page').then(m => ({ default: m.ProjectsPage })), { ssr: false });
 const SentimentPage = dynamic(() => import('@/components/sentiment/sentiment-page').then(m => ({ default: m.SentimentPage })), { ssr: false });
 const AudioPage = dynamic(() => import('@/components/audio/audio-page').then(m => ({ default: m.AudioPage })), { ssr: false });
+const UsersPage = dynamic(() => import('@/components/users/users-page').then(m => ({ default: m.UsersPage })), { ssr: false });
 const SuperAdminOrganizationsPage = dynamic(() => import('@/components/super-admin/super-admin-organizations-page').then(m => ({ default: m.SuperAdminOrganizationsPage })), { ssr: false });
 const SuperAdminOrganizationDetailPage = dynamic(() => import('@/components/super-admin/super-admin-organization-detail-page').then(m => ({ default: m.SuperAdminOrganizationDetailPage })), { ssr: false });
 
@@ -76,6 +77,7 @@ const pageComponents: Record<string, React.ComponentType> = {
   projects: ProjectsPage,
   sentiment: SentimentPage,
   audio: AudioPage,
+  users: UsersPage,
   'super-admin-organizations': SuperAdminOrganizationsPage,
   'super-admin-organization-detail': SuperAdminOrganizationDetailPage,
 };
@@ -143,6 +145,20 @@ export default function Home() {
     return () => clearTimeout(id);
   }, []);
 
+  // Multi-tab sync: re-hydrate auth state from the fresh httpOnly cookie
+  // when the user returns to this tab. If another tab switched organizations,
+  // the cookie was updated server-side and this tab needs to pick up the new
+  // session state to avoid stale-token P2-01 mismatches.
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        useAuthStore.getState().hydrate();
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
+  }, []);
+
   // First render: loading skeleton (to avoid hydration mismatch)
   if (!mounted) {
     return (
@@ -165,6 +181,7 @@ function AuthGuard() {
   const hydrated = useAuthStore((s) => s._hydrated);
   const user = useAuthStore((s) => s.user);
   const organization = useAuthStore((s) => s.organization);
+  const organizationCount = useAuthStore((s) => s.organizationCount);
 
   // Wait for cookie-session hydration before deciding login vs app.
   if (!hydrated) {
@@ -182,8 +199,10 @@ function AuthGuard() {
   if (!isAuthenticated) return <LoginPage />;
 
   // Fresh-deployment bootstrap: an org-less Super Admin must create the first
-  // organization before the (org-scoped) Admin control plane is usable.
-  if (user?.role === 'super_admin' && !organization) {
+  // organization ONLY when zero organizations exist in the database.
+  // When organizations already exist, the Super Admin can enter the application
+  // directly and use the Organization Switcher for operational context.
+  if (user?.role === 'super_admin' && !organization && organizationCount !== null && organizationCount === 0) {
     return <CreateOrganizationScreen />;
   }
 

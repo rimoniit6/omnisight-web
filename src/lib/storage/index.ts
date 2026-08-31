@@ -21,11 +21,45 @@ import {
  * downgrades to local filesystem storage. In development/test, missing
  * credentials fall back to the local driver with a logged warning.
  */
+/** Placeholder values that indicate unconfigured environment variables. */
+const PLACEHOLDER_PATTERNS = [
+  /^REPLACE/i,
+  /^YOUR_/i,
+  /^<.*>$/,
+  /^TODO/i,
+  /^FIXME/i,
+  /^xxx/i,
+  /^changeme/i,
+];
+
+function isPlaceholder(value: string): boolean {
+  return PLACEHOLDER_PATTERNS.some((p) => p.test(value));
+}
+
 export function resolveStorageDriver(): StorageDriver {
   const kind = (process.env.STORAGE_DRIVER || 'local').toLowerCase();
   if (kind === 'supabase') {
     const url = process.env.SUPABASE_URL;
     const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+    // Detect placeholder credentials — fail closed in ALL environments.
+    // A placeholder URL would cause every upload to fail with a network error,
+    // but the server would start and appear healthy. This is worse than a
+    // startup crash because the failure is silent and discovered only when
+    // screenshots stop appearing in the admin panel.
+    if (url && isPlaceholder(url)) {
+      throw new Error(
+        'STORAGE_DRIVER=supabase but SUPABASE_URL appears to be a placeholder value. ' +
+        'Set a real Supabase project URL or switch to STORAGE_DRIVER=local for self-hosted development.',
+      );
+    }
+    if (key && isPlaceholder(key)) {
+      throw new Error(
+        'STORAGE_DRIVER=supabase but SUPABASE_SERVICE_ROLE_KEY appears to be a placeholder value. ' +
+        'Set a real service role key or switch to STORAGE_DRIVER=local for self-hosted development.',
+      );
+    }
+
     if (url && key) {
       return new SupabaseStorageDriver(url, key);
     }

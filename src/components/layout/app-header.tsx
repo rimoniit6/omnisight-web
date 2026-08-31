@@ -54,6 +54,7 @@ const pageLabels: Record<string, string> = {
   'self-portal': 'Employee Portal',
   reports: 'Reports',
   organization: 'Organization',
+  users: 'Users & Members',
   'daily-report': 'Daily Report',
   settings: 'Settings',
   'agent-approvals': 'Agent Approvals',

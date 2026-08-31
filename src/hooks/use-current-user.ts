@@ -32,24 +32,24 @@ interface AuthMeResponse {
   organization: CurrentOrg | null;
 }
 
-// Shared hook — all components use this to get the logged-in user & org data
+// Shared hook — all components use this to get the logged-in user & org data.
+// Uses cookie-based auth (credentials: 'same-origin') instead of the in-memory
+// JWT token. The httpOnly session cookie is the durable credential — the
+// in-memory token can become stale after an organization switch (the server
+// rotates the cookie but the client token is not updated until hydrate runs).
 export function useCurrentUser() {
-  const token = useAuthStore((s) => s.token);
+  const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
 
   const { data, isLoading, error } = useQuery<AuthMeResponse>({
     queryKey: ['auth-me'],
     queryFn: async () => {
-      const headers: Record<string, string> = {};
-      if (token) {
-        headers['Authorization'] = `Bearer ${token}`;
-      }
-      const res = await fetch('/api/auth/me', { headers });
+      const res = await fetch('/api/auth/me', { credentials: 'same-origin' });
       if (!res.ok) throw new Error('Failed to fetch user');
       return res.json();
     },
     staleTime: 5 * 60 * 1000, // 5 min
     retry: 1,
-    enabled: !!token,
+    enabled: isAuthenticated,
   });
 
   return {

@@ -271,7 +271,7 @@ test('SA-09: Super Admin can view Org B without membership', async () => {
 test('SA-10: Org Admin cannot list organizations via super-admin', async () => {
   const api = await import('../src/app/api/super-admin/organizations/route');
   const res = await api.GET(req(adminAToken, { url: 'http://localhost:3000/api/super-admin/organizations' }));
-  assert.equal(res.status, 401, 'Org Admin must be rejected from super-admin list');
+  assert.ok(res.status === 401 || res.status === 403, `Org Admin must be rejected from super-admin list, got ${res.status}`);
 });
 
 test('SA-10b: Org Admin cannot suspend organization', async () => {

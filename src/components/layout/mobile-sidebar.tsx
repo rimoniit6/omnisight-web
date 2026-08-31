@@ -1,6 +1,6 @@
 'use client';
 
-import { useAppStore, type PageType } from '@/lib/store';
+import { useAppStore, useAuthStore, type PageType } from '@/lib/store';
 import { useCurrentUser } from '@/hooks/use-current-user';
 import { canAccessPage } from '@/lib/navigation';
 import {
@@ -27,6 +27,7 @@ import {
   FolderKanban,
   HeartPulse,
   Radio,
+  Crown,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
@@ -92,9 +93,16 @@ const navGroups: NavGroup[] = [
     section: 'Admin',
     items: [
       { page: 'organization', label: 'Organization', icon: Building2 },
+      { page: 'users', label: 'Users & Members', icon: Users },
       { page: 'reports', label: 'Reports', icon: FileText },
       { page: 'daily-report', label: 'Daily Report', icon: FileBarChart },
       { page: 'settings', label: 'Settings', icon: Settings },
+    ],
+  },
+  {
+    section: 'Platform',
+    items: [
+      { page: 'super-admin-organizations', label: 'Super Admin', icon: Crown },
     ],
   },
 ];
@@ -106,9 +114,11 @@ interface MobileSidebarContentProps {
 export function MobileSidebarContent({ onNavigate }: MobileSidebarContentProps) {
   const { currentPage, setCurrentPage } = useAppStore();
   const { user } = useCurrentUser();
+  const authUser = useAuthStore((s) => s.user);
+  const displayUser = user || authUser;
 
   // S-2: role-aware navigation (mirrors the desktop sidebar).
-  const role = user?.role ?? null;
+  const role = displayUser?.role ?? null;
   const visibleGroups = navGroups
     .map((group) => ({
       ...group,
@@ -167,17 +177,17 @@ export function MobileSidebarContent({ onNavigate }: MobileSidebarContentProps) 
       </nav>
 
       {/* User info block — from database */}
-      {user && (
+      {displayUser && (
       <div className="px-3 py-3 border-t border-border">
         <div className="flex items-center gap-3 px-2 py-1">
           <Avatar className="h-8 w-8 shrink-0">
             <AvatarFallback className="text-[10px] bg-muted text-muted-foreground font-medium">
-              {user.initials}
+              {displayUser.initials}
             </AvatarFallback>
           </Avatar>
           <div className="min-w-0">
-            <p className="text-sm font-medium truncate">{user.name}</p>
-            <p className="text-[11px] text-muted-foreground truncate">{user.roleLabel}</p>
+            <p className="text-sm font-medium truncate">{displayUser.name}</p>
+            <p className="text-[11px] text-muted-foreground truncate">{displayUser.roleLabel}</p>
           </div>
         </div>
       </div>

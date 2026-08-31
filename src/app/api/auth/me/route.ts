@@ -86,6 +86,13 @@ export async function GET(req: NextRequest) {
         })
       : null;
 
+    // For Super Admin: include organization count so the frontend can
+    // distinguish "fresh deployment (0 orgs)" from "org-less SA with existing orgs".
+    let organizationCount: number | undefined;
+    if (adminUser.role === 'super_admin') {
+      organizationCount = await db.organization.count();
+    }
+
     const initials = adminUser.name
       ? adminUser.name.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2)
       : 'AD';
@@ -115,6 +122,7 @@ export async function GET(req: NextRequest) {
             currency: organization.currency,
           }
         : null,
+      organizationCount,
     });
   } catch (error) {
     log.error('api.auth.me.', { error: String('Auth/me error:') }, requestContext(req));

@@ -27,6 +27,7 @@ import { hashPassword } from '@/lib/auth';
 export type SuperAdminEnv = Record<string, string | undefined> & {
   SUPER_ADMIN_EMAIL?: string;
   SUPER_ADMIN_PASSWORD?: string;
+  SUPER_ADMIN_NAME?: string;
 };
 
 export interface BootstrapResult {
@@ -101,10 +102,11 @@ export async function bootstrapSuperAdmin(env: SuperAdminEnv = process.env): Pro
 
   const { password } = validateSuperAdminEnv(env);
   const hashed = await hashPassword(password);
+  const name = (env.SUPER_ADMIN_NAME ?? '').trim() || 'Super Admin';
   const user = await db.appUser.create({
     data: {
       email,
-      name: 'Super Admin',
+      name,
       password: hashed,
       role: 'super_admin',
       isActive: true,
