@@ -61,7 +61,7 @@ let consentSummaryRoute: typeof import('../src/app/api/consent/summary/route');
 let consentLogsRoute: typeof import('../src/app/api/consent/logs/route');
 let consentPoliciesRoute: typeof import('../src/app/api/consent/policies/route');
 let auditExportRoute: typeof import('../src/app/api/audit-logs/export/route');
-let authenticateRoute: typeof import('../src/app/api/agent/authenticate/route');
+let agentLoginRoute: typeof import('../src/app/api/agent/login/route');
 let loginRoute: typeof import('../src/app/api/auth/login/route');
 let logoutRoute: typeof import('../src/app/api/auth/logout/route');
 let meRoute: typeof import('../src/app/api/auth/me/route');
@@ -86,7 +86,7 @@ before(async () => {
     import('../src/app/api/consent/logs/route'),
     import('../src/app/api/consent/policies/route'),
     import('../src/app/api/audit-logs/export/route'),
-    import('../src/app/api/agent/authenticate/route'),
+    import('../src/app/api/agent/login/route'),
     import('../src/app/api/auth/login/route'),
     import('../src/app/api/auth/logout/route'),
     import('../src/app/api/auth/me/route'),
@@ -100,7 +100,7 @@ before(async () => {
   consentLogsRoute = c3;
   consentPoliciesRoute = c4;
   auditExportRoute = a1;
-  authenticateRoute = a2;
+  agentLoginRoute = a2;
   loginRoute = l1;
   logoutRoute = l2;
   meRoute = m1;
@@ -326,29 +326,38 @@ test('SR-02d: audit export RBAC — viewer 403, unauthenticated 401, cross-org c
 const PATH_B_PASSWORD = 'Str0ng!PathB2026x';
 
 async function seedPathBEmployee(orgId: string, code: string) {
-  const emp = await seedEmployee(orgId, code, { agentPassword: await hashPassword(PATH_B_PASSWORD), agentApproved: true });
+  const emp = await seedEmployee(orgId, code, { agentApproved: true });
+  // Create an AgentAccount for PATH B (agentId + password) login.
+  await db.agentAccount.create({
+    data: {
+      employeeId: emp.id,
+      agentId: code,
+      passwordHash: await hashPassword(PATH_B_PASSWORD),
+      status: 'active',
+    },
+  });
   return emp;
 }
 
 test('SR-03a: 5 wrong passwords from ROTATING IPs lock the account — correct password rejected (uniform 401)', async () => {
   const emp = await seedPathBEmployee(orgA.id, 'SR03A-EMP');
-  const device = { hostname: 'sr03a-host', os: 'Windows 11', osVersion: '23H2' };
 
   for (let i = 0; i < 5; i++) {
-    const res = await authenticateRoute.POST(
-      req(null, { method: 'POST', body: { employeeId: 'SR03A-EMP', password: 'wrong-password', ...device }, ip: `203.0.113.10${i}` })
+    const res = await agentLoginRoute.POST(
+      req(null, { method: 'POST', body: { agentId: 'SR03A-EMP', password: 'wrong-password' }, ip: `203.0.113.10${i}` })
     );
     assert.equal(res.status, 401, `attempt ${i + 1} is a uniform 401`);
   }
 
-  const locked = await db.employee.findUnique({ where: { id: emp.id }, select: { failedLoginCount: true, lockedUntil: true } });
-  assert.ok(locked, 'employee row exists');
-  assert.equal(locked.failedLoginCount, 5);
-  assert.ok(locked.lockedUntil && locked.lockedUntil.getTime() > Date.now(), 'lockedUntil set in the future');
+  // AgentAccount tracks lockout state (not Employee).
+  const account = await db.agentAccount.findUnique({ where: { agentId: 'SR03A-EMP' }, select: { failedLoginCount: true, lockedUntil: true } });
+  assert.ok(account, 'agent account row exists');
+  assert.equal(account.failedLoginCount, 5);
+  assert.ok(account.lockedUntil && account.lockedUntil.getTime() > Date.now(), 'lockedUntil set in the future');
 
   // Correct password from yet another IP → still 401 while locked (no IP-rotation bypass).
-  const correct = await authenticateRoute.POST(
-    req(null, { method: 'POST', body: { employeeId: 'SR03A-EMP', password: PATH_B_PASSWORD, ...device }, ip: '203.0.113.199' })
+  const correct = await agentLoginRoute.POST(
+    req(null, { method: 'POST', body: { agentId: 'SR03A-EMP', password: PATH_B_PASSWORD }, ip: '203.0.113.199' })
   );
   assert.equal(correct.status, 401, 'correct password rejected during lockout');
   const body = (await correct.json()) as { error: string };
@@ -357,34 +366,34 @@ test('SR-03a: 5 wrong passwords from ROTATING IPs lock the account — correct p
 
 test('SR-03b: lockout expires; a successful login then resets the counter', async () => {
   const emp = await seedPathBEmployee(orgA.id, 'SR03B-EMP');
-  const device = { hostname: 'sr03b-host', os: 'Windows 11', osVersion: '23H2' };
 
   // 4 wrong attempts (below the threshold) → still succeeds.
   for (let i = 0; i < 4; i++) {
-    await authenticateRoute.POST(
-      req(null, { method: 'POST', body: { employeeId: 'SR03B-EMP', password: 'wrong-password', ...device }, ip: `198.51.100.2${i}` })
+    await agentLoginRoute.POST(
+      req(null, { method: 'POST', body: { agentId: 'SR03B-EMP', password: 'wrong-password' }, ip: `198.51.100.2${i}` })
     );
   }
-  const ok = await authenticateRoute.POST(
-    req(null, { method: 'POST', body: { employeeId: 'SR03B-EMP', password: PATH_B_PASSWORD, ...device }, ip: '198.51.100.99' })
+  const ok = await agentLoginRoute.POST(
+    req(null, { method: 'POST', body: { agentId: 'SR03B-EMP', password: PATH_B_PASSWORD }, ip: '198.51.100.99' })
   );
   assert.equal(ok.status, 200, 'below threshold, correct password still authenticates');
 
   // Lock the account, then let the lockout expire (simulate time passing).
-  await db.employee.update({ where: { id: emp.id }, data: { failedLoginCount: 5, lockedUntil: new Date(Date.now() + 60_000) } });
-  const during = await authenticateRoute.POST(
-    req(null, { method: 'POST', body: { employeeId: 'SR03B-EMP', password: PATH_B_PASSWORD, ...device }, ip: '198.51.100.100' })
+  const acct = await db.agentAccount.findUnique({ where: { agentId: 'SR03B-EMP' } });
+  await db.agentAccount.update({ where: { id: acct!.id }, data: { failedLoginCount: 5, lockedUntil: new Date(Date.now() + 60_000) } });
+  const during = await agentLoginRoute.POST(
+    req(null, { method: 'POST', body: { agentId: 'SR03B-EMP', password: PATH_B_PASSWORD }, ip: '198.51.100.100' })
   );
   assert.equal(during.status, 401, 'locked → rejected');
 
-  await db.employee.update({ where: { id: emp.id }, data: { lockedUntil: new Date(Date.now() - 1000) } });
-  const after = await authenticateRoute.POST(
-    req(null, { method: 'POST', body: { employeeId: 'SR03B-EMP', password: PATH_B_PASSWORD, ...device }, ip: '198.51.100.101' })
+  await db.agentAccount.update({ where: { id: acct!.id }, data: { lockedUntil: new Date(Date.now() - 1000) } });
+  const after = await agentLoginRoute.POST(
+    req(null, { method: 'POST', body: { agentId: 'SR03B-EMP', password: PATH_B_PASSWORD }, ip: '198.51.100.101' })
   );
   assert.equal(after.status, 200, 'lockout expiry restores legitimate access');
 
-  const fresh = await db.employee.findUnique({ where: { id: emp.id }, select: { failedLoginCount: true, lockedUntil: true } });
-  assert.ok(fresh, 'employee row exists');
+  const fresh = await db.agentAccount.findUnique({ where: { id: acct!.id }, select: { failedLoginCount: true, lockedUntil: true } });
+  assert.ok(fresh, 'agent account row exists');
   assert.equal(fresh.failedLoginCount, 0, 'successful login resets the counter');
   assert.equal(fresh.lockedUntil, null, 'successful login clears the lockout');
 });

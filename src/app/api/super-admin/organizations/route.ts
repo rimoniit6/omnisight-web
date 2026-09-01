@@ -63,7 +63,7 @@ export async function GET(req: NextRequest) {
   ]);
 
   return apiSuccess({
-    organizations: organizations.map((o: typeof organizations[number]) => ({
+    data: organizations.map((o: typeof organizations[number]) => ({
       ...o,
       memberCount: o._count.memberships,
       employeeCount: o._count.employees,

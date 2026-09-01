@@ -83,12 +83,12 @@ export function OrgSwitcher() {
     fetchOrganizations();
   }, [token, fetchOrganizations]);
 
-  // Focus search input when dropdown opens
+  // Reset search when dropdown opens and focus input after animation
   useEffect(() => {
-    if (open) {
-      setSearch('');
-      setTimeout(() => searchInputRef.current?.focus(), 50);
-    }
+    if (!open) return;
+    setSearch('');
+    const id = setTimeout(() => searchInputRef.current?.focus(), 50);
+    return () => clearTimeout(id);
   }, [open]);
 
   // Filter organizations by search

@@ -343,7 +343,10 @@ test('CS-A9 + CS-A10: /api/agent/activity rejects without consent (403), accepts
   await publishPolicy(org.id, 'activity_tracking');
   const tokenStr = generateToken(64);
   await db.agentToken.create({
-    data: { token: tokenStr, employeeId: emp.id, expiresAt: new Date(Date.now() + 3600_000) },
+    data: { token: tokenStr, expiresAt: new Date(Date.now() + 3600_000),
+      employee: { connect: { id: emp.id } },
+      organization: { connect: { id: org.id } },
+    },
   });
 
   const actReq = () =>

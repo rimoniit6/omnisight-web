@@ -122,8 +122,14 @@ export async function GET(req: NextRequest) {
     // Tenant identity always comes from the session. The organizationId param
     // is honored ONLY for org-less global super_admins; org-bound sessions are
     // always pinned to their own organization regardless of the param.
+    // If an explicit organizationId query param is provided that differs from
+    // the session's active org, reject with 403 (cross-org access denied).
     const where: Prisma.EmployeeWhereInput = {};
     if (scope.organizationId) {
+      const explicitOrgId = searchParams.get('organizationId');
+      if (explicitOrgId && explicitOrgId !== scope.organizationId) {
+        return NextResponse.json({ error: 'Cross-organization access denied' }, { status: 403 });
+      }
       where.organizationId = scope.organizationId;
     } else {
       const orgParam = searchParams.get('organizationId');

@@ -96,17 +96,19 @@ before(async () => {
   const agentTokenRowA = await db.agentToken.create({
     data: {
       token: 'bh-agent-token-org-a-00000000000000000000',
-      employeeId: empA.id,
-      deviceId: deviceA.id,
       expiresAt: new Date(Date.now() + 86400000 * 30),
+      deviceId: deviceA.id,
+      employee: { connect: { id: empA.id } },
+      organization: { connect: { id: orgA.id } },
     },
   });
   const agentTokenRowB = await db.agentToken.create({
     data: {
       token: 'bh-agent-token-org-b-00000000000000000000',
-      employeeId: empB.id,
-      deviceId: deviceB.id,
       expiresAt: new Date(Date.now() + 86400000 * 30),
+      deviceId: deviceB.id,
+      employee: { connect: { id: empB.id } },
+      organization: { connect: { id: orgB.id } },
     },
   });
   agentTokenA = agentTokenRowA.token;
@@ -199,9 +201,9 @@ test('BH-05: agent full start->end cycle records exactly one session', async () 
   const tokenC = await db.agentToken.create({
     data: {
       token: 'bh-agent-token-org-a-c-000000000000000000',
-      employeeId: empC.id,
-      deviceId: null,
       expiresAt: new Date(Date.now() + 86400000 * 30),
+      employee: { connect: { id: empC.id } },
+      organization: { connect: { id: orgA.id } },
     },
   });
   await api.POST(req(tokenC.token, { body: { breakMode: true } }));

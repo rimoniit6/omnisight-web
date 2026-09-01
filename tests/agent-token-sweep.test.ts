@@ -43,10 +43,12 @@ type DbModule = typeof import('../src/lib/db');
 let db: DbModule['db'];
 
 let empId: string;
+let orgId: string;
 
 before(async () => {
   db = (await import('../src/lib/db')).db;
   const org = await db.organization.create({ data: { name: 'TS Org', slug: 'ts-org', timezone: 'UTC' } });
+  orgId = org.id;
   empId = (await db.employee.create({
     data: { employeeId: 'TS-EMP-1', firstName: 'T', lastName: 'Sweep', email: 'ts@example.com', organizationId: org.id, status: 'active' },
   })).id;
@@ -67,8 +69,8 @@ after(async () => {
 const now = new Date();
 
 test('TS-1: expired AgentTokens are deleted, valid ones are retained', async () => {
-  await db.agentToken.create({ data: { token: 'ts-expired-token-0000000000000000000000', employeeId: empId, expiresAt: new Date(now.getTime() - 60_000) } });
-  await db.agentToken.create({ data: { token: 'ts-valid-token-00000000000000000000000', employeeId: empId, expiresAt: new Date(now.getTime() + 86_400_000) } });
+  await db.agentToken.create({ data: { token: 'ts-expired-token-0000000000000000000000', expiresAt: new Date(now.getTime() - 60_000), employee: { connect: { id: empId } }, organization: { connect: { id: orgId } } } });
+  await db.agentToken.create({ data: { token: 'ts-valid-token-00000000000000000000000', expiresAt: new Date(now.getTime() + 86_400_000), employee: { connect: { id: empId } }, organization: { connect: { id: orgId } } } });
 
   const { sweepExpiredAgentCredentials } = await import('../src/lib/jobs/sweep-agent-tokens');
   const result = await sweepExpiredAgentCredentials();
@@ -92,7 +94,7 @@ test('TS-2: expired AgentSessions are deleted', async () => {
 
 test('TS-3: the sweep is wired into runScheduledJobs with lease + observability', async () => {
   // Seed one expired row so the sweep has something to report.
-  await db.agentToken.create({ data: { token: 'ts-job-expired-00000000000000000000000', employeeId: empId, expiresAt: new Date(now.getTime() - 60_000) } });
+  await db.agentToken.create({ data: { token: 'ts-job-expired-00000000000000000000000', expiresAt: new Date(now.getTime() - 60_000), employee: { connect: { id: empId } }, organization: { connect: { id: orgId } } } });
 
   const { runScheduledJobs } = await import('../src/lib/jobs/run');
   const result = await runScheduledJobs();

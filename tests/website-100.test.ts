@@ -11,6 +11,7 @@
 
 import { readFileSync, existsSync } from 'fs';
 import path from 'path';
+import { pathToFileURL } from 'url';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
@@ -21,10 +22,13 @@ let isBareDomain: typeof import('../mini-services/live-updates/activity-events')
 
 const root = path.join(__dirname, '..');
 
-// The `omnisight-agent` component lives in a separate repository. The test that
-// derives the extension id from its install script must skip when the agent is
-// not checked out, so the suite stays portable. (Item 14)
-const AGENT_PRESENT = existsSync(path.join(root, 'omnisight-agent'));
+// The `omnisight-agent` component lives in a separate repository checked out as
+// a sibling of `omnisight-web` (E:\Live project\omnisight\omnisight-agent), not
+// inside the web repo. The test that derives the extension id from its install
+// script must skip when the agent is not checked out, so the suite stays
+// portable. (Item 14)
+const AGENT_ROOT = path.join(root, '..', 'omnisight-agent');
+const AGENT_PRESENT = existsSync(AGENT_ROOT);
 const agentTest = AGENT_PRESENT ? test : test.skip;
 
 test('load pure activity-events module', async () => {
@@ -191,14 +195,14 @@ agentTest('WEBSITE-100-16: pinned manifest key derives the allowlisted extension
   assert.ok(manifest.key.length > 100, 'key must be a real base64 DER SubjectPublicKeyInfo');
 
   const { deriveExtensionIdFromKey, extensionIdFromManifest } = await import(
-    '../omnisight-agent/scripts/install-native-host.mjs'
-  );
+    pathToFileURL(path.join(AGENT_ROOT, 'scripts/install-native-host.mjs')).href
+  ).then((m) => ({ deriveExtensionIdFromKey: m.deriveExtensionIdFromKey, extensionIdFromManifest: m.extensionIdFromManifest }));
   const derived = deriveExtensionIdFromKey(manifest.key);
   assert.match(derived ?? '', /^[a-p]{32}$/, 'derived id must be 32 chars in [a-p]');
   assert.equal(extensionIdFromManifest(), derived, 'install script must derive the same id from the manifest');
 
   for (const file of ['chrome.json', 'edge.json']) {
-    const hostManifest = JSON.parse(readFileSync(path.join(root, 'omnisight-agent/native-host-manifests', file), 'utf8'));
+    const hostManifest = JSON.parse(readFileSync(path.join(AGENT_ROOT, 'native-host-manifests', file), 'utf8'));
     const origins = hostManifest.allowed_origins ?? [];
     assert.equal(origins.length, 1, `${file}: exactly one allowed origin (fail closed)`);
     assert.equal(

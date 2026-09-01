@@ -147,8 +147,15 @@ async function grantConsent(employeeId: string, orgId: string, consentType: stri
 /** Issue a valid device-bound agent token for an employee. */
 async function agentTokenFor(employeeId: string): Promise<string> {
   const token = generateToken(64);
+  const employee = await db.employee.findUnique({ where: { id: employeeId } });
+  if (!employee) throw new Error(`Employee not found: ${employeeId}`);
   await db.agentToken.create({
-    data: { token, employeeId, expiresAt: new Date(Date.now() + 3600_000) },
+    data: {
+      token,
+      employee: { connect: { id: employeeId } },
+      organization: { connect: { id: employee.organizationId } },
+      expiresAt: new Date(Date.now() + 3600_000),
+    },
   });
   return token;
 }

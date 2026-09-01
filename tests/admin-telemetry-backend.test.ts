@@ -277,7 +277,7 @@ st('AT-20: location returns latest + history with coordinates only', async () =>
   assert.equal(body.total, 2);
   assert.equal(body.history.length, 2);
   for (const row of body.history) {
-    assert.deepEqual(Object.keys(row).sort(), ['accuracy', 'id', 'latitude', 'longitude', 'recordedAt']);
+    assert.deepEqual(Object.keys(row).sort(), ['accuracy', 'id', 'latitude', 'longitude', 'recordedAt', 'source']);
   }
 });
 

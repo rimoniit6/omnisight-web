@@ -25,7 +25,13 @@ export async function GET(req: NextRequest) {
     const { page, pageSize } = pagination;
 
     const where: Record<string, unknown> = {};
-    if (scope.organizationId) where.organizationId = scope.organizationId;
+    if (scope.organizationId) {
+      const explicitOrgId = searchParams.get('organizationId');
+      if (explicitOrgId && explicitOrgId !== scope.organizationId) {
+        return NextResponse.json({ error: 'Cross-organization access denied' }, { status: 403 });
+      }
+      where.organizationId = scope.organizationId;
+    }
     if (status) where.status = status;
     if (employeeId) where.employeeId = employeeId;
 

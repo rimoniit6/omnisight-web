@@ -147,7 +147,13 @@ before(async () => {
     data: { name: 'PC-POL-A', hostname: 'PC-POL-A', agentKey: 'key-policy-a', organizationId: orgA.id, employeeId: empA.id, status: 'online', lastHeartbeat: new Date() },
   });
   const tokenRow = await db.agentToken.create({
-    data: { token: `policy-agent-token-a-${Date.now()}-abcdefghij0123456789`, employeeId: empA.id, deviceId: deviceA.id, expiresAt: new Date(Date.now() + 3600_000) },
+    data: {
+      token: `policy-agent-token-a-${Date.now()}-abcdefghij0123456789`,
+      deviceId: deviceA.id,
+      expiresAt: new Date(Date.now() + 3600_000),
+      employee: { connect: { id: empA.id } },
+      organization: { connect: { id: orgA.id } },
+    },
   });
   agentTokenA = tokenRow.token;
 

@@ -577,15 +577,8 @@ export function LiveMonitorPage() {
   // autoplay gate.  If the unlock fails, set audioReady=false so the UI can
   // show the user they need to click.
   useEffect(() => {
-    if (!soundEnabled) {
-      setAudioReady(false);
-      return;
-    }
-    // Try the warmup — on a fresh page load this may succeed if the user
-    // already interacted with the page (clicked anything), or may fail if
-    // no gesture has occurred yet.
-    const unlocked = warmUpAlertAudio();
-    setAudioReady(unlocked);
+    const ready = soundEnabled ? warmUpAlertAudio() : false;
+    setAudioReady(ready);
   }, [soundEnabled]);
 
   // Filter events

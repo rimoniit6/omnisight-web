@@ -37,9 +37,25 @@ const eslintConfig = [
       // no-unescaped-entities: apostrophes in JSX prose are pervasive and
       // harmless; keeping source readable.
       "react/no-unescaped-entities": "off",
-      // The React Compiler is not enabled in this project.
+      // The React Compiler is not enabled in this project — disable its
+      // associated hooks rules which produce false positives for standard
+      // React patterns (setState-in-effect, preserve-manual-memoization).
       "react-compiler/react-compiler": "off",
       "react-hooks/purity": "off",
+      "react-hooks/preserve-manual-memoization": "off",
+      "react-hooks/set-state-in-effect": "off",
+    },
+  },
+  {
+    // ── Playwright E2E fixtures (tests/e2e/**) ────────────────────────────
+    // Playwright's `test.extend` fixture callbacks receive a `use` parameter
+    // that is Playwright's continuation callback, NOT React's `use` hook.
+    // The react-hooks/rules-of-hooks rule misreads these as hook calls, so it
+    // is scoped off for Playwright test/support files only — the React
+    // source tree (src/**) still enforces it at full severity.
+    files: ["tests/e2e/**/*.{ts,tsx}"],
+    rules: {
+      "react-hooks/rules-of-hooks": "off",
     },
   },
   {

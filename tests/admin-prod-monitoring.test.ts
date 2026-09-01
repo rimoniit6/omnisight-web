@@ -238,8 +238,9 @@ test('MON-PROD-11: agent config resolves monitoring + timezone from org data (no
   await db.agentToken.create({
     data: {
       token: 'mon-prod-agent-token-0123456789abcdef0123456789abcdef',
-      employeeId: emp.id,
       expiresAt: new Date(Date.now() + 3600_000),
+      employee: { connect: { id: emp.id } },
+      organization: { connect: { id: orgA.id } },
     },
   });
 
@@ -273,8 +274,9 @@ test('MON-PROD-11: agent config resolves monitoring + timezone from org data (no
   await db.agentToken.create({
     data: {
       token: 'mon-prod-agent-token-b-0123456789abcdef0123456789ab',
-      employeeId: empB.id,
       expiresAt: new Date(Date.now() + 3600_000),
+      employee: { connect: { id: empB.id } },
+      organization: { connect: { id: orgB.id } },
     },
   });
   const resB = await configApi.GET(req('mon-prod-agent-token-b-0123456789abcdef0123456789ab'));

@@ -33,9 +33,6 @@ let superAdminToken = '';
 let orgAAdminToken = '';
 let orgAManagerToken = '';
 let orgAViewerToken = '';
-let orgBAdminToken = '';
-
-let superAdminUserId = '';
 
 // ─── Helpers ───────────────────────────────────────────────────────────────
 
@@ -104,7 +101,6 @@ describe('RBAC — Role Resolution & Authorization', () => {
     it('RBAC-01: Super Admin resolves correctly', async () => {
       const loginResult = await login('rimon@admin.com', 'Rimon2714');
       superAdminToken = loginResult.token;
-      superAdminUserId = loginResult.user.id;
       assert.equal(loginResult.user.role, 'super_admin');
       assert.equal(loginResult.user.roleLabel, 'Super Admin');
     });

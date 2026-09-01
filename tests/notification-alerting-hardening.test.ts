@@ -277,9 +277,10 @@ test('NA-9: agent tamper invalid severity rejected; valid normalized + server-de
   const agentToken = await db.agentToken.create({
     data: {
       token: `tamper-token-${Date.now()}`,
-      employeeId: empA.id,
       deviceId: devA.id,
       expiresAt: new Date(Date.now() + 60 * 60 * 1000),
+      employee: { connect: { id: empA.id } },
+      organization: { connect: { id: orgA.id } },
     },
   });
   const hdr = { Authorization: `Bearer ${agentToken.token}`, 'Content-Type': 'application/json' };

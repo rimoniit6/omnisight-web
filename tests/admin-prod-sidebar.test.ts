@@ -33,7 +33,7 @@ test('NAV-1: every page has an explicit minimum role mapping', () => {
   // compile-time coverage of every PageType in src/lib/store.ts.
   assert.ok(ALL_PAGES.length >= 20, 'navigation mapping covers the full page set');
   for (const p of ALL_PAGES) {
-    assert.ok(['viewer', 'manager', 'admin'].includes(PAGE_MIN_ROLE[p]), `${p} has valid min role`);
+    assert.ok(['viewer', 'manager', 'admin', 'org_admin'].includes(PAGE_MIN_ROLE[p]), `${p} has valid min role`);
   }
 });
 
@@ -62,9 +62,11 @@ test('NAV-4: admin sees everything including admin-only pages', () => {
 });
 
 test('NAV-5: owner and super_admin clear every gate', () => {
+  const superAdminOnlyPages = ['super-admin-organizations', 'super-admin-organization-detail'];
   for (const role of ['owner', 'super_admin']) {
     for (const p of ALL_PAGES) {
-      assert.equal(canAccessPage(role, p), true, `${role} must see ${p}`);
+      const expected = superAdminOnlyPages.includes(p) ? role === 'super_admin' : true;
+      assert.equal(canAccessPage(role, p), expected, `${role} must see ${p}`);
     }
   }
 });

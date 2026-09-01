@@ -42,7 +42,7 @@ export async function POST(req: NextRequest) {
       select: { id: true, name: true, status: true },
     });
     if (!org) {
-      return apiError('Organization not found', 404);
+      return apiError('Organization not found', 403);
     }
     if (org.status !== 'active') {
       return apiError('Organization is not active', 403);

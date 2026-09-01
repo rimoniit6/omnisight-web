@@ -103,6 +103,8 @@ export async function verifySessionActiveOrg(sessionId: string, jwtActiveOrgId: 
     // If the session has no active org set, accept (legacy sessions)
     if (!session.activeOrganizationId) return true;
     // JWT's activeOrganizationId must match the session's
+    // Handle null/undefined JWT active org (e.g. super_admin) - reject mismatch
+    if (!jwtActiveOrgId) return false;
     return session.activeOrganizationId === jwtActiveOrgId;
   } catch {
     return false;

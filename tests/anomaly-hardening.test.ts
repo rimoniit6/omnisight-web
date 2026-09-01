@@ -675,7 +675,7 @@ test('AN-89: agent-reported anomaly with an UNKNOWN type → 422 (canonical enum
     data: { employeeId: `AGENT-BADTYPE-${Date.now()}`, firstName: 'Bad', lastName: 'Type', email: `badtype-${Date.now()}@a.local`, organizationId: orgA.id, status: 'active', agentApproved: true },
   });
   const token = `agent-token-badtype-${Date.now()}-abcdefghijklmnopqrstuvwxyz0123456789`;
-  await db.agentToken.create({ data: { token, employeeId: emp.id, expiresAt: new Date(Date.now() + 3600_000) } });
+  await db.agentToken.create({ data: { token, expiresAt: new Date(Date.now() + 3600_000), employee: { connect: { id: emp.id } }, organization: { connect: { id: orgA.id } } } });
 
   const res = await agentAnomalyApi.POST(req(token, {
     method: 'POST',
@@ -694,7 +694,7 @@ test('AN-90: agent-reported high-severity anomaly creates alert + notification w
   });
   const device = await db.device.create({ data: { name: 'PC-NOTIF', organizationId: orgA.id, employeeId: emp.id, status: 'online' } });
   const token = `agent-token-notif-${Date.now()}-abcdefghijklmnopqrstuvwxyz0123456789`;
-  await db.agentToken.create({ data: { token, employeeId: emp.id, deviceId: device.id, expiresAt: new Date(Date.now() + 3600_000) } });
+  await db.agentToken.create({ data: { token, deviceId: device.id, expiresAt: new Date(Date.now() + 3600_000), employee: { connect: { id: emp.id } }, organization: { connect: { id: orgA.id } } } });
 
   const res = await agentAnomalyApi.POST(req(token, {
     method: 'POST',

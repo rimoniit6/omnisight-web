@@ -572,8 +572,9 @@ test('AH-33: anomaly with an EXPIRED token → 401', async () => {
   await db.agentToken.create({
     data: {
       token: `expired-token-${Date.now()}-abcdefghijklmnopqrstuvwxyz0123456789`,
-      employeeId: emp.id,
       expiresAt: new Date(Date.now() - 60_000),
+      employee: { connect: { id: emp.id } },
+      organization: { connect: { id: emp.organizationId } },
     },
   });
   const expired = await db.agentToken.findFirst({ where: { employeeId: emp.id, expiresAt: { lt: new Date() } } });

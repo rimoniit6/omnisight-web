@@ -16,70 +16,59 @@
  */
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import pg from 'pg';
+import { execSync } from 'node:child_process';
 import { PrismaClient } from '@prisma/client';
-import http from 'node:http';
 
-const TEST_DB_URL =
-  process.env.E2E_DATABASE_URL ||
-  'postgresql://postgres:123456@localhost:5432/workai_test_e2e?schema=public';
+// ─── Test DB isolation (set BEFORE any app module import) ──────────────────
+const PG_TEST_BASE = process.env.PG_TEST_BASE_URL || 'postgresql://postgres:123456@localhost:5432';
+const TEST_DB_NAME = 'workai_test_audio';
+const TEST_DB_URL = `${PG_TEST_BASE}/${TEST_DB_NAME}?schema=public`;
 
-const prisma = new PrismaClient({ datasources: { db: { url: TEST_DB_URL } } });
+process.env.DATABASE_URL = TEST_DB_URL;
+process.env.DIRECT_URL = TEST_DB_URL;
+
+const prisma = new PrismaClient();
 
 // ─── Test state ───────────────────────────────────────────────────────────────
 
-let server: http.Server;
-let baseUrl: string;
-let adminToken: string;
-let viewerToken: string;
 let orgId: string;
-let adminUserId: string;
 
 // ─── Setup / Teardown ────────────────────────────────────────────────────────
 
 before(async () => {
+  execSync(`node scripts/pg-test-db.mjs ensure ${TEST_DB_NAME}`, {
+    env: { ...process.env, PG_TEST_BASE_URL: PG_TEST_BASE },
+    stdio: 'pipe',
+  });
+  execSync('npx prisma db push --force-reset --accept-data-loss --skip-generate', {
+    env: { ...process.env, DATABASE_URL: TEST_DB_URL },
+    stdio: 'pipe',
+  });
   await prisma.$connect();
-  
-  // Find or create test org and users
-  const org = await prisma.organization.findFirst({ where: { slug: 'acme-e2e' } });
-  if (!org) throw new Error('Test org not found — run seed first');
+
+  // Self-seed a throwaway org (no external seed dependency) so the test is
+  // reproducible in a clean environment.
+  const org = await prisma.organization.create({
+    data: { name: 'Audio Test Org', slug: `audio-test-${Date.now()}` },
+  });
   orgId = org.id;
-
-  const admin = await prisma.appUser.findFirst({ where: { email: 'admin@acme-e2e.test' } });
-  if (!admin) throw new Error('Admin user not found');
-  adminUserId = admin.id;
-
-  const viewer = await prisma.appUser.findFirst({ where: { email: 'viewer@acme-e2e.test' } });
-  if (!viewer) throw new Error('Viewer user not found');
-
-  // Generate test tokens (simplified — in real tests, use signJWT)
-  adminToken = `test-admin-token-${admin.id}`;
-  viewerToken = `test-viewer-token-${viewer.id}`;
-
-  // Clean up any existing test data
-  await prisma.audioTranscription.deleteMany({ where: { organizationId: orgId } });
-  await prisma.audioRecording.deleteMany({ where: { organizationId: orgId } });
 });
 
 after(async () => {
-  // Clean up test data
-  await prisma.audioTranscription.deleteMany({ where: { organizationId: orgId } });
-  await prisma.audioRecording.deleteMany({ where: { organizationId: orgId } });
+  if (orgId) {
+    await prisma.audioTranscription.deleteMany({ where: { organizationId: orgId } });
+    await prisma.audioRecording.deleteMany({ where: { organizationId: orgId } });
+  }
   await prisma.$disconnect();
+  try {
+    execSync(`node scripts/pg-test-db.mjs drop ${TEST_DB_NAME}`, {
+      env: { ...process.env, PG_TEST_BASE_URL: PG_TEST_BASE },
+      stdio: 'pipe',
+    });
+  } catch {
+    /* best-effort cleanup */
+  }
 });
-
-// ─── Helper: make authenticated request ────────────────────────────────────────
-
-async function apiRequest(
-  method: string,
-  path: string,
-  token?: string,
-  body?: unknown,
-): Promise<{ status: number; json: () => Promise<unknown> }> {
-  // In a real test, this would make HTTP requests to the running server
-  // For unit tests, we test the logic directly
-  return { status: 200, json: async () => ({}) };
-}
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
 

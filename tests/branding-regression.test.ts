@@ -13,12 +13,16 @@ import { readFileSync, existsSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 
 const ROOT = resolve(import.meta.dirname, '..');
+// The `omnisight-agent` component lives in a SEPARATE sibling repository
+// (E:\Live project\omnisight\omnisight-agent), not inside the web checkout.
+// `omnisight-agent/...` paths below resolve there; `src/...` and
+// `browser-extension/...` resolve within the web repo.
+const AGENT_ROOT = resolve(ROOT, '..', 'omnisight-agent');
+const resolvePath = (rel: string) => (rel.startsWith('omnisight-agent/') ? join(AGENT_ROOT, rel.slice('omnisight-agent/'.length)) : join(ROOT, rel));
 
-// The `omnisight-agent` component lives in a separate repository and is not
-// part of this web app checkout. Tests that assert on its source/artifacts must
-// skip cleanly when it is absent so the suite is portable and does not
-// hard-fail in environments that only check out the web app. (Item 14)
-const AGENT_PRESENT = existsSync(join(ROOT, 'omnisight-agent'));
+// `AGENT_PRESENT`: true when the sibling agent repo is checked out, so these
+// tests run against the real source; otherwise they skip cleanly (portability).
+const AGENT_PRESENT = existsSync(join(AGENT_ROOT, 'package.json'));
 const agentTest = AGENT_PRESENT ? test : test.skip;
 
 // User-facing surfaces: any leftover WorkLensAI here is a rebrand miss.
@@ -51,7 +55,7 @@ const USER_FACING = [
   'omnisight-agent/src/main/main.ts',
   'omnisight-agent/src/auth/auth-service.ts',
   'omnisight-agent/src/services/agent-orchestrator.ts',
-  'omnisight-agent/electron-builder.yml',
+  'omnisight-agent/installer/electron-builder.yml',
   'omnisight-agent/package.json',
   'browser-extension/manifest.json',
 ];
@@ -75,7 +79,7 @@ const TECHNICAL_CONTRACTS = [
 agentTest('BRAND-1: no legacy brand in user-facing surfaces', () => {
   const misses: string[] = [];
   for (const rel of USER_FACING) {
-    const abs = join(ROOT, rel);
+    const abs = resolvePath(rel);
     if (!existsSync(abs)) {
       misses.push(`${rel}: FILE MISSING`);
       continue;
@@ -89,7 +93,7 @@ agentTest('BRAND-1: no legacy brand in user-facing surfaces', () => {
       // (technical contract — the path itself is the payload).
       if (rel === 'omnisight-agent/src/main/main.ts' && (content.includes('worklensai-agent') || content.includes('OmniSight'))) continue;
       // electron-builder.yml: launcher resolution comment mentions the exe — allow legacy mention only if paired with the new name.
-      if (rel === 'omnisight-agent/electron-builder.yml' && content.includes('WorkLensAI') && content.includes('OmniSight')) continue;
+      if (rel === 'omnisight-agent/installer/electron-builder.yml' && content.includes('WorkLensAI') && content.includes('OmniSight')) continue;
       misses.push(`${rel}:${line + 1}: ${content.trim()}`);
     }
   }
@@ -106,7 +110,7 @@ test('BRAND-2: new brand present in canonical surfaces', () => {
 agentTest('BRAND-3: technical identifiers preserved (backward compatibility)', () => {
   const missing: string[] = [];
   for (const [rel, token] of TECHNICAL_CONTRACTS) {
-    const abs = join(ROOT, rel);
+    const abs = resolvePath(rel);
     if (!existsSync(abs)) {
       missing.push(`${rel}: FILE MISSING`);
       continue;
@@ -120,13 +124,13 @@ agentTest('BRAND-4: agent exclusions carry BOTH legacy and new binary names', ()
   const admin = readFileSync(join(ROOT, 'src/lib/agent-process.ts'), 'utf8');
   assert.ok(admin.includes('omnisightagent.exe'), 'admin list must exclude omnisightagent.exe');
   assert.ok(admin.includes('worklensaiagent.exe'), 'admin list must keep legacy exclusion');
-  const agent = readFileSync(join(ROOT, 'omnisight-agent/src/lib/internal-process.ts'), 'utf8');
+  const agent = readFileSync(join(AGENT_ROOT, 'src/lib/internal-process.ts'), 'utf8');
   assert.ok(agent.includes('omnisightagent.exe'), 'agent list must exclude omnisightagent.exe');
   assert.ok(agent.includes('worklensaiagent.exe'), 'agent list must keep legacy exclusion');
 });
 
 agentTest('BRAND-5: server-url supports new primary and legacy alias', () => {
-  const src = readFileSync(join(ROOT, 'omnisight-agent/src/config/server-url.ts'), 'utf8');
+  const src = readFileSync(join(AGENT_ROOT, 'src/config/server-url.ts'), 'utf8');
   assert.ok(src.includes("'OMNISIGHT_SERVER_URL'"), 'primary env key must exist');
   assert.ok(src.includes("'WORKLENSAI_SERVER_URL'"), 'legacy env alias must remain');
 });
@@ -138,7 +142,7 @@ agentTest('BRAND-6: official brand assets present and referenced (no legacy artw
   }
   assert.ok(!canonical.includes('<rect'), 'canonical SVG must not carry a background rect');
   for (const asset of ['public/logos/omnisight.svg', 'public/favicon.svg', 'public/favicon.ico', 'public/favicon.png', 'public/apple-touch-icon.png', 'omnisight-agent/assets/icon.ico']) {
-    assert.ok(existsSync(join(ROOT, asset)), `${asset} must exist`);
+    assert.ok(existsSync(resolvePath(asset)), `${asset} must exist`);
   }
   const faviconSvg = readFileSync(join(ROOT, 'public/favicon.svg'), 'utf8');
   assert.ok(faviconSvg.includes('viewBox="110 110 280 280"'), 'favicon SVG must use the tight-crop viewBox');
@@ -148,9 +152,9 @@ agentTest('BRAND-6: official brand assets present and referenced (no legacy artw
   assert.ok(layout.includes('"/favicon.svg"'), 'layout must reference the SVG favicon');
   assert.ok(layout.includes('"/favicon.ico"'), 'layout must reference the ICO fallback');
   assert.ok(layout.includes('"/apple-touch-icon.png"'), 'layout must reference apple-touch icon');
-  const agentMain = readFileSync(join(ROOT, 'omnisight-agent/src/main/main.ts'), 'utf8');
+  const agentMain = readFileSync(join(AGENT_ROOT, 'src/main/main.ts'), 'utf8');
   assert.ok(agentMain.includes('assets/icon.ico'), 'agent must load the branded .ico');
-  const builder = readFileSync(join(ROOT, 'omnisight-agent/electron-builder.yml'), 'utf8');
+  const builder = readFileSync(join(AGENT_ROOT, 'installer/electron-builder.yml'), 'utf8');
   assert.ok(builder.includes('icon: assets/icon.ico'), 'installer must use the branded .ico');
   const stale = ['public/worklens-logo.png', 'public/logo.svg', 'public/branding'];
   for (const path of stale) {
@@ -158,19 +162,19 @@ agentTest('BRAND-6: official brand assets present and referenced (no legacy artw
   }
   const legacyRefs = ['/worklens-logo.png', '/logo.svg', '/branding/', 'omnisight-mark.png'];
   for (const rel of USER_FACING) {
-    const text = readFileSync(join(ROOT, rel), 'utf8');
+    const text = readFileSync(resolvePath(rel), 'utf8');
     for (const ref of legacyRefs) {
       assert.ok(!text.includes(ref), `${rel} must not reference stale artwork (${ref})`);
     }
   }
-  const renderer = readFileSync(join(ROOT, 'omnisight-agent/src/renderer/index.html'), 'utf8');
+  const renderer = readFileSync(join(AGENT_ROOT, 'src/renderer/index.html'), 'utf8');
   assert.ok(renderer.includes('omnisight-mark.svg'), 'agent renderer must use the presentation derivative');
 });
 
 agentTest('BRAND-8: desktop agent logo uses the tight-crop derivative + responsive contain sizing', () => {
-  const renderer = readFileSync(join(ROOT, 'omnisight-agent/src/renderer/index.html'), 'utf8');
+  const renderer = readFileSync(join(AGENT_ROOT, 'src/renderer/index.html'), 'utf8');
   assert.ok(renderer.includes('src="omnisight-mark.svg"'), 'agent header must use the presentation derivative');
-  const css = readFileSync(join(ROOT, 'omnisight-agent/src/renderer/styles.css'), 'utf8');
+  const css = readFileSync(join(AGENT_ROOT, 'src/renderer/styles.css'), 'utf8');
   assert.ok(css.includes('object-fit: contain'), 'logo must use contain rendering');
   assert.ok(css.includes('object-position: center'), 'logo must center its mark');
   assert.ok(css.includes('aspect-ratio: 1 / 1'), 'logo box must stay square (no distortion)');
@@ -182,7 +186,7 @@ agentTest('BRAND-8: desktop agent logo uses the tight-crop derivative + responsi
   for (const forbidden of ['background', 'border', 'box-shadow', 'border-radius']) {
     assert.ok(!markBlock.includes(forbidden), `.brand-mark must not carry ${forbidden}`);
   }
-  const derivative = readFileSync(join(ROOT, 'omnisight-agent/src/renderer/omnisight-mark.svg'), 'utf8');
+  const derivative = readFileSync(join(AGENT_ROOT, 'src/renderer/omnisight-mark.svg'), 'utf8');
   assert.ok(derivative.includes('viewBox="110 110 280 280"'), 'derivative must use the tight-crop viewBox');
   assert.ok(derivative.includes('grad1') && !derivative.includes('<rect'), 'derivative must keep artwork + transparency');
 });
