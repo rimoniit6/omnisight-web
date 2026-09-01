@@ -149,7 +149,7 @@ try {
     WHERE x.indisunique AND n.nspname = 'public'
   `;
   const idxNames = new Set(uniqueIdx.map((r) => r.name));
-  // NOTE: DeviceClaim.deviceId is deliberately NOT unique — the zero-touch
+  // NOTE: DeviceClaim.deviceId is deliberately NOT unique — the discovery
   // flow creates a FRESH claim per registration (re-registering devices get
   // new claims; old ones are never resurrected), so multiple claims may share
   // one deviceId over its lifecycle. The schema's non-unique

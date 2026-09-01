@@ -5,7 +5,7 @@ import { authError, requireSessionOrg, SAFE_EMPLOYEE_SELECT } from '@/lib/api';
 import { log, requestContext } from '@/lib/logger';
 
 // GET /api/device-claims
-// List zero-touch device claims for the caller's organization (admin session).
+// List device claims for the caller's organization (admin session).
 // Pending claims are what the Admin "Pending Devices" workflow consumes.
 // Also serves:
 //   - ?summary=true — org-wide status counts (server-side groupBy, not a

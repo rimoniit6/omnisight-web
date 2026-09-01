@@ -249,7 +249,7 @@ test('AUTH-6 + AUTH-5: five failed logins lock the account; even the correct pas
 
 // ─── AUTH-8/9/10/11: token integrity & separation ───────────────────────────
 
-test('AUTH-8: an expired session is rejected (discover cannot bind any org without a valid session or enrollment code)', async () => {
+test('AUTH-8: an expired session is rejected (discover cannot bind any org without a valid session)', async () => {
   const { emp } = await seedAccount(orgA.id, 'AUTH-8');
   const { token } = await createAgentSession({ employeeId: emp.id, organizationId: orgA.id, ipAddress: '203.0.113.9' });
   await db.agentSession.update({
@@ -258,8 +258,8 @@ test('AUTH-8: an expired session is rejected (discover cannot bind any org witho
   });
   const res = await validateAgentSession(req(token, { ip: '203.0.113.9' }));
   assert.equal(res.valid, false, 'expired session must fail closed');
-  // No implicit tenant fallback: an anonymous discover without an enrollment
-  // code is refused (422) — it must NEVER bind to the first organization.
+  // No implicit tenant fallback: an anonymous discover without a valid session
+  // is refused (422) — it must NEVER bind to the first organization.
   const d = await discoverWithSession(token, 'key-auth-8-expired-device-abcdef', '198.51.100.12');
   assert.equal(d.status, 422, 'invalid session → no org selection → 422, never 201');
   assert.equal(d.body.employeeAssigned, undefined, 'no employee identity is ever assigned');
@@ -281,10 +281,10 @@ test('AUTH-10: an Admin JWT cannot be used as an Agent session', async () => {
   const res = await validateAgentSession(req(admin, { ip: '203.0.113.11' }));
   assert.equal(res.valid, false, 'admin JWT must never pass validateAgentSession');
   // And it cannot bind a device to the admin's identity via discover — with no
-  // valid session and no enrollment code the anonymous path is refused (422),
+  // valid session the anonymous path is refused (422),
   // so the JWT holder cannot enroll a device into ANY organization.
   const d = await discoverWithSession(admin, 'key-auth-10-adminjwt-device-abcdef', '198.51.100.13');
-  assert.equal(d.status, 422, 'no valid session/code → 422, never 201');
+  assert.equal(d.status, 422, 'no valid session → 422, never 201');
   assert.equal(d.body.employeeAssigned, undefined, 'admin JWT must not assign the device to an employee');
   assert.equal(await db.device.count({ where: { agentKey: 'key-auth-10-adminjwt-device-abcdef' } }), 0);
 });

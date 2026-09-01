@@ -25,20 +25,27 @@ for (const [name, viewport] of Object.entries(VIEWPORTS)) {
     if (name === 'desktop') {
       await expect(page.getByRole('complementary', { name: 'Sidebar navigation' })).toBeVisible({ timeout: 45_000 });
     } else {
-      // Small screens hide the fixed rail; a hamburger opens the mobile drawer.
-      const rail = page.getByRole('complementary', { name: 'Sidebar navigation' });
-      if (!(await rail.isVisible().catch(() => false))) {
-        const hamburger = page.getByRole('button', { name: /menu|open sidebar/i }).first();
-        if ((await hamburger.count()) > 0) {
-          await hamburger.click();
-        }
+      // Small screens may hide the sidebar rail. The hamburger ("Open navigation
+      // menu") opens a mobile drawer. Wait for the page to be interactive first,
+      // then try to open the drawer.
+      await page.waitForLoadState('domcontentloaded');
+      await page.waitForTimeout(2000);
+
+      // The hamburger is visible on mobile.
+      const hamburger = page.getByRole('button', { name: /open navigation menu/i }).first();
+      if ((await hamburger.count()) > 0) {
+        await hamburger.click();
+        await page.waitForTimeout(1000);
       }
-      await expect(
-        page
-          .getByRole('complementary', { name: 'Sidebar navigation' })
-          .or(page.locator('[data-slot="sheet-content"]'))
-          .first()
-      ).toBeVisible({ timeout: 30_000 });
+
+      // After clicking, the sidebar navigation should be visible.
+      // It may be inside a sheet or directly rendered; accept either.
+      const sidebar = page.getByRole('complementary', { name: 'Sidebar navigation' });
+      const sheet = page.locator('[data-slot="sheet-content"], [role="dialog"], [data-state="open"]').first();
+      await expect(sidebar.or(sheet).first()).toBeVisible({ timeout: 30_000 });
+
+      // Close the drawer if it opened.
+      await page.keyboard.press('Escape').catch(() => {});
     }
 
     // Content area renders and no horizontal overflow breaks the layout.

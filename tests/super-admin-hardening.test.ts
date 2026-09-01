@@ -168,7 +168,7 @@ test('SA-01: Super Admin can list all organizations', async () => {
   const res = await api.GET(req(superAdminToken, { url: 'http://localhost:3000/api/super-admin/organizations' }));
   const body = await res.json();
   assert.equal(res.status, 200);
-  const ids = (body.organizations as Array<{ id: string }>).map((o) => o.id);
+  const ids = (body.data as Array<{ id: string }>).map((o) => o.id);
   assert.ok(ids.includes(orgA.id), 'Org A visible to Super Admin');
   assert.ok(ids.includes(orgB.id), 'Org B visible to Super Admin');
 });

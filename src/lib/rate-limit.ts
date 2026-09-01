@@ -9,7 +9,7 @@
 //
 // Failure behavior: an unavailable store never silently lifts a guard.
 //   - security-critical keys (login, agent auth, registration, discovery,
-//     org creation, claim/registration writes, guest writes, enrollment codes,
+//     org creation, claim/registration writes,
 //     agent-account writes) FAIL CLOSED → the request is denied with a short
 //     retry so brute-force/registration guards cannot be disabled by an outage.
 //   - convenience/abuse throttles (heartbeat, agent-write, analytics reads,
@@ -40,8 +40,6 @@ const SECURITY_CRITICAL_PREFIXES = [
   'agent-discover:',
   'orgCreate:',
   'device-claim:',
-  'guest:',
-  'enrollment-code:',
   'agent-account-write:',
   'ai-test-connection:',
 ];
@@ -101,7 +99,7 @@ export const RATE_LIMITS = {
   login: { limit: 10, windowMs: 5 * 60 * 1000 }, // 10 attempts / 5 min / IP+email
   agentAuthenticate: { limit: 20, windowMs: 60 * 1000 }, // 20 / min / IP
   agentRegister: { limit: 10, windowMs: 60 * 1000 }, // 10 / min / IP
-  agentDiscover: { limit: 20, windowMs: 60 * 1000 }, // 20 / min / IP+deviceKey (zero-touch bootstrap)
+  agentDiscover: { limit: 20, windowMs: 60 * 1000 }, // 20 / min / IP+deviceKey (device discovery)
   deviceClaimWrite: { limit: 30, windowMs: 60 * 1000 }, // approve/reject/revoke claim / IP
   orgCreate: { limit: 10, windowMs: 60 * 1000 }, // org creation / min / IP+admin (bootstrap path)
   aiTestConnection: { limit: 10, windowMs: 60 * 1000 }, // 10 / min / IP

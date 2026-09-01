@@ -4,7 +4,7 @@
 // HOLD A VALID ACTIVE AGENTTOKEN AT A TIME.
 //
 // This module is the SINGLE serialization/enforcement point for device
-// activation. Every token-issuing path (PATH A zero-touch, PATH B legacy)
+// activation. Every token-issuing path (PATH A (device credential), PATH B (legacy))
 // MUST flow through acquireActiveSlot() inside a db.$transaction():
 //
 //   SELECT "Employee" ... FOR UPDATE
@@ -125,7 +125,7 @@ export async function acquireActiveSlot(
   if (!employee.agentApproved) throw new EmployeeNotEligibleError('Employee not approved by admin');
 
   // 3. AgentAccount fail-closed rule (mirrors validateAgentToken /
-  //    validateAgentSession): an ABSENT account is fine — zero-touch PATH A
+  //    validateAgentSession): an ABSENT account is fine — device credential PATH A
   //    and legacy PATH B onboarding never create an AgentAccount row
   //    (CRITICAL-01 regression). Only a present-but-disabled account fails
   //    closed, even if it was disabled mid-request.

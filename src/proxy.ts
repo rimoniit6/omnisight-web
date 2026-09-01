@@ -157,14 +157,13 @@ const ROLE_RULES: RoleRule[] = [
   // Admin+ only (super_admin, owner, admin)
   { prefix: '/api/settings', minRole: 'admin' },
   { prefix: '/api/organization', minRole: 'admin' },
-  // Zero-touch claims and guest queues are admin workflows (the Agent
-  // Approvals / Guests pages are admin-gated in navigation.ts). The lists
-  // expose pending-device and guest identities, so reads must match the
+  // Device claims are admin workflows (the Agent
+  // Approvals page is admin-gated in navigation.ts). The list
+  // exposes pending-device identities, so reads must match the
   // actions' admin gate. The device-owned {id}/cancel path is unaffected:
   // it is proxy-public by design (claim-secret authenticated inside the
   // route) and short-circuits before this RBAC section.
   { prefix: '/api/device-claims', minRole: 'admin' },
-  { prefix: '/api/guests', minRole: 'admin' },
   { prefix: '/api/auth/users', minRole: 'admin' },
   { prefix: '/api/ai-provider', minRole: 'admin' },
   { prefix: '/api/import', minRole: 'admin' },

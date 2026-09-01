@@ -13,7 +13,7 @@
 //   admin:  login-check (user lookup), device list (paginated), employee list
 //           (paginated + search), project list, consent state (batch), device
 //           approve-equivalent (single update), audit insert
-//   agent:  zero-touch discover-equivalent (device lookup by agentKey), claim
+//   agent:  discover-equivalent (device lookup by agentKey), claim
 //           lookup, config (org settings), consent state, heartbeat (device
 //           update), activity insert, screenshot-metadata insert
 import { PrismaClient } from '@prisma/client';

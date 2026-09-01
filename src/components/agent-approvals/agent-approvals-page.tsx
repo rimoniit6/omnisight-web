@@ -75,7 +75,7 @@ interface EmployeeData {
 
 
 
-// ─── Zero-touch device claim types ──────────────────────────────────────────
+// ─── Device claim types ──────────────────────────────────────────
 interface ClaimEmployee {
   id: string;
   employeeId: string;
@@ -85,16 +85,6 @@ interface ClaimEmployee {
   status: string;
   departmentId: string | null;
   department: { id: string; name: string } | null;
-}
-
-interface GuestData {
-  id: string;
-  deviceId: string;
-  employeeId: string;
-  status: string; // ACTIVE | SUSPENDED | REVOKED | REJECTED
-  approvedAt: string | null;
-  suspendedAt: string | null;
-  revokedAt: string | null;
 }
 
 interface DeviceClaimData {
@@ -123,9 +113,6 @@ interface DeviceClaimData {
   };
   employee: ClaimEmployee | null;
   projects: Array<{ id: string; name: string; status: string; color: string; role: string }>;
-  // Guest enrichment (populated client-side from /api/guests)
-  guestId?: string;
-  guestStatus?: string;
 }
 
 const statusConfig: Record<string, { icon: React.ElementType; color: string; bg: string; borderAccent: string; label: string }> = {
@@ -172,8 +159,8 @@ function SystemInfoRow({ icon: Icon, label, value }: { icon: React.ElementType; 
   );
 }
 
-// ─── Zero-touch devices tab ─────────────────────────────────────────────────
-function ZeroTouchDevicesTab() {
+// ─── Device claims tab ─────────────────────────────────────────────────
+function DeviceClaimsTab() {
   const queryClient = useQueryClient();
   const [claimFilter, setClaimFilter] = useState('pending');
   const [claimPage, setClaimPage] = useState(1);
@@ -185,14 +172,7 @@ function ZeroTouchDevicesTab() {
   const [revokeTarget, setRevokeTarget] = useState<DeviceClaimData | null>(null);
   const [rejectReason, setRejectReason] = useState('');
   const [revokeReason, setRevokeReason] = useState('');
-  // Guest lifecycle state
-  const [guestActionTarget, setGuestActionTarget] = useState<{ id: string; action: 'suspend' | 'reactivate' | 'revoke'; hostname: string } | null>(null);
-  const [guestActionReason, setGuestActionReason] = useState('');
-  const [convertTarget, setConvertTarget] = useState<DeviceClaimData | null>(null);
-  const [convertForm, setConvertForm] = useState({ firstName: '', lastName: '', email: '', employeeId: '' });
-  const [converting, setConverting] = useState(false);
   // Approval dialog state
-  const [approveMode, setApproveMode] = useState<'employee' | 'guest'>('employee');
   const [selectedEmployeeId, setSelectedEmployeeId] = useState('');
   const [selectedEmployee, setSelectedEmployee] = useState<EmployeeOption | null>(null);
   const [selectedProjectIds, setSelectedProjectIds] = useState<string[]>([]);
@@ -225,26 +205,6 @@ function ZeroTouchDevicesTab() {
     },
   });
 
-  // Fetch active guests to enrich approved guest claims with lifecycle data
-  const { data: guestsData } = useQuery({
-    queryKey: ['guests', 'approval-enrichment'],
-    queryFn: async () => {
-      const res = await fetch('/api/guests?pageSize=200');
-      if (!res.ok) return { data: [] };
-      return res.json();
-    },
-    staleTime: 30_000,
-  });
-
-  // Build a deviceId → guest lookup map for quick enrichment
-  const guestByDeviceId = useMemo(() => {
-    const map = new Map<string, GuestData>();
-    for (const g of (guestsData?.data ?? []) as GuestData[]) {
-      map.set(g.deviceId, g);
-    }
-    return map;
-  }, [guestsData]);
-
   // Server-side status counts (groupBy) — complete queue, never a first-page
   // projection. Prefix-invalidated by the realtime device-claim event.
   const { data: summaryData } = useQuery({
@@ -265,19 +225,7 @@ function ZeroTouchDevicesTab() {
     },
   });
 
-  // Enrich approved claims with guest data
-  const claims: DeviceClaimData[] = useMemo(() => {
-    const raw: DeviceClaimData[] = data?.data || [];
-    return raw.map((claim) => {
-      if (claim.status === 'approved') {
-        const guest = guestByDeviceId.get(claim.deviceId);
-        if (guest) {
-          return { ...claim, guestId: guest.id, guestStatus: guest.status };
-        }
-      }
-      return claim;
-    });
-  }, [data?.data, guestByDeviceId]);
+  const claims: DeviceClaimData[] = data?.data || [];
   const summary = summaryData?.summary;
 
   const pendingCount = summary?.pending ?? 0;
@@ -304,12 +252,11 @@ function ZeroTouchDevicesTab() {
     queryClient.invalidateQueries({ queryKey: ['employees'] });
     queryClient.invalidateQueries({ queryKey: ['devices'] });
     queryClient.invalidateQueries({ queryKey: ['dashboard'] });
-    queryClient.invalidateQueries({ queryKey: ['guests'] });
+
   };
 
   const openApprove = (claim: DeviceClaimData) => {
     setApproveTarget(claim);
-    setApproveMode('employee');
     setSelectedEmployeeId(claim.employee?.id || '');
     setSelectedEmployee(
       claim.employee
@@ -330,16 +277,13 @@ function ZeroTouchDevicesTab() {
 
   const handleApprove = async () => {
     if (!approveTarget) return;
-    if (approveMode === 'employee' && !selectedEmployeeId) {
+    if (!selectedEmployeeId) {
       toast.error('Please select an employee to assign this device to');
       return;
     }
     setActionLoading(approveTarget.id);
     try {
-      const body =
-        approveMode === 'guest'
-          ? { mode: 'guest' }
-          : { mode: 'employee', employeeId: selectedEmployeeId, projectIds: selectedProjectIds };
+      const body = { mode: 'employee', employeeId: selectedEmployeeId, projectIds: selectedProjectIds };
       const res = await fetch(`/api/device-claims/${approveTarget.id}/approve`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -349,12 +293,8 @@ function ZeroTouchDevicesTab() {
         const err = await res.json();
         throw new Error(err.error || 'Failed to approve device');
       }
-      if (approveMode === 'guest') {
-        toast.success('Device approved as guest — enrolled without employee credentials, monitoring consent auto-granted');
-      } else {
-        const emp = selectedEmployee;
-        toast.success(`Device approved and assigned to ${emp ? `${emp.firstName} ${emp.lastName}` : 'employee'}`);
-      }
+      const emp = selectedEmployee;
+      toast.success(`Device approved and assigned to ${emp ? `${emp.firstName} ${emp.lastName}` : 'employee'}`);
       invalidateAll();
     } catch (err: unknown) {
       toast.error(err instanceof Error ? err.message : 'Failed to approve device');
@@ -413,81 +353,6 @@ function ZeroTouchDevicesTab() {
     }
   };
 
-  // ─── Guest lifecycle handlers ───────────────────────────────────────────
-
-  const handleGuestAction = async () => {
-    if (!guestActionTarget) return;
-    setActionLoading(guestActionTarget.id);
-    try {
-      const res = await fetch(`/api/guests/${guestActionTarget.id}/${guestActionTarget.action}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ reason: guestActionReason || undefined }),
-      });
-      if (!res.ok) {
-        const err = await res.json();
-        throw new Error(err.error || `Failed to ${guestActionTarget.action} guest`);
-      }
-      const actionLabel = guestActionTarget.action === 'suspend' ? 'Suspended' : guestActionTarget.action === 'reactivate' ? 'Reactivated' : 'Revoked';
-      toast.success(`${actionLabel} guest — ${guestActionTarget.hostname}`);
-      invalidateAll();
-    } catch (err: unknown) {
-      toast.error(err instanceof Error ? err.message : 'Guest action failed');
-    } finally {
-      setActionLoading(null);
-      setGuestActionTarget(null);
-      setGuestActionReason('');
-    }
-  };
-
-  const openConvert = (claim: DeviceClaimData) => {
-    setConvertTarget(claim);
-    setConvertForm({
-      firstName: claim.employee?.firstName === 'Guest' ? '' : (claim.employee?.firstName ?? ''),
-      lastName: claim.employee?.lastName === claim.device.hostname ? '' : (claim.employee?.lastName ?? ''),
-      email: claim.employee?.email && !claim.employee.email.endsWith('@guests.invalid') ? claim.employee.email : '',
-      employeeId: claim.employee?.employeeId?.startsWith('GUEST-') ? '' : (claim.employee?.employeeId ?? ''),
-    });
-  };
-
-  const submitConvert = async () => {
-    if (!convertTarget?.guestId) return;
-    if (!convertForm.firstName.trim() || !convertForm.lastName.trim() || !convertForm.email.trim()) {
-      toast.error('First name, last name and email are required');
-      return;
-    }
-    setConverting(true);
-    try {
-      const res = await fetch(`/api/guests/${convertTarget.guestId}/convert`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          firstName: convertForm.firstName.trim(),
-          lastName: convertForm.lastName.trim(),
-          email: convertForm.email.trim(),
-          employeeId: convertForm.employeeId.trim() || undefined,
-        }),
-      });
-      const body = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        if (res.status === 403) {
-          const permissionMsg = getPermissionDeniedMessage('guests.manage', '');
-          toast.error(permissionMsg.title, { description: permissionMsg.message });
-        } else {
-          toast.error(body.error || 'Failed to convert guest');
-        }
-        return;
-      }
-      toast.success('Guest converted to employee — telemetry history preserved');
-      setConvertTarget(null);
-      invalidateAll();
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Failed to convert guest');
-    } finally {
-      setConverting(false);
-    }
-  };
-
   const toggleProject = (projectId: string) => {
     setSelectedProjectIds((prev) =>
       prev.includes(projectId) ? prev.filter((id) => id !== projectId) : [...prev, projectId]
@@ -539,13 +404,11 @@ function ZeroTouchDevicesTab() {
         </div>
       </div>
 
-      {/* Info banner: zero-touch means no employee action required */}
+      {/* Info banner */}
       <div className="flex items-start gap-2 text-xs text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/15 rounded-md p-3">
         <Fingerprint className="w-4 h-4 mt-0.5 shrink-0" />
         <span>
-          These devices registered themselves automatically — the employee never entered credentials.
-          Assign the device to an employee, or approve it as a guest (no employee account required).
-          Department comes from the employee; guests get no monitoring consent by default.
+          Devices appear here after the agent connects. Assign the device to an employee to activate monitoring.
         </span>
       </div>
 
@@ -727,82 +590,19 @@ function ZeroTouchDevicesTab() {
                               </>
                             )}
                             {isApproved && (
-                              <>
-                                {/* Guest lifecycle actions for approved guest claims */}
-                                {claim.guestStatus === 'ACTIVE' && (
-                                  <>
-                                    <Button
-                                      size="sm"
-                                      variant="outline"
-                                      className="h-8 gap-1.5 text-xs"
-                                      onClick={() => openConvert(claim)}
-                                      disabled={actionLoading === claim.id}
-                                    >
-                                      <ArrowRightLeft className="w-3.5 h-3.5" />
-                                      Convert to Employee
-                                    </Button>
-                                    <Button
-                                      size="sm"
-                                      variant="outline"
-                                      className="h-8 gap-1.5 border-amber-300 text-amber-600 hover:bg-amber-50 hover:text-amber-700 text-xs"
-                                      onClick={() => setGuestActionTarget({ id: claim.guestId!, action: 'suspend', hostname: deviceName })}
-                                      disabled={actionLoading === claim.id}
-                                    >
-                                      <PauseCircle className="w-3.5 h-3.5" />
-                                      Suspend
-                                    </Button>
-                                    <Button
-                                      size="sm"
-                                      variant="outline"
-                                      className="h-8 gap-1.5 border-gray-300 text-gray-600 hover:bg-gray-50 hover:text-gray-700 text-xs"
-                                      onClick={() => setGuestActionTarget({ id: claim.guestId!, action: 'revoke', hostname: deviceName })}
-                                      disabled={actionLoading === claim.id}
-                                    >
-                                      <PowerOff className="w-3.5 h-3.5" />
-                                      Revoke
-                                    </Button>
-                                  </>
-                                )}
-                                {claim.guestStatus === 'SUSPENDED' && (
-                                  <>
-                                    <Button
-                                      size="sm"
-                                      className="h-8 gap-1.5 text-xs"
-                                      onClick={() => setGuestActionTarget({ id: claim.guestId!, action: 'reactivate', hostname: deviceName })}
-                                      disabled={actionLoading === claim.id}
-                                    >
-                                      <PlayCircle className="w-3.5 h-3.5" />
-                                      Reactivate
-                                    </Button>
-                                    <Button
-                                      size="sm"
-                                      variant="outline"
-                                      className="h-8 gap-1.5 border-gray-300 text-gray-600 hover:bg-gray-50 hover:text-gray-700 text-xs"
-                                      onClick={() => setGuestActionTarget({ id: claim.guestId!, action: 'revoke', hostname: deviceName })}
-                                      disabled={actionLoading === claim.id}
-                                    >
-                                      <PowerOff className="w-3.5 h-3.5" />
-                                      Revoke
-                                    </Button>
-                                  </>
-                                )}
-                                {/* Employee-only approved claims: revoke device access */}
-                                {!claim.guestStatus && (
-                                  <Button
-                                    size="sm"
-                                    variant="outline"
-                                    className="h-8 gap-1.5 border-gray-300 text-gray-600 hover:bg-gray-50 hover:text-gray-700 text-xs"
-                                    onClick={() => {
-                                      setRevokeTarget(claim);
-                                      setRevokeReason('');
-                                    }}
-                                    disabled={actionLoading === claim.id}
-                                  >
-                                    <PowerOff className="w-3.5 h-3.5" />
-                                    Revoke Access
-                                  </Button>
-                                )}
-                              </>
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                className="h-8 gap-1.5 border-gray-300 text-gray-600 hover:bg-gray-50 hover:text-gray-700 text-xs"
+                                onClick={() => {
+                                  setRevokeTarget(claim);
+                                  setRevokeReason('');
+                                }}
+                                disabled={actionLoading === claim.id}
+                              >
+                                <PowerOff className="w-3.5 h-3.5" />
+                                Revoke Access
+                              </Button>
                             )}
                           </div>
                         </div>
@@ -831,14 +631,12 @@ function ZeroTouchDevicesTab() {
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <ShieldCheck className="w-5 h-5 text-emerald-600" />
-              {approveMode === 'guest' ? 'Approve as Guest' : 'Approve &amp; Activate Device'}
+              Approve &amp; Activate Device
             </DialogTitle>
             <DialogDescription asChild>
               <div className="space-y-3">
                 <p>
-                  {approveMode === 'guest'
-                    ? 'Approve this device as a guest. A guest workforce state is created automatically — no employee account and no Admin Panel login. The person joins as a Guest and can be converted to an Employee later. Standard monitoring consent is auto-granted.'
-                    : 'Assign this device to an employee and optionally to projects. The employee will be notified automatically — no action is required on their PC.'}
+                  Assign this device to an employee and optionally to projects. The employee will be notified automatically — no action is required on their PC.
                 </p>
                 {approveTarget && (
                   <div className="bg-muted/50 rounded-lg p-3 space-y-1.5">
@@ -854,44 +652,8 @@ function ZeroTouchDevicesTab() {
                   </div>
                 )}
 
-                {/* Approval mode */}
-                <div className="space-y-1.5">
-                  <Label className="text-sm font-medium">Approval mode</Label>
-                  <div className="grid grid-cols-2 gap-2">
-                    <button
-                      type="button"
-                      onClick={() => setApproveMode('employee')}
-                      className={`flex items-center gap-2 rounded-md border px-3 py-2 text-sm transition-colors ${
-                        approveMode === 'employee'
-                          ? 'border-emerald-500 bg-emerald-50 dark:bg-emerald-900/20 text-emerald-700 dark:text-emerald-300'
-                          : 'border-border hover:bg-muted/50 text-muted-foreground'
-                      }`}
-                    >
-                      <User className="w-4 h-4 shrink-0" />
-                      <span className="text-left">
-                        <span className="block font-medium">Employee</span>
-                        <span className="block text-[10px] font-normal">Assign to an employee</span>
-                      </span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setApproveMode('guest')}
-                      className={`flex items-center gap-2 rounded-md border px-3 py-2 text-sm transition-colors ${
-                        approveMode === 'guest'
-                          ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300'
-                          : 'border-border hover:bg-muted/50 text-muted-foreground'
-                      }`}
-                    >
-                      <Fingerprint className="w-4 h-4 shrink-0" />
-                      <span className="text-left">
-                        <span className="block font-medium">Guest</span>
-                        <span className="block text-[10px] font-normal">Join as guest, convert later</span>
-                      </span>
-                    </button>
-                  </div>
-                </div>
-
-                {approveMode === 'employee' && (
+                {/* Employee selection */}
+                {true && (
                   <>
                     {/* Employee selection (REQUIRED) */}
                     <div className="space-y-1.5">
@@ -959,9 +721,7 @@ function ZeroTouchDevicesTab() {
                 <div className="flex items-start gap-2 text-xs text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-900/15 rounded-md p-2">
                   <ShieldAlert className="w-3.5 h-3.5 mt-0.5 shrink-0" />
                   <span>
-                    {approveMode === 'guest'
-                      ? 'The person joins the organization as a Guest. No Admin Panel login is created. A Guest can be converted to an Employee at any time by an Org Admin or Manager.'
-                      : 'Approval activates the device only. Monitoring consent is managed separately and remains the employee&apos;s right to control.'}
+                    Approval activates the device only. Monitoring consent is managed separately and remains the employee&apos;s right to control.
                   </span>
                 </div>
               </div>
@@ -970,16 +730,16 @@ function ZeroTouchDevicesTab() {
           <DialogFooter>
             <Button variant="ghost" onClick={() => setApproveTarget(null)}>Cancel</Button>
             <Button
-              className={approveMode === 'guest' ? 'bg-blue-600 hover:bg-blue-700 text-white' : 'bg-emerald-600 hover:bg-emerald-700 text-white'}
+              className='bg-emerald-600 hover:bg-emerald-700 text-white'
               onClick={handleApprove}
-              disabled={actionLoading === approveTarget?.id || (approveMode === 'employee' && !selectedEmployeeId)}
+              disabled={actionLoading === approveTarget?.id || !selectedEmployeeId}
             >
               {actionLoading === approveTarget?.id ? (
                 <Loader2 className="w-4 h-4 animate-spin mr-2" />
               ) : (
                 <CheckCircle2 className="w-4 h-4 mr-2" />
               )}
-              {approveMode === 'guest' ? 'Approve as Guest' : 'Approve &amp; Activate'}
+              Approve &amp; Activate
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -1089,87 +849,7 @@ function ZeroTouchDevicesTab() {
         </AlertDialogContent>
       </AlertDialog>
 
-      {/* Guest Action Confirm Dialog (suspend/reactivate/revoke guest) */}
-      <AlertDialog open={!!guestActionTarget} onOpenChange={(open) => { if (!open) { setGuestActionTarget(null); setGuestActionReason(''); } }}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle className="flex items-center gap-2">
-              {guestActionTarget?.action === 'suspend' && <PauseCircle className="w-5 h-5 text-amber-600" />}
-              {guestActionTarget?.action === 'reactivate' && <PlayCircle className="w-5 h-5 text-emerald-600" />}
-              {guestActionTarget?.action === 'revoke' && <PowerOff className="w-5 h-5 text-gray-600" />}
-              {guestActionTarget?.action === 'suspend' ? 'Suspend Guest?' : guestActionTarget?.action === 'reactivate' ? 'Reactivate Guest?' : 'Revoke Guest?'}
-            </AlertDialogTitle>
-            <AlertDialogDescription asChild>
-              <div className="space-y-3">
-                <p>
-                  {guestActionTarget?.action === 'suspend' && 'The guest device will lose monitoring access but the record and telemetry history are preserved. You can reactivate later.'}
-                  {guestActionTarget?.action === 'reactivate' && 'The guest device will resume monitoring under its previous consent terms.'}
-                  {guestActionTarget?.action === 'revoke' && 'The guest will be permanently deactivated. This action cannot be undone.'}
-                </p>
-                {guestActionTarget && (
-                  <div className="bg-muted/50 rounded-lg p-3">
-                    <span className="text-sm font-medium">{guestActionTarget.hostname}</span>
-                  </div>
-                )}
-                <Textarea
-                  placeholder="Reason (optional)"
-                  value={guestActionReason}
-                  onChange={(e) => setGuestActionReason(e.target.value)}
-                  rows={2}
-                />
-              </div>
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              className={guestActionTarget?.action === 'revoke' ? 'bg-gray-700 hover:bg-gray-800 text-white' : ''}
-              onClick={() => guestActionTarget && handleGuestAction()}
-            >
-              {actionLoading === guestActionTarget?.id ? (
-                <Loader2 className="w-4 h-4 animate-spin mr-2" />
-              ) : null}
-              {guestActionTarget?.action === 'suspend' ? 'Suspend Guest' : guestActionTarget?.action === 'reactivate' ? 'Reactivate Guest' : 'Revoke Guest'}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
 
-      {/* Convert Guest → Employee Dialog */}
-      <Dialog open={convertTarget !== null} onOpenChange={(open) => { if (!open) setConvertTarget(null); }}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Convert Guest to Employee</DialogTitle>
-            <DialogDescription>
-              The guest becomes an Employee workforce identity. The device, telemetry history and employee record are preserved, and the guest record is removed. No Admin Panel login is created.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-3">
-            <div>
-              <Label className="text-xs font-medium">First Name *</Label>
-              <Input value={convertForm.firstName} onChange={(e) => setConvertForm((f) => ({ ...f, firstName: e.target.value }))} />
-            </div>
-            <div>
-              <Label className="text-xs font-medium">Last Name *</Label>
-              <Input value={convertForm.lastName} onChange={(e) => setConvertForm((f) => ({ ...f, lastName: e.target.value }))} />
-            </div>
-            <div>
-              <Label className="text-xs font-medium">Email *</Label>
-              <Input type="email" value={convertForm.email} onChange={(e) => setConvertForm((f) => ({ ...f, email: e.target.value }))} />
-            </div>
-            <div>
-              <Label className="text-xs font-medium">Employee ID (optional)</Label>
-              <Input value={convertForm.employeeId} onChange={(e) => setConvertForm((f) => ({ ...f, employeeId: e.target.value }))} placeholder="Leave empty to keep the synthesized ID" />
-            </div>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setConvertTarget(null)}>Cancel</Button>
-            <Button onClick={submitConvert} disabled={converting}>
-              {converting ? 'Converting…' : 'Convert to Employee'}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </div>
   );
 }
@@ -1177,7 +857,7 @@ function ZeroTouchDevicesTab() {
 export function AgentApprovalsPage() {
   return (
     <div className="space-y-4">
-      <ZeroTouchDevicesTab />
+      <DeviceClaimsTab />
     </div>
   );
 }

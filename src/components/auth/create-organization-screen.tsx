@@ -155,7 +155,7 @@ export function CreateOrganizationScreen() {
                 <Check className="w-3.5 h-3.5 text-emerald-500 shrink-0" /> Dashboard opens with empty state (0 employees/devices/projects)
               </li>
               <li className="flex items-center gap-2">
-                <Check className="w-3.5 h-3.5 text-emerald-500 shrink-0" /> Zero-touch devices appear only after a real agent EXE discovers itself
+                <Check className="w-3.5 h-3.5 text-emerald-500 shrink-0" /> Devices appear after a real agent EXE is installed
               </li>
             </ul>
           </div>

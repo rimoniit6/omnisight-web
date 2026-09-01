@@ -49,7 +49,6 @@ model Organization {
   reports       Report[]
   aiInsights    AiInsight[]
   deviceClaims       DeviceClaim[]
-  guests             Guest[]
   screenshots   Screenshot[]
   anomalies      Anomaly[]
   consents       Consent[]
@@ -108,17 +107,11 @@ model Employee {
   avatar          String?
   designation     String?
   status          String   @default("active") // active, inactive, archived
-  // Person type: "employee" (normal) or "guest" (admin-approved zero-touch
-  // enrollment, backed by a synthesized identity — see Guest). Guests use
-  // every existing runtime mechanism (AgentToken, AgentSession, Consent,
-  // telemetry, config, heartbeat) unchanged; conversion to a normal employee
-  // is an admin action that flips this to "employee".
-  type            String   @default("employee") // employee, guest
+  type            String   @default("employee") // employee
   joinDate        DateTime?
   leaveDate       DateTime?
   organizationId  String
   departmentId    String?
-  guestId         String?  @unique // Guest enrollment that backs this person (null for normal employees)
   agentPassword   String?  // Password for Windows agent authentication
   agentApproved   Boolean  @default(false) // Whether admin has approved this employee's agent
   // Legacy PATH B brute-force protection (agent/authenticate employeeId+password).
@@ -152,7 +145,6 @@ model Employee {
   sentimentRecords SentimentRecord[]
   activeTrackingProject Project? @relation("ActiveTrackingProject", fields: [activeTrackingProjectId], references: [id], onDelete: SetNull)
   agentAccount   AgentAccount? // 1:1 authenticated agent login (Phase 1)
-  guest          Guest?        // 1:1 guest enrollment (only when type = "guest")
   keyboardActivities KeyboardActivity[]
   locationEvents      LocationEvent[]
   agentCommands       AgentCommand[]
@@ -211,7 +203,7 @@ model Device {
   lastHeartbeat   DateTime?
   organizationId  String
   employeeId      String?
-  agentKey        String?  @unique // stable machine identity from the desktop agent (zero-touch discovery)
+  agentKey        String?  @unique // stable machine identity from the desktop agent
   registeredAt    DateTime @default(now())
   updatedAt       DateTime @updatedAt
 
@@ -222,7 +214,6 @@ model Device {
   screenshots    Screenshot[]
   anomalies      Anomaly[]
   deviceClaims   DeviceClaim[]
-  guests         Guest[]
   keyboardActivities KeyboardActivity[]
   locationEvents      LocationEvent[]
   agentCommands       AgentCommand[]
@@ -239,7 +230,7 @@ model Device {
   @@index([updatedAt])
 }
 
-// ==================== Device Claim (Zero-Touch Discovery) ====================
+// ==================== Device Claim (Device Discovery) ====================
 // A discovered-but-unassigned device awaiting admin approval. Device approval
 // (assignment to an employee) is COMPLETELY SEPARATE from Consent — approving
 // a claim never grants monitoring/screenshot/activity consent.
@@ -271,56 +262,6 @@ model DeviceClaim {
   @@index([status])
   @@index([employeeId])
   @@index([deviceId])
-}
-
-// ==================== Guest (Admin-Approved Zero-Touch Person) ====================
-// A person-level enrollment created when an admin approves a zero-touch
-// DeviceClaim in GUEST mode (no employee credentials, no AgentAccount). The
-// guest is backed by a SYNTHESIZED Employee row (Employee.type = 'guest') so
-// ALL existing runtime machinery — AgentToken, AgentSession, Consent,
-// telemetry (Activity/Screenshot/KeyboardActivity/LocationEvent/UsbEvent),
-// config assignment, heartbeat, break sessions — works unchanged.
-//
-// Lifecycle: PENDING → ACTIVE → REJECTED (terminal) | REVOKED (terminal) |
-// SUSPENDED (reactivatable). Converting a guest to a normal employee deletes
-// this row after audit; the Employee row (and its telemetry history) survives.
-//
-// Approval NEVER creates an AgentAccount. Standard monitoring consent
-// (monitoring + activity_tracking) IS auto-granted at approval, bound to the
-// org's current published policies — a guest has no employee portal, so the
-// approving admin is the consent authority. Other consent types
-// (screenshot/keystroke/location/...) remain separate, deliberate grants.
-
-model Guest {
-  id             String   @id @default(cuid())
-  organizationId String
-  deviceId       String
-  employeeId     String   @unique // 1:1 with the synthesized Employee row
-  status         String   @default("PENDING") // PENDING, ACTIVE, REJECTED, REVOKED, SUSPENDED
-  approvedAt     DateTime?
-  approvedBy     String?  // admin AppUser id
-  rejectedAt     DateTime?
-  rejectedBy     String?
-  revokedAt      DateTime?
-  revokedBy      String?
-  suspendedAt    DateTime?
-  suspendedBy    String?
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
-
-  // Relations
-  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  device       Device       @relation(fields: [deviceId], references: [id], onDelete: Cascade)
-  employee     Employee     @relation(fields: [employeeId], references: [id], onDelete: Cascade)
-
-  @@index([organizationId])
-  @@index([organizationId, status])
-  @@index([deviceId])
-  @@index([status])
-  @@index([createdAt])
-  // At most ONE ACTIVE and ONE PENDING guest per device is enforced by
-  // partial unique indexes created in the migration SQL (Prisma cannot
-  // express partial indexes — see 20260817000000_guest_enrollment).
 }
 
 // ==================== Activity ====================

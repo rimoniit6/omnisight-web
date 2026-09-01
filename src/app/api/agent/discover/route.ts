@@ -3,9 +3,6 @@ import { db } from '@/lib/db';
 import {
   generateClaimSecret,
   hashClaimSecret,
-  ENROLLMENT_CODE_SETTING_KEY,
-  ENROLLMENT_CODE_EXPIRES_KEY,
-  verifyEnrollmentCode,
 } from '@/lib/agent/auth';
 import { validateAgentSession } from '@/lib/agent/session';
 import { checkRateLimit, RATE_LIMITS, getClientIpFromHeaders } from '@/lib/rate-limit';
@@ -13,33 +10,33 @@ import { createOrgNotification } from '@/lib/notifications/service';
 import { log } from '@/lib/logger';
 
 // POST /api/agent/discover
-// Zero-touch bootstrap: a freshly installed agent silently identifies its
-// device to the backend. The organization is derived SERVER-SIDE — NEVER from
-// the client — through one of three EXPLICIT sources:
+// Device discovery: a freshly installed agent identifies its device to the
+// backend. The organization is derived SERVER-SIDE — NEVER from the client —
+// through one of two EXPLICIT sources:
 //   1. An authenticated AgentSession (Phase 3) → the session's organization.
 //   2. An already-known device (idempotent re-discover) → the device's org.
-//   3. A brand-new ANONYMOUS device → a per-organization enrollment code
-//      (admin-issued, stored only as a hash) presented by the agent. There is
-//      NO implicit "first organization" fallback: without a valid code the
-//      device is simply not created (422, zero writes).
+//
+// Anonymous discovery has been removed. A brand-new
+// device without an existing identity or a valid session cannot join an
+// organization — the employee MUST authenticate first (Phase 3 login).
+//
 // Creates a pending DeviceClaim; idempotent for the same device identity (an
 // existing device is reused, never duplicated on restart).
 //
-// CLAIM HISTORY (workload/62): a device keeps a full claim history. One
-// PENDING claim exists at a time. Terminal claims are surfaced as-is during
-// polling (so an admin rejection is never silently undone), while these paths
-// issue a FRESH claim:
+// CLAIM HISTORY: a device keeps a full claim history. One PENDING claim exists
+// at a time. Terminal claims are surfaced as-is during polling (so an admin
+// rejection is never silently undone), while these paths issue a FRESH claim:
 //   - pending claim expired (lifecycle timeout) → fresh claim + new secret
 //   - latest claim CANCELLED (employee "Cancel registration") → fresh claim
 //   - latest claim rejected AND the agent explicitly re-registers (reRegister
-//     intent from the zero-touch flow after rejection) → fresh claim
+//     intent after rejection) → fresh claim
 // A REVOKED device NEVER re-registers automatically (fail closed — only an
 // admin can change its fate).
 //
 // The claim secret is issued exactly once per claim. Discovery is separate
 // from consent: a pending/approved claim grants nothing on its own.
 //
-// AUTHENTICATED EXISTING-DEVICE HARDENING (workload/67/68):
+// AUTHENTICATED EXISTING-DEVICE HARDENING:
 // For a valid AgentSession the session identity is the ONLY authority. An
 // existing Device is only reachable when BOTH the device organization and the
 // device employee match the session's server-derived identity (rules B/C).
@@ -47,49 +44,9 @@ import { log } from '@/lib/logger';
 // claim state, status, or ownership is ever disclosed. An unassigned device
 // in the session's organization is bound to the session employee inside the
 // device row lock (rule D). Revoked devices fail closed and are NEVER rebound.
-// Anonymous zero-touch requests carry no identity and keep the legacy flow.
 
 /** Sentinel thrown inside the locked transaction → mapped to a concealing 404. */
 const DENIED = new Error('DEVICE_ACCESS_DENIED');
-
-/**
- * Resolution result for an enrollment code attempt.
- * - matched: valid code, org resolved, not expired
- * - expired: valid code but past expiration
- * - no_match: code doesn't match any organization
- */
-async function resolveOrgFromEnrollmentCode(
-  code: string | null
-): Promise<{ id: string } | null | 'expired'> {
-  if (!code || code.length > 256) return null;
-  const settings = await db.organizationSetting.findMany({
-    where: { key: ENROLLMENT_CODE_SETTING_KEY },
-    select: { organizationId: true, value: true },
-  });
-  for (const setting of settings) {
-    if (verifyEnrollmentCode(code, setting.value)) {
-      // Code matches — check expiration
-      const expiresSetting = await db.organizationSetting.findUnique({
-        where: {
-          organizationId_key: { organizationId: setting.organizationId, key: ENROLLMENT_CODE_EXPIRES_KEY },
-        },
-        select: { value: true },
-      });
-      if (expiresSetting?.value && new Date(expiresSetting.value) < new Date()) {
-        return 'expired';
-      }
-      // Check organization is active
-      const org = await db.organization.findUnique({
-        where: { id: setting.organizationId },
-        select: { id: true, status: true },
-      });
-      if (!org) return null;
-      if (org.status !== 'active') return null; // Suspended/archived orgs can't enroll
-      return { id: org.id };
-    }
-  }
-  return null;
-}
 
 export async function POST(req: NextRequest) {
   const startTime = Date.now();
@@ -107,7 +64,7 @@ export async function POST(req: NextRequest) {
     } catch {
       return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 });
     }
-    const { deviceKey, hostname, os, osVersion, processor, memory, agentVersion, arch, reRegister, enrollmentCode } = body as {
+    const { deviceKey, hostname, os, osVersion, processor, memory, agentVersion, arch, reRegister } = body as {
       deviceKey?: unknown;
       hostname?: unknown;
       os?: unknown;
@@ -117,7 +74,6 @@ export async function POST(req: NextRequest) {
       agentVersion?: unknown;
       arch?: unknown;
       reRegister?: unknown;
-      enrollmentCode?: unknown;
     };
     // Explicit re-registration intent: sent by the agent ONLY when it is
     // deliberately starting a NEW registration (post-cancel or post-rejection
@@ -174,30 +130,16 @@ export async function POST(req: NextRequest) {
     } else if (device) {
       org = await db.organization.findUnique({ where: { id: device.organizationId } });
     } else {
-      const codeResult = await resolveOrgFromEnrollmentCode(
-        typeof enrollmentCode === 'string' && enrollmentCode.length > 0 ? enrollmentCode : null
+      // No session and no existing device — anonymous discovery is not supported.
+      // The employee must authenticate first (Phase 3 login).
+      log.info('agent-discover.org-resolution:no-identity', { ...ctx });
+      return NextResponse.json(
+        {
+          error: 'Device registration requires an employee sign-in. Please authenticate first.',
+          code: 'AUTHENTICATION_REQUIRED',
+        },
+        { status: 422 }
       );
-      if (codeResult === 'expired') {
-        log.info('agent-discover.org-resolution:expired', { ...ctx });
-        return NextResponse.json(
-          { error: 'This invitation code has expired. Ask your administrator for a new code.', code: 'ENROLLMENT_CODE_EXPIRED' },
-          { status: 410 }
-        );
-      }
-      org = codeResult;
-      if (!org) {
-        const missing = enrollmentCode === undefined || enrollmentCode === null || enrollmentCode === '';
-        log.info('agent-discover.org-resolution:no-match', { missing, ...ctx });
-        return NextResponse.json(
-          {
-            error: missing
-              ? 'Device registration requires an organization enrollment code (issued by your administrator) or an employee sign-in.'
-              : 'Invalid invitation code.',
-            code: missing ? 'ENROLLMENT_CODE_MISSING' : 'INVALID_OR_MISSING_ENROLLMENT_CODE',
-          },
-          { status: 422 }
-        );
-      }
     }
 
     if (!org) {
@@ -247,7 +189,7 @@ export async function POST(req: NextRequest) {
             resourceId: dev.id,
             description: authenticatedEmployee
               ? `Authenticated device discovered: "${hostname}" employee=${authenticatedEmployee.employeeId} (${typeof os === 'string' ? os : 'Unknown OS'}) awaiting admin approval`
-              : `Zero-touch device discovered: "${hostname}" (${typeof os === 'string' ? os : 'Unknown OS'}) awaiting admin approval`,
+              : `New device discovered: "${hostname}" (${typeof os === 'string' ? os : 'Unknown OS'}) awaiting admin approval`,
             ipAddress: clientIp,
             organizationId: org.id,
           },
@@ -385,7 +327,7 @@ export async function POST(req: NextRequest) {
             action: 'create',
             resource: 'device',
             resourceId: locked.id,
-            description: `Zero-touch device "${hostname}" re-registered after employee cancellation (new pending claim ${claim.id})`,
+            description: `Device "${hostname}" re-registered after employee cancellation (new pending claim ${claim.id})`,
             ipAddress: clientIp,
             organizationId: locked.organizationId,
           },
@@ -396,7 +338,7 @@ export async function POST(req: NextRequest) {
             action: 'create',
             resource: 'device',
             resourceId: locked.id,
-            description: `Zero-touch device "${hostname}" re-registered after rejection (new pending claim ${claim.id})`,
+            description: `Device "${hostname}" re-registered after rejection (new pending claim ${claim.id})`,
             ipAddress: clientIp,
             organizationId: locked.organizationId,
           },
@@ -407,7 +349,7 @@ export async function POST(req: NextRequest) {
             action: 'create',
             resource: 'device',
             resourceId: locked.id,
-            description: `Zero-touch device "${hostname}" re-registered after expiry (new pending claim ${claim.id})`,
+            description: `Device "${hostname}" re-registered after expiry (new pending claim ${claim.id})`,
             ipAddress: clientIp,
             organizationId: locked.organizationId,
           },
@@ -493,7 +435,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Device not found' }, { status: 404 });
     }
     // Structured error logging: stage, error type, error message, Prisma code.
-    // NEVER log: enrollment codes, claim secrets, session tokens, authorization
+    // NEVER log: claim secrets, session tokens, authorization
     // headers, or any other sensitive information.
     const prismaCode =
       error && typeof error === 'object' && 'code' in error

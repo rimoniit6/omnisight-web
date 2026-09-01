@@ -43,7 +43,6 @@ before(() => {
 type DbModule = typeof import('../src/lib/db');
 let db: DbModule['db'];
 let signJWT: (payload: { userId: string; email: string; role: string; organizationId?: string }) => Promise<string>;
-let hashEnrollmentCode: (code: string) => string;
 let hashPassword: (p: string) => Promise<string>;
 let applyConsentTransition: (typeof import('../src/lib/consent'))['applyConsentTransition'];
 import type { ConsentStatus } from '../src/lib/consent';
@@ -66,14 +65,11 @@ let loginApi: LoginApi;
 
 let orgA: { id: string };
 let orgB: { id: string };
-const CODE_A = 'enroll-code-org-a-0123456789abcdef';
-const CODE_B = 'enroll-code-org-b-0123456789abcdef';
 
 before(async () => {
   const dbModule = await import('../src/lib/db');
   db = dbModule.db;
   signJWT = (await import('../src/lib/auth')).signJWT;
-  hashEnrollmentCode = (await import('../src/lib/agent/auth')).hashEnrollmentCode;
   hashPassword = (await import('../src/lib/auth')).hashPassword;
   applyConsentTransition = (await import('../src/lib/consent')).applyConsentTransition;
 
@@ -96,14 +92,6 @@ before(async () => {
 
   orgA = await db.organization.create({ data: { name: 'Hardening Org A', slug: 'hard-a' } });
   orgB = await db.organization.create({ data: { name: 'Hardening Org B', slug: 'hard-b' } });
-
-  // Publish per-org enrollment codes (stored ONLY as hashes).
-  await db.organizationSetting.create({
-    data: { organizationId: orgA.id, key: 'agent_enrollment_code', value: hashEnrollmentCode(CODE_A), category: 'agent' },
-  });
-  await db.organizationSetting.create({
-    data: { organizationId: orgB.id, key: 'agent_enrollment_code', value: hashEnrollmentCode(CODE_B), category: 'agent' },
-  });
 });
 
 after(async () => {
@@ -166,9 +154,21 @@ function discoverBody(deviceKey: string, extra: Record<string, unknown> = {}) {
   };
 }
 
-async function discover(deviceKey: string, ip: string, extra: Record<string, unknown> = {}) {
-  const res = await discoverApi.POST(req(null, { method: 'POST', body: discoverBody(deviceKey, extra), ip }));
+async function discover(deviceKey: string, ip: string, extra: Record<string, unknown> = {}, sessionToken?: string | null) {
+  const res = await discoverApi.POST(req(sessionToken ?? null, { method: 'POST', body: discoverBody(deviceKey, extra), ip }));
   return { status: res.status, body: (await res.json().catch(() => ({}))) as Record<string, unknown> };
+}
+
+async function createAndLogin(employeeId: string, orgId: string = orgA.id) {
+  const emp = await seedEmployee(employeeId, orgId);
+  const pw = 'TestPass-123!';
+  const { createAgentAccount } = await import('../src/lib/agent-account');
+  const { hashPassword: hp } = await import('../src/lib/auth');
+  const pwHash = await hp(pw);
+  await createAgentAccount({ employeeId: emp.id, agentId: employeeId, password: pw, status: 'active' });
+  const loginRes = await loginApi.POST(req(null, { body: { agentId: employeeId, password: pw } }));
+  const sessionToken = (await loginRes.json() as { token?: string }).token ?? null;
+  return { emp, sessionToken };
 }
 
 async function approve(adminToken: string, claimId: string, employeeId: string) {
@@ -208,10 +208,10 @@ async function setConsent(employeeId: string, orgId: string, consentType: string
   });
 }
 
-/** Full zero-touch setup into org A: discover(code A) -> approve -> PATH A auth -> token. */
+/** Full authenticated setup into org A: discover(session) -> approve -> PATH A auth -> token. */
 async function setupActiveDevice(label: string, ip: string) {
-  const emp = await seedEmployee(`${label}-EMP`);
-  const { body } = await discover(`key-hard-${label.toLowerCase()}-device-abcdef`, ip, { enrollmentCode: CODE_A });
+  const { emp, sessionToken } = await createAndLogin(`${label}-EMP`);
+  const { body } = await discover(`key-hard-${label.toLowerCase()}-device-abcdef`, ip, {}, sessionToken);
   assert.equal(body.status, 'pending', JSON.stringify(body));
   const admin = await tokenFor('admin', `u-${label}-admin`);
   const ar = await approve(admin, body.claimId as string, emp.id);
@@ -447,68 +447,56 @@ test('AH-15: oversized request body rejected with 413 before JSON parsing', asyn
   assert.equal(await db.activity.count({ where: { employeeId: emp.id } }), 0);
 });
 
-// ─── P2-3: enrollment-code discover (no first-org fallback) ─────────────────
+// ─── Anonymous discovery removed (zero-touch enrollment code removed) ────────
 
-test('AH-20: anonymous discover WITHOUT enrollment code → 422, zero rows (no first-org binding)', async () => {
+test('AH-20: anonymous discover without session → 422 (enrollment code removed)', async () => {
   const beforeDevices = await db.device.count();
   const beforeClaims = await db.deviceClaim.count();
-  const { status, body } = await discover('key-hard-0020-no-code-abcdef', '203.0.113.20');
+  const { status, body } = await discover('key-hard-0020-no-session-abcdef', '203.0.113.20');
   assert.equal(status, 422, JSON.stringify(body));
-  assert.match(String(body.error ?? ''), /enrollment code/i);
   assert.equal(await db.device.count(), beforeDevices, 'no device may be created');
   assert.equal(await db.deviceClaim.count(), beforeClaims, 'no claim may be created');
 });
 
-test('AH-21: anonymous discover with org A enrollment code → device+claim bound to org A', async () => {
-  const { status, body } = await discover('key-hard-0021-orga-code-abcdef', '203.0.113.21', { enrollmentCode: CODE_A });
+test('AH-21: anonymous discover with any body → 422 (no anonymous enrollment)', async () => {
+  const { status } = await discover('key-hard-0021-anon-blocked-abcdef', '203.0.113.21');
+  assert.equal(status, 422);
+});
+
+test('AH-22: anonymous discover with hostile organizationId → 422 (no anonymous enrollment)', async () => {
+  const { status } = await discover('key-hard-0022-hostile-org-abcdef', '203.0.113.22', { organizationId: orgB.id });
+  assert.equal(status, 422);
+});
+
+test('AH-23: authenticated discover creates device in correct org', async () => {
+  const { sessionToken } = await createAndLogin('AH23-EMP', orgA.id);
+  const { status, body } = await discover('key-hard-0023-auth-discover-abcdef', '203.0.113.23', {}, sessionToken);
   assert.equal(status, 201, JSON.stringify(body));
   const device = await db.device.findUnique({ where: { id: body.deviceId as string } });
   assert.ok(device);
-  assert.equal(device!.organizationId, orgA.id, 'device bound to org A');
-  const claim = await db.deviceClaim.findUnique({ where: { id: body.claimId as string } });
-  assert.equal(claim!.organizationId, orgA.id);
+  assert.equal(device!.organizationId, orgA.id, 'device bound to authenticated employee org');
 });
 
-test('AH-22: anonymous discover with org B enrollment code → device+claim bound to org B', async () => {
-  const { status, body } = await discover('key-hard-0022-orgb-code-abcdef', '203.0.113.22', { enrollmentCode: CODE_B });
-  assert.equal(status, 201, JSON.stringify(body));
-  const device = await db.device.findUnique({ where: { id: body.deviceId as string } });
-  assert.ok(device);
-  assert.equal(device!.organizationId, orgB.id, 'device bound to org B');
-});
-
-test('AH-23: anonymous discover with an INVALID code → 422, zero rows', async () => {
-  const beforeDevices = await db.device.count();
-  const { status, body } = await discover('key-hard-0023-bad-code-abcdef', '203.0.113.23', { enrollmentCode: 'totally-wrong-code' });
-  assert.equal(status, 422, JSON.stringify(body));
-  assert.match(String(body.error ?? ''), /Invalid/i);
-  assert.equal(await db.device.count(), beforeDevices);
-});
-
-test('AH-24: client-supplied organizationId is IGNORED — the enrollment code decides the org', async () => {
-  const { status, body } = await discover('key-hard-0024-orgid-ignore-abcdef', '203.0.113.24', {
-    enrollmentCode: CODE_A,
+test('AH-24: authenticated discover with hostile organizationId in body → ignored (org from session)', async () => {
+  const { sessionToken } = await createAndLogin('AH24-EMP', orgA.id);
+  const { status, body } = await discover('key-hard-0024-auth-hostile-abcdef', '203.0.113.24', {
     organizationId: orgB.id, // hostile: try to force org B
-  });
+  }, sessionToken);
   assert.equal(status, 201, JSON.stringify(body));
   const device = await db.device.findUnique({ where: { id: body.deviceId as string } });
-  assert.equal(device!.organizationId, orgA.id, 'org must come from the code, never the body');
-
-  // And with NO code, even a supplied organizationId must not bind.
-  const noCode = await discover('key-hard-0024b-orgid-nocode-abcdef', '203.0.113.24', { organizationId: orgA.id });
-  assert.equal(noCode.status, 422, 'organizationId alone can never select a tenant');
+  assert.equal(device!.organizationId, orgA.id, 'org must come from session, never the body');
 });
 
-test('AH-25: an existing org-A device presented with org-B code is NOT rebound (device org authoritative)', async () => {
-  // Enroll a device into org A first.
-  const first = await discover('key-hard-0025-rebind-abcdef', '203.0.113.25', { enrollmentCode: CODE_A });
+test('AH-25: re-discover of existing device works without session (existing device path)', async () => {
+  const { sessionToken } = await createAndLogin('AH25-EMP', orgA.id);
+  const first = await discover('key-hard-0025-rebind-abcdef', '203.0.113.25', {}, sessionToken);
   assert.equal(first.status, 201);
 
-  // Same device, org B code → must stay org A (existing-device path wins).
-  const again = await discover('key-hard-0025-rebind-abcdef', '203.0.113.25', { enrollmentCode: CODE_B });
+  // Same device, no session → existing device path handles it
+  const again = await discover('key-hard-0025-rebind-abcdef', '203.0.113.25');
   assert.equal(again.status, 200, JSON.stringify(again.body));
   const device = await db.device.findUnique({ where: { id: first.body.deviceId as string } });
-  assert.equal(device!.organizationId, orgA.id, 'a code can never re-bind an existing device');
+  assert.equal(device!.organizationId, orgA.id, 'existing device retains its org');
 });
 
 test('AH-26: authenticated discover (Phase 3) is org-scoped WITHOUT any enrollment code', async () => {

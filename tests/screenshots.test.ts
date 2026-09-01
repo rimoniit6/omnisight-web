@@ -75,12 +75,13 @@ let discoverApi: DiscoverApi;
 let authApi: AuthApi;
 let claimApproveApi: ClaimApproveApi;
 
-// Primary org (discover attaches via its enrollment code) + a second org for
-// isolation tests.
+// Primary org + a second org for isolation tests.
 let orgA: { id: string };
 let orgB: { id: string };
-const ENROLL_CODE = 'test-enroll-code-shots-a-0123456789';
-const ENROLL_CODE_B = 'test-enroll-code-shots-b-0123456789';
+let hashPassword: (p: string) => Promise<string>;
+let createAgentAccount: (typeof import('../src/lib/agent-account'))['createAgentAccount'];
+let loginApi: typeof import('../src/app/api/agent/login/route');
+const PASSWORD = 'TestPass-123!';
 
 // Files this suite wrote into the shared uploads dir — cleaned in after().
 const createdFiles: string[] = [];
@@ -108,17 +109,12 @@ before(async () => {
   authApi = aApi;
   claimApproveApi = caApi;
 
+  hashPassword = (await import('../src/lib/auth')).hashPassword;
+  createAgentAccount = (await import('../src/lib/agent-account')).createAgentAccount;
+  loginApi = await import('../src/app/api/agent/login/route');
+
   orgA = await db.organization.create({ data: { name: 'Screenshots Org A', slug: 'shots-a' } });
   orgB = await db.organization.create({ data: { name: 'Screenshots Org B', slug: 'shots-b' } });
-
-  // P2-3: anonymous zero-touch discover requires an EXPLICIT enrollment code.
-  const { hashEnrollmentCode } = await import('../src/lib/agent/auth');
-  await db.organizationSetting.create({
-    data: { organizationId: orgA.id, key: 'agent_enrollment_code', value: hashEnrollmentCode(ENROLL_CODE), category: 'agent' },
-  });
-  await db.organizationSetting.create({
-    data: { organizationId: orgB.id, key: 'agent_enrollment_code', value: hashEnrollmentCode(ENROLL_CODE_B), category: 'agent' },
-  });
 });
 
 after(async () => {
@@ -208,11 +204,20 @@ async function setConsent(employeeId: string, orgId: string, consentType: string
 }
 
 function discoverBody(deviceKey: string, hostname = 'PC-SHOT') {
-  return { deviceKey, hostname, os: 'Windows 11', osVersion: '23H2', processor: 'x64', memory: '16GB', agentVersion: '1.2.0', arch: 'x64', enrollmentCode: ENROLL_CODE };
+  return { deviceKey, hostname, os: 'Windows 11', osVersion: '23H2', processor: 'x64', memory: '16GB', agentVersion: '1.2.0', arch: 'x64' };
 }
 
-async function discover(deviceKey: string, ip: string) {
-  const res = await discoverApi.POST(req(null, { method: 'POST', body: discoverBody(deviceKey), ip }));
+async function setupAuth(employeeId: string, orgId: string = orgA.id) {
+  const emp = await seedEmployee(employeeId, orgId);
+  const pwHash = await hashPassword(PASSWORD);
+  await createAgentAccount({ employeeId: emp.id, agentId: employeeId, password: PASSWORD });
+  const loginRes = await loginApi.POST(req(null, { body: { agentId: employeeId, password: PASSWORD } }));
+  const sessionToken = (await loginRes.json() as { token?: string }).token ?? null;
+  return { emp, sessionToken };
+}
+
+async function discover(deviceKey: string, ip: string, sessionToken?: string | null) {
+  const res = await discoverApi.POST(req(sessionToken ?? null, { method: 'POST', body: discoverBody(deviceKey), ip }));
   return { status: res.status, body: (await res.json().catch(() => ({}))) as Record<string, unknown> };
 }
 
@@ -224,12 +229,13 @@ async function approve(adminToken: string, claimId: string, employeeId: string) 
   return { status: res.status, body: (await res.json().catch(() => ({}))) as Record<string, unknown> };
 }
 
-/** Full zero-touch setup: discover -> approve -> PATH A authenticate -> token. */
+/** Full authenticated setup: discover(session) -> approve -> PATH A authenticate -> token. */
 async function setupActiveDevice(label: string, ip: string, orgId: string = orgA.id) {
-  const emp = await seedEmployee(`${label}-EMP`, orgId);
-  const { body } = await discover(`key-shot-${label.toLowerCase()}-device-abcdef`, ip);
+  const { emp, sessionToken } = await setupAuth(`${label}-ACC`, orgId);
+  const targetEmp = await seedEmployee(`${label}-EMP`, orgId);
+  const { body } = await discover(`key-shot-${label.toLowerCase()}-device-abcdef`, ip, sessionToken);
   const admin = await tokenFor('admin', `u-${label}-admin`, orgId);
-  const ar = await approve(admin, body.claimId as string, emp.id);
+  const ar = await approve(admin, body.claimId as string, targetEmp.id);
   assert.equal(ar.status, 200, JSON.stringify(ar.body));
   const res = await authApi.POST(req(null, { method: 'POST', body: { deviceId: body.deviceId, deviceSecret: body.secret, agentVersion: '1.2.0' }, ip }));
   const parsed = (await res.json().catch(() => ({}))) as Record<string, unknown>;

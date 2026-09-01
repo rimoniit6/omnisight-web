@@ -53,7 +53,6 @@ const PAGES = [
   ['settings', 'Settings'],
   ['ai-provider', 'AI Provider'],
   ['agent-approvals', 'Agent Approvals'],
-  ['guests', 'Guests'],
   ['security', 'Agent Security'],
 ];
 

@@ -12,7 +12,7 @@ const MEMBERSHIP_STATUSES = ['ACTIVE', 'SUSPENDED'];
 // Change an organization-specific role, or suspend/reactivate a membership.
 // Uses DB-verified role (P2/P3 #11) for sensitive mutations.
 //
-// Hardened per the Guest→Employee spec (Section 14):
+// Hardened:
 //   - self-role-change is rejected: a member cannot raise/lower their own role
 //   - privilege escalation is rejected: the actor (DB-verified) may only assign
 //     a role at or below their own level

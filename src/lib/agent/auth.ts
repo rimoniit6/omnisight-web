@@ -5,9 +5,9 @@ import { getClientIpFromHeaders } from '@/lib/rate-limit';
 import { log } from '@/lib/logger';
 
 
-// ─── Device claim secrets (zero-touch discovery) ────────────────────────────
-// The claim secret is a one-time credential issued at discovery; only its
-// SHA-256 hash is ever stored server-side.
+// ─── Device claim secrets ─────────────────────────────────────────────────
+// The claim secret is a one-time credential issued at device discovery; only
+// its SHA-256 hash is ever stored server-side.
 
 export function hashClaimSecret(secret: string): string {
   return createHash('sha256').update(`wl-claim:${secret}`).digest('hex');
@@ -27,46 +27,6 @@ export function verifyClaimSecret(secret: string, hash: string): boolean {
 /** 32 cryptographically-random bytes (base64url) — issued exactly once. */
 export function generateClaimSecret(): string {
   return randomBytes(32).toString('base64url');
-}
-
-// ─── Organization enrollment codes (zero-touch device enrollment) ───────────
-// An anonymous agent presents a per-organization enrollment code (issued by an
-// org admin) at discovery so the server can bind the device to an EXPLICIT
-// tenant. Only the SHA-256 hash is stored (OrganizationSetting
-// 'agent_enrollment_code') — never the code itself. A missing or invalid code
-// means the server simply cannot determine a tenant and the device is NOT
-// created (no implicit "first organization" selection).
-
-export const ENROLLMENT_CODE_SETTING_KEY = 'agent_enrollment_code';
-export const ENROLLMENT_CODE_EXPIRES_KEY = 'agent_enrollment_code_expires_at';
-
-/** Default enrollment code validity: 30 days. */
-export const ENROLLMENT_CODE_DEFAULT_TTL_MS = 30 * 24 * 60 * 60 * 1000;
-
-export function hashEnrollmentCode(code: string): string {
-  return createHash('sha256').update(`wl-enroll:${code}`).digest('hex');
-}
-
-/** Constant-time comparison of a candidate code against the stored hash. */
-export function verifyEnrollmentCode(code: string, hash: string): boolean {
-  const candidate = hashEnrollmentCode(code);
-  if (candidate.length !== hash.length) return false;
-  let diff = 0;
-  for (let i = 0; i < candidate.length; i++) {
-    diff |= candidate.charCodeAt(i) ^ hash.charCodeAt(i);
-  }
-  return diff === 0;
-}
-
-/** 24 cryptographically-random bytes (base64url) — returned exactly once at issue. */
-export function generateEnrollmentCode(): string {
-  return randomBytes(24).toString('base64url');
-}
-
-/** Check if an enrollment code has expired based on the stored expiration. */
-export function isEnrollmentCodeExpired(expiresAt: string | null): boolean {
-  if (!expiresAt) return false; // No expiration = never expires (legacy)
-  return new Date(expiresAt) < new Date();
 }
 
 // Verify an agent password against the stored credential.

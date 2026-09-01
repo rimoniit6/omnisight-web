@@ -33,7 +33,6 @@ export const BROADCAST_TABLES = [
   'AppListEntry',
   'PolicyViolation',
   'Alert',
-  'Guest',
   'LocationEvent',
 ] as const;
 

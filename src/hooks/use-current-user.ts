@@ -1,5 +1,6 @@
 'use client';
 
+import { useEffect, useRef } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useAuthStore } from '@/lib/store';
 
@@ -44,6 +45,13 @@ export function useCurrentUser() {
     queryKey: ['auth-me'],
     queryFn: async () => {
       const res = await fetch('/api/auth/me', { credentials: 'same-origin' });
+      if (res.status === 401) {
+        // Session expired or revoked — clear auth state so the UI redirects
+        // to the login page. Without this, useCurrentUser silently errors
+        // and the user sees a stale dashboard.
+        useAuthStore.getState().logout();
+        throw new Error('Session expired');
+      }
       if (!res.ok) throw new Error('Failed to fetch user');
       return res.json();
     },

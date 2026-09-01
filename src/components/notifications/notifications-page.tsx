@@ -299,9 +299,6 @@ export function NotificationsPage() {
         case 'consent':
           setCurrentPage('consent');
           break;
-        case 'guest':
-          setCurrentPage('agent-approvals');
-          break;
         case 'alert':
           setCurrentPage('alerts');
           break;
@@ -322,7 +319,6 @@ export function NotificationsPage() {
           else if (url.startsWith('/anomalies')) setCurrentPage('anomalies');
           else if (url.startsWith('/projects')) setCurrentPage('projects');
           else if (url.startsWith('/consent')) setCurrentPage('consent');
-          else if (url.startsWith('/guests')) setCurrentPage('agent-approvals');
           else if (url.startsWith('/alerts')) setCurrentPage('alerts');
           else if (url.startsWith('/reports')) setCurrentPage('reports');
           else if (url.startsWith('/screenshots')) setCurrentPage('screenshots');
@@ -812,9 +808,6 @@ export function NotificationsPage() {
                                     case 'consent':
                                       setCurrentPage('consent');
                                       break;
-                                    case 'guest':
-                                      setCurrentPage('agent-approvals');
-                                      break;
                                     case 'alert':
                                       setCurrentPage('alerts');
                                       break;
@@ -831,7 +824,7 @@ export function NotificationsPage() {
                                       setCurrentPage('employees');
                                   }
                                 };
-                                const isSupportedType = ['employee', 'device', 'anomaly', 'project', 'consent', 'guest', 'alert', 'report', 'screenshot', 'policy'].includes(notif.entityType!);
+                                const isSupportedType = ['employee', 'device', 'anomaly', 'project', 'consent', 'alert', 'report', 'screenshot', 'policy'].includes(notif.entityType!);
                                 return isSupportedType ? (
                                   <Button size='sm' variant='ghost' className='h-6 text-[10px] text-blue-600 hover:text-blue-700 p-0' onClick={() => navigateToEntity(notif.entityType!, notif.entityId!)}>
                                     <ExternalLink className='w-3 h-3 mr-1' /> View

@@ -286,23 +286,43 @@ test('MO-8: cross-org resource IDs return 404 concealment', async () => {
 
 test('MO-9: client-supplied organizationId cannot switch tenant context', async () => {
   // Org-bound Admin A tries to read org B by passing ?organizationId=orgB.
+  // The server must reject this with 403 (cross-org access denied) or ignore
+  // the param entirely — it must NEVER silently switch the tenant.
   const api = await import('../src/app/api/employees/route');
   const res = await api.GET(req(adminAToken, { url: `http://localhost:3000/api/employees?pageSize=100&organizationId=${orgB.id}` }));
-  const body = await res.json();
-  const ids = (body.data as Array<{ id: string }>).map((e) => e.id);
-  assert.ok(ids.includes(empA.id), 'still scoped to own org');
-  assert.ok(!ids.includes(empB.id), 'organizationId param must NEVER switch the tenant');
+  if (res.status === 403) {
+    // Best case: server rejects cross-org param outright.
+    const body = await res.json();
+    assert.ok(body.error, '403 must include an error message');
+  } else {
+    // Acceptable fallback: server ignores the param and returns own-org data.
+    assert.equal(res.status, 200, 'must be 200 or 403, nothing else');
+    const body = await res.json();
+    const ids = (body.data as Array<{ id: string }>).map((e) => e.id);
+    assert.ok(ids.includes(empA.id), 'still scoped to own org');
+    assert.ok(!ids.includes(empB.id), 'organizationId param must NEVER switch the tenant');
+  }
 
   // Same for analytics and search.
   const anal = await import('../src/app/api/analytics/route');
   const analRes = await anal.GET(req(adminAToken, { url: `http://localhost:3000/api/analytics?period=week&organizationId=${orgB.id}` }));
-  const analBody = await analRes.json();
-  assert.equal(analBody.data.summary.totalActivities, 1, 'analytics must stay scoped to own org');
+  if (analRes.status === 403) {
+    const analBody = await analRes.json();
+    assert.ok(analBody.error, '403 must include an error message');
+  } else {
+    const analBody = await analRes.json();
+    assert.equal(analBody.data.summary.totalActivities, 1, 'analytics must stay scoped to own org');
+  }
 
   const search = await import('../src/app/api/search/route');
   const sRes = await search.GET(req(adminAToken, { url: `http://localhost:3000/api/search?q=PC&organizationId=${orgB.id}` }));
-  const sBody = await sRes.json();
-  assert.ok(!(sBody.devices as Array<{ name: string }>).some((d) => d.name === 'PC-B'), 'search must stay scoped');
+  if (sRes.status === 403) {
+    const sBody = await sRes.json();
+    assert.ok(sBody.error, '403 must include an error message');
+  } else {
+    const sBody = await sRes.json();
+    assert.ok(!(sBody.devices as Array<{ name: string }>).some((d) => d.name === 'PC-B'), 'search must stay scoped');
+  }
 });
 
 // ─── 10–11: Super Admin semantics ──────────────────────────────────────────

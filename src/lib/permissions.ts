@@ -38,8 +38,6 @@ export type OrganizationPermission =
   | 'employees.create'
   | 'employees.update'
   | 'employees.delete'
-  | 'guests.read'
-  | 'guests.manage'
   | 'devices.read'
   | 'devices.create'
   | 'devices.update'
@@ -99,8 +97,6 @@ const ORG_ADMIN_PERMISSIONS: OrganizationPermission[] = [
   'employees.create',
   'employees.update',
   'employees.delete',
-  'guests.read',
-  'guests.manage',
   'devices.read',
   'devices.create',
   'devices.update',
@@ -138,8 +134,6 @@ const MANAGER_PERMISSIONS: OrganizationPermission[] = [
   'employees.read',
   'employees.create',
   'employees.update',
-  'guests.read',
-  'guests.manage',
   'devices.read',
   'projects.read',
   'projects.create',
@@ -368,14 +362,6 @@ export function getPermissionDeniedMessage(
     return {
       title: 'Permission Denied',
       message: `Your role: ${userRoleLabel}\nRequired: Organization Admin or Manager\nAction: Manage Employee Records`,
-    };
-  }
-
-  // Guest management (convert guest to employee)
-  if (permission === 'guests.read' || permission === 'guests.manage') {
-    return {
-      title: 'Permission Denied',
-      message: `Your role: ${userRoleLabel}\nRequired: Organization Admin or Manager\nAction: Convert Guests to Employees`,
     };
   }
 

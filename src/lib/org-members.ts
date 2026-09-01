@@ -4,11 +4,11 @@
 // roles and the "can an actor grant/assign this target role?" rule.
 //
 // Roles are strings (not a Prisma enum) — this module is the enforcement
-// point. It is intentionally separated so the Guest→Employee conversion, the
-// member-add route and the member role-change route all share the SAME
-// authorization semantics instead of duplicating ad-hoc checks.
+// point. It is intentionally separated so the member-add route and the
+// member role-change route all share the SAME authorization semantics
+// instead of duplicating ad-hoc checks.
 //
-// Security model (Section 7 + 14 of the Guest→Employee spec):
+// Security model:
 //   - server-authoritative: the actor's level comes from the DATABASE
 //     membership, never from the JWT (closes the stale-role window).
 //   - no privilege escalation: an actor may only assign a role whose level is

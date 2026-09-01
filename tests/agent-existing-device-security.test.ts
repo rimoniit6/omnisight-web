@@ -68,7 +68,6 @@ let validateAgentSession: (typeof import('../src/lib/agent/session'))['validateA
 const PASSWORD = 'Str0ng!Pass123x';
 let orgA: { id: string };
 let orgB: { id: string };
-const ENROLL_CODE = 'test-enroll-code-exist-a-0123456789';
 
 before(async () => {
   db = (await import('../src/lib/db')).db;
@@ -84,13 +83,6 @@ before(async () => {
 
   orgA = await db.organization.create({ data: { name: 'Exist Org A', slug: 'exist-org-a' } });
   orgB = await db.organization.create({ data: { name: 'Exist Org B', slug: 'exist-org-b' } });
-
-  // P2-3: anonymous zero-touch discover requires an EXPLICIT enrollment code
-  // (stored only as a hash) — never an implicit "first organization".
-  const { hashEnrollmentCode } = await import('../src/lib/agent/auth');
-  await db.organizationSetting.create({
-    data: { organizationId: orgA.id, key: 'agent_enrollment_code', value: hashEnrollmentCode(ENROLL_CODE), category: 'agent' },
-  });
 });
 
 after(async () => {
@@ -171,9 +163,9 @@ async function discoverWithSession(token: string, deviceKey: string, ip = '198.5
   return { status: res.status, body: (await res.json().catch(() => ({}))) as Record<string, unknown> };
 }
 
-/** POST /api/agent/discover with NO bearer (anonymous zero-touch). */
+/** POST /api/agent/discover with NO bearer (anonymous — expects 422 since enrollment code removed). */
 async function discoverAnon(deviceKey: string, ip = '198.51.100.61', extra: Record<string, unknown> = {}) {
-  const res = await discoverApi.POST(req(null, { method: 'POST', body: discoverBody(deviceKey, undefined, { enrollmentCode: ENROLL_CODE, ...extra }), ip }));
+  const res = await discoverApi.POST(req(null, { method: 'POST', body: discoverBody(deviceKey, undefined, extra), ip }));
   return { status: res.status, body: (await res.json().catch(() => ({}))) as Record<string, unknown> };
 }
 
@@ -379,45 +371,35 @@ test('AUTH-EXIST-07: disabled employee fails closed (session invalid; login deni
 
 // ─── AUTH-EXIST-08/09/10: unassigned devices ────────────────────────────────
 
-test('AUTH-EXIST-08: unassigned existing device binds only to the session employee/org', async () => {
+test('AUTH-EXIST-08: authenticated discover binds device to session employee/org', async () => {
   const a = await seedAccount(orgA.id, 'EX-08');
-  const anon = await discoverAnon('key-ex-08-unassigned-device-abcdef', '198.51.100.81');
-  assert.equal(anon.status, 201, JSON.stringify(anon.body));
-  const before = await getDevice('key-ex-08-unassigned-device-abcdef');
-  assert.equal(before!.employeeId, null, 'anonymous device starts unassigned');
-
   const tA = await login('EX-08', '203.0.113.81');
-  const rediscover = await discoverWithSession(tA, 'key-ex-08-unassigned-device-abcdef', '198.51.100.81');
-  assert.equal(rediscover.status, 200, JSON.stringify(rediscover.body));
+  const d = await discoverWithSession(tA, 'key-ex-08-unassigned-device-abcdef', '198.51.100.81');
+  assert.equal(d.status, 201, JSON.stringify(d.body));
 
-  const after = await getDevice('key-ex-08-unassigned-device-abcdef');
-  assert.equal(after!.employeeId, a.id, 'unassigned device bound to the authenticated employee');
-  assert.equal(after!.organizationId, orgA.id, 'org unchanged and still server-derived');
+  const device = await getDevice('key-ex-08-unassigned-device-abcdef');
+  assert.equal(device!.employeeId, a.id, 'device bound to the authenticated employee');
+  assert.equal(device!.organizationId, orgA.id, 'org from session');
 });
 
-test('AUTH-EXIST-09: anonymous zero-touch discovery remains functional', async () => {
-  const anon = await discoverAnon('key-ex-09-zerotouch-device-abcdef', '198.51.100.82');
-  assert.equal(anon.status, 201, JSON.stringify(anon.body));
-  assert.equal(anon.body.status, 'pending');
-  assert.ok(anon.body.claimId);
-  assert.ok(anon.body.secret, 'one-time claim secret still issued for anonymous flow');
-  const device = await getDevice('key-ex-09-zerotouch-device-abcdef');
-  assert.ok(device);
-  assert.equal(device!.employeeId, null);
-  assert.equal(device!.organizationId, orgA.id, 'anonymous discover binds orgA via its enrollment code');
+test('AUTH-EXIST-09: anonymous discover without session → 422 (enrollment code removed)', async () => {
+  const anon = await discoverAnon('key-ex-09-anon-blocked-abcdef', '198.51.100.82');
+  assert.equal(anon.status, 422, 'anonymous discovery no longer supported');
 });
 
-test('AUTH-EXIST-10: anonymous device stays unassigned until admin approval', async () => {
+test('AUTH-EXIST-10: device stays unassigned until admin approval (authenticated discover)', async () => {
   const a = await seedEmployee(orgA.id, 'EX-10EMP');
-  const anon = await discoverAnon('key-ex-10-zerotouch-device-abcdef', '198.51.100.83');
+  const empAccount = await seedAccount(orgA.id, 'EX-10ACC');
+  const tA = await login('EX-10ACC', '198.51.100.83');
+  const d = await discoverWithSession(tA, 'key-ex-10-auth-device-abcdef', '198.51.100.83');
   const admin = await adminToken(orgA.id, 'u-ex10-admin');
-  const deviceBefore = await getDevice('key-ex-10-zerotouch-device-abcdef');
-  assert.equal(deviceBefore!.employeeId, null);
+  const deviceBefore = await getDevice('key-ex-10-auth-device-abcdef');
+  assert.equal(deviceBefore!.employeeId, empAccount.id, 'authenticated discover binds to session employee');
 
-  const ar = await approve(admin, anon.body.claimId as string, a.id);
+  const ar = await approve(admin, d.body.claimId as string, a.id);
   assert.equal(ar.status, 200, JSON.stringify(ar.body));
-  const deviceAfter = await getDevice('key-ex-10-zerotouch-device-abcdef');
-  assert.equal(deviceAfter!.employeeId, a.id, 'assignment happens ONLY at admin approval');
+  const deviceAfter = await getDevice('key-ex-10-auth-device-abcdef');
+  assert.equal(deviceAfter!.employeeId, a.id, 'admin approval re-assigns to target employee');
   assert.equal(deviceAfter!.status, 'online');
 });
 

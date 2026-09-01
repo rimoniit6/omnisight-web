@@ -75,7 +75,7 @@ if (Test-Path "$logPath.err") { $log += "`n" + (Get-Content "$logPath.err" -Raw 
 
 Check 'boot log written'      ($log -match '"event":"boot"')
 Check 'no renderer exception' ($log -notmatch 'Uncaught|ReferenceError|SyntaxError|Unable to load preload|Cannot find module')
-Check 'zero-touch discover started' ($log -match 'zero-touch-discover-start')
+Check 'discover started' ($log -match 'discover-start|discover\.start')
 
 # Native addon load: the packaged addon must be present beside the app.
 $native = "$installDir\resources\native\worklens_capture.node"

@@ -141,7 +141,7 @@ export function AppSidebar({ onNavigate }: AppSidebarProps) {
     }))
     .filter((group) => group.items.length > 0);
 
-  // Agent Approvals badge — the pending zero-touch device claims queue.
+  // Agent Approvals badge — the pending device claims queue.
   // TanStack Query keys are prefix-matched by the realtime invalidation
   // mapping (src/lib/ws-invalidation.ts: deviceClaimInvalidation), so a
   // claim event refreshes the badge without any manual refetch wiring.

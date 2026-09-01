@@ -103,24 +103,6 @@ export function deviceClaimInvalidation(): string[][] {
 }
 
 /**
- * Query keys invalidated by a `guest` transition (a guest enrollment was
- * created, suspended, reactivated, or revoked).
- *
- * The Guests page list is prefix-matched on 'guests', so every filter/search/
- * pagination variant refreshes together; the sidebar pending badge and the
- * global aggregates refresh too. This is what lets an admin keep the Guests
- * page open and see lifecycle changes in real time instead of polling.
- */
-export function guestInvalidation(): string[][] {
-  return [
-    ['guests'],
-    ['dashboard'],
-    ['event-stats'],
-  ];
-}
-
-
-/**
  * Query keys invalidated by an `anomaly` event (a new anomaly was detected
  * or reported). Prefix-matching on 'anomalies' refreshes every list/filter/
  * pagination variant on the Anomalies page; the dashboard is refreshed too

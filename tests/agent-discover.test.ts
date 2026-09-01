@@ -3,7 +3,7 @@
  *
  * Covers (per implementation task §16):
  *   - Request validation (invalid JSON, missing/short deviceKey, invalid hostname)
- *   - Anonymous flow (new device + valid enrollment code → 201; missing/invalid → 422)
+ *   - Anonymous flow (removed — anonymous discover now returns 422)
  *   - Existing device states (pending, approved, rejected, revoked, expired, cancelled, reRegister)
  *   - Security (cross-org, cross-employee, revoked fail-closed, anonymous can't specify orgId,
  *     claim secret one-time only)
@@ -50,11 +50,9 @@ type DbModule = typeof import('../src/lib/db');
 let db: DbModule['db'];
 let discoverApi: DiscoverApi;
 let authLoginApi: AuthLoginApi;
-let hashEnrollmentCode: (code: string) => string;
 
-// Test org + enrollment code
+// Test org
 let org: { id: string };
-const ENROLL_CODE = 'test-discover-enroll-abcdef123456';
 
 before(async () => {
   const dbMod = await import('../src/lib/db');
@@ -66,18 +64,9 @@ before(async () => {
   ]);
   discoverApi = dApi;
   authLoginApi = alApi;
-  hashEnrollmentCode = (await import('../src/lib/agent/auth')).hashEnrollmentCode;
 
-  // Create test org with enrollment code
+  // Create test org (no enrollment code — anonymous discovery removed)
   org = await db.organization.create({ data: { name: 'Discover Test Org', slug: 'disc-test-org' } });
-  await db.organizationSetting.create({
-    data: {
-      organizationId: org.id,
-      key: 'agent_enrollment_code',
-      value: hashEnrollmentCode(ENROLL_CODE),
-      category: 'agent',
-    },
-  });
 });
 
 after(async () => {
@@ -109,19 +98,44 @@ function makeReq(
   });
 }
 
-function discoverBody(deviceKey: string, hostname = 'PC-TEST', enrollmentCode?: string) {
-  const body: Record<string, unknown> = { deviceKey, hostname, os: 'Windows 11', osVersion: '23H2', processor: 'x64', memory: '16GB', agentVersion: '1.2.0', arch: 'x64' };
-  if (enrollmentCode !== undefined) body.enrollmentCode = enrollmentCode;
-  return body;
+function discoverBody(deviceKey: string, hostname = 'PC-TEST') {
+  return { deviceKey, hostname, os: 'Windows 11', osVersion: '23H2', processor: 'x64', memory: '16GB', agentVersion: '1.2.0', arch: 'x64' };
 }
 
-async function discover(deviceKey: string, ip = '203.0.113.1', opts: { enrollmentCode?: string | null; reRegister?: boolean } = {}) {
-  // Default: include enrollment code unless explicitly set to null
-  const enrollCode = opts.enrollmentCode === undefined ? ENROLL_CODE : opts.enrollmentCode;
+async function discover(deviceKey: string, ip = '203.0.113.1', opts: { reRegister?: boolean } = {}) {
   const body: Record<string, unknown> = { deviceKey, hostname: 'PC-TEST', os: 'Windows 11', osVersion: '23H2', processor: 'x64', memory: '16GB', agentVersion: '1.2.0', arch: 'x64' };
-  if (enrollCode !== null) body.enrollmentCode = enrollCode;
   if (opts.reRegister) body.reRegister = true;
   const res = await discoverApi.POST(makeReq(null, { body, ip }));
+  return { status: res.status, body: await res.json().catch(() => ({})) as Record<string, unknown> };
+}
+
+/** Create an AgentAccount for authenticated discovery tests. */
+async function createTestEmployeeAndAccount(employeeId: string) {
+  const emp = await db.employee.create({
+    data: { employeeId, firstName: 'Test', lastName: 'Employee', email: `${employeeId.toLowerCase()}@test.local`, organizationId: org.id, status: 'active', agentApproved: true },
+  });
+  const { hashPassword } = await import('../src/lib/auth');
+  const pwHash = await hashPassword('test-password-123');
+  await db.agentAccount.create({
+    data: { employeeId: emp.id, agentId: employeeId, passwordHash: pwHash },
+  });
+  return emp;
+}
+
+/** Login and return a session token for authenticated discovery. */
+async function loginAndGetSession(agentId: string) {
+  const loginRes = await authLoginApi.POST(makeReq(null, {
+    body: { agentId, password: 'test-password-123' },
+  }));
+  const loginBody = await loginRes.json() as { token?: string };
+  return loginBody.token ?? null;
+}
+
+/** Authenticated discover — uses a session token for organization resolution. */
+async function discoverAuthenticated(deviceKey: string, sessionToken: string, opts: { reRegister?: boolean } = {}) {
+  const body: Record<string, unknown> = { deviceKey, hostname: 'PC-TEST', os: 'Windows 11', osVersion: '23H2', processor: 'x64', memory: '16GB', agentVersion: '1.2.0', arch: 'x64' };
+  if (opts.reRegister) body.reRegister = true;
+  const res = await discoverApi.POST(makeReq(sessionToken, { body }));
   return { status: res.status, body: await res.json().catch(() => ({})) as Record<string, unknown> };
 }
 
@@ -172,69 +186,23 @@ test('VAL-7: hostname > 128 chars → 400', async () => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
-// 2. ANONYMOUS FLOW
+// 2. ANONYMOUS FLOW (REMOVED — zero-touch enrollment code removed)
 // ═══════════════════════════════════════════════════════════════════════════
 
-test('ANON-1: new device + valid enrollment code → 201 + pending + one-time secret', async () => {
-  const { status, body } = await discover('key-anon-0001-valid-enroll-abcdef');
-  assert.equal(status, 201);
-  assert.equal(body.status, 'pending');
-  assert.equal(body.success, true);
-  assert.equal(typeof body.deviceId, 'string');
-  assert.equal(typeof body.claimId, 'string');
-  assert.equal(typeof body.secret, 'string');
-  assert.ok(body.secret.length >= 40, 'secret must be cryptographically long');
-
-  // Verify DB state
-  const device = await db.device.findUnique({ where: { id: body.deviceId as string } });
-  assert.ok(device);
-  assert.equal(device.status, 'inactive');
-  assert.equal(device.organizationId, org.id);
-  assert.equal(device.employeeId, null, 'anonymous device must not be employee-bound');
-
-  const claim = await db.deviceClaim.findUnique({ where: { id: body.claimId as string } });
-  assert.ok(claim);
-  assert.equal(claim.status, 'pending');
-  assert.notEqual(claim.claimSecretHash, body.secret, 'secret is stored hashed, never plaintext');
-});
-
-test('ANON-2: new device + missing enrollment code → 422', async () => {
+test('ANON-1: anonymous discover without session → 422 (enrollment code removed)', async () => {
   const res = await discoverApi.POST(makeReq(null, {
-    body: { deviceKey: 'key-anon-0002-no-code-abcdef', hostname: 'PC', os: 'Windows 11' },
+    body: { deviceKey: 'key-anon-0001-no-session-abcdef', hostname: 'PC', os: 'Windows 11' },
   }));
   assert.equal(res.status, 422);
   const body = await res.json();
-  assert.ok(body.error.includes('enrollment code'));
+  assert.ok(body.error.includes('sign-in') || body.error.includes('authenticate') || body.error.includes('AUTHENTICATION_REQUIRED'));
 });
 
-test('ANON-3: new device + empty enrollment code → 422', async () => {
+test('ANON-2: anonymous discover with any body → 422 (no anonymous enrollment)', async () => {
   const res = await discoverApi.POST(makeReq(null, {
-    body: discoverBody('key-anon-0003-empty-code-abcdef', 'PC', ''),
+    body: { deviceKey: 'key-anon-0002-anon-blocked-abcdef', hostname: 'PC', os: 'Windows 11' },
   }));
   assert.equal(res.status, 422);
-});
-
-test('ANON-4: new device + invalid enrollment code → 422, zero rows created', async () => {
-  const { status, body } = await discover('key-anon-0004-bad-code-abcdef', '203.0.113.44', { enrollmentCode: 'totally-wrong-code' });
-  assert.equal(status, 422);
-
-  const deviceCount = await db.device.count({ where: { agentKey: 'key-anon-0004-bad-code-abcdef' } });
-  assert.equal(deviceCount, 0, 'invalid enrollment code must create zero rows');
-});
-
-test('ANON-5: wrong enrollment code for org B creates zero rows', async () => {
-  // Create a second org with a different enrollment code
-  const orgB = await db.organization.create({ data: { name: 'Org B', slug: 'disc-test-org-b' } });
-  const otherCode = 'other-org-enrollment-code-abcdef';
-  await db.organizationSetting.create({
-    data: { organizationId: orgB.id, key: 'agent_enrollment_code', value: hashEnrollmentCode(otherCode), category: 'agent' },
-  });
-
-  const { status } = await discover('key-anon-0005-wrong-org-abcdef', '203.0.113.45', { enrollmentCode: 'nonexistent-code-xyz' });
-  assert.equal(status, 422);
-
-  const deviceCount = await db.device.count({ where: { agentKey: 'key-anon-0005-wrong-org-abcdef' } });
-  assert.equal(deviceCount, 0, 'wrong code must create zero rows for either org');
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -242,7 +210,10 @@ test('ANON-5: wrong enrollment code for org B creates zero rows', async () => {
 // ═══════════════════════════════════════════════════════════════════════════
 
 test('EXIST-1: pending device re-discover → 200 pending (idempotent)', async () => {
-  const first = await discover('key-exist-0001-pending-abcdef');
+  const emp = await createTestEmployeeAndAccount('EX1-EMP');
+  const token = await loginAndGetSession('EX1-EMP');
+  assert.ok(token, 'login must succeed');
+  const first = await discoverAuthenticated('key-exist-0001-pending-abcdef', token);
   assert.equal(first.status, 201);
 
   const second = await discover('key-exist-0001-pending-abcdef');
@@ -254,11 +225,11 @@ test('EXIST-1: pending device re-discover → 200 pending (idempotent)', async (
 });
 
 test('EXIST-2: approved device normal poll → 200 approved, no secret', async () => {
-  // Discover + approve
-  const { body } = await discover('key-exist-0002-approved-abcdef');
-  const emp = await db.employee.create({
-    data: { employeeId: 'EX2-EMP', firstName: 'Ex', lastName: 'Two', email: 'ex2@test.local', organizationId: org.id, status: 'active' },
-  });
+  // Discover (authenticated) + approve
+  const emp = await createTestEmployeeAndAccount('EX2-EMP');
+  const token = await loginAndGetSession('EX2-EMP');
+  const { body } = await discoverAuthenticated('key-exist-0002-approved-abcdef', token);
+  assert.equal(body.status, 'pending');
   const adminToken = await signJWT('admin', 'u-ex2-admin');
   const approveRes = await approveClaim(adminToken, body.claimId as string, emp.id);
   assert.equal(approveRes.status, 200);
@@ -271,7 +242,9 @@ test('EXIST-2: approved device normal poll → 200 approved, no secret', async (
 });
 
 test('EXIST-3: rejected device normal poll → 200 rejected', async () => {
-  const { body } = await discover('key-exist-0003-rejected-abcdef');
+  const emp = await createTestEmployeeAndAccount('EX3-EMP');
+  const token = await loginAndGetSession('EX3-EMP');
+  const { body } = await discoverAuthenticated('key-exist-0003-rejected-abcdef', token);
   const adminToken = await signJWT('admin', 'u-ex3-admin');
   const rejectRes = await rejectClaim(adminToken, body.claimId as string);
   assert.equal(rejectRes.status, 200);
@@ -282,10 +255,9 @@ test('EXIST-3: rejected device normal poll → 200 rejected', async () => {
 });
 
 test('EXIST-4: revoked device → 200 revoked', async () => {
-  const { body } = await discover('key-exist-0004-revoked-abcdef');
-  const emp = await db.employee.create({
-    data: { employeeId: 'EX4-EMP', firstName: 'Ex', lastName: 'Four', email: 'ex4@test.local', organizationId: org.id, status: 'active' },
-  });
+  const emp = await createTestEmployeeAndAccount('EX4-EMP');
+  const token = await loginAndGetSession('EX4-EMP');
+  const { body } = await discoverAuthenticated('key-exist-0004-revoked-abcdef', token);
   const adminToken = await signJWT('admin', 'u-ex4-admin');
   await approveClaim(adminToken, body.claimId as string, emp.id);
   await revokeClaim(adminToken, body.claimId as string, 'Stolen');
@@ -296,7 +268,9 @@ test('EXIST-4: revoked device → 200 revoked', async () => {
 });
 
 test('EXIST-5: expired pending → fresh claim with new secret', async () => {
-  const { body } = await discover('key-exist-0005-expired-abcdef');
+  const emp = await createTestEmployeeAndAccount('EX5-EMP');
+  const token = await loginAndGetSession('EX5-EMP');
+  const { body } = await discoverAuthenticated('key-exist-0005-expired-abcdef', token);
 
   // Manually expire the pending claim
   await db.deviceClaim.update({
@@ -313,7 +287,9 @@ test('EXIST-5: expired pending → fresh claim with new secret', async () => {
 });
 
 test('EXIST-6: cancelled → fresh claim with new secret', async () => {
-  const { body } = await discover('key-exist-0006-cancelled-abcdef');
+  const emp = await createTestEmployeeAndAccount('EX6-EMP');
+  const token = await loginAndGetSession('EX6-EMP');
+  const { body } = await discoverAuthenticated('key-exist-0006-cancelled-abcdef', token);
 
   // Cancel the claim
   await db.deviceClaim.update({
@@ -329,7 +305,9 @@ test('EXIST-6: cancelled → fresh claim with new secret', async () => {
 });
 
 test('EXIST-7: rejected + explicit reRegister → fresh claim', async () => {
-  const { body } = await discover('key-exist-0007-reject-rereg-abcdef');
+  const emp = await createTestEmployeeAndAccount('EX7-EMP');
+  const token = await loginAndGetSession('EX7-EMP');
+  const { body } = await discoverAuthenticated('key-exist-0007-reject-rereg-abcdef', token);
   const adminToken = await signJWT('admin', 'u-ex7-admin');
   await rejectClaim(adminToken, body.claimId as string);
 
@@ -381,13 +359,8 @@ test('SEC-2: anonymous request cannot specify organizationId', async () => {
   const res = await discoverApi.POST(makeReq(null, {
     body: { ...discoverBody('key-sec-0002-orgid-abcdef'), organizationId: 'injected-org-id' },
   }));
-  // The org is derived from enrollment code, NOT from the body
-  assert.ok(res.status === 201 || res.status === 422, 'client orgId is ignored');
-  if (res.status === 201) {
-    const body = await res.json();
-    const device = await db.device.findUnique({ where: { id: body.deviceId } });
-    assert.equal(device!.organizationId, org.id, 'org comes from enrollment code, not body');
-  }
+  // Anonymous discovery is not supported — always 422
+  assert.equal(res.status, 422, 'anonymous discover rejected regardless of orgId');
 });
 
 test('SEC-3: claim secret is returned only once (on 201)', async () => {

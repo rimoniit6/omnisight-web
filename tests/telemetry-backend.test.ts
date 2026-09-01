@@ -43,7 +43,6 @@ before(() => {
 type DbModule = typeof import('../src/lib/db');
 let db: DbModule['db'];
 let signJWT: (payload: { userId: string; email: string; role: string; organizationId?: string }) => Promise<string>;
-let hashEnrollmentCode: (code: string) => string;
 let applyConsentTransition: (typeof import('../src/lib/consent'))['applyConsentTransition'];
 import type { ConsentStatus } from '../src/lib/consent';
 
@@ -61,14 +60,17 @@ type WebcamFrameApi = typeof import('../src/app/api/agent/webcam/frame/route');
 
 let orgA: { id: string };
 let orgB: { id: string };
-const CODE_A = 'enroll-code-telemetry-a-0123456789abcdef';
-const CODE_B = 'enroll-code-telemetry-b-0123456789abcdef';
+let hashPassword: (p: string) => Promise<string>;
+let createAgentAccount: (typeof import('../src/lib/agent-account'))['createAgentAccount'];
+let loginApi: typeof import('../src/app/api/agent/login/route');
+const PASSWORD = 'TestPass-123!';
 
 before(async () => {
   const dbModule = await import('../src/lib/db');
   db = dbModule.db;
   signJWT = (await import('../src/lib/auth')).signJWT;
-  hashEnrollmentCode = (await import('../src/lib/agent/auth')).hashEnrollmentCode;
+  hashPassword = (await import('../src/lib/auth')).hashPassword;
+  createAgentAccount = (await import('../src/lib/agent-account')).createAgentAccount;
   applyConsentTransition = (await import('../src/lib/consent')).applyConsentTransition;
 
   const [dApi, aApi, caApi, kApi, lApi, cApi, ackApi, dcApi, wsApi, weApi, wfApi] = await Promise.all([
@@ -96,14 +98,11 @@ before(async () => {
   const webcamEndApi = weApi;
   const webcamFrameApi = wfApi;
 
+  const loginApiMod = await import('../src/app/api/agent/login/route');
+  loginApi = loginApiMod;
+
   orgA = await db.organization.create({ data: { name: 'Telemetry Org A', slug: 'tele-a' } });
   orgB = await db.organization.create({ data: { name: 'Telemetry Org B', slug: 'tele-b' } });
-  await db.organizationSetting.create({
-    data: { organizationId: orgA.id, key: 'agent_enrollment_code', value: hashEnrollmentCode(CODE_A), category: 'agent' },
-  });
-  await db.organizationSetting.create({
-    data: { organizationId: orgB.id, key: 'agent_enrollment_code', value: hashEnrollmentCode(CODE_B), category: 'agent' },
-  });
 
   (globalThis as Record<string, unknown>).__telemetryApis = { keystrokeApi, locationApi, commandsApi, commandAckApi, deviceCommandsApi, webcamSessionApi, webcamEndApi, webcamFrameApi, discoverApi, authApi, claimApproveApi };
 });
@@ -196,12 +195,18 @@ async function setConsent(employeeId: string, orgId: string, consentType: string
   });
 }
 
-async function setupActiveDevice(label: string, orgId: string = orgA.id, code: string = CODE_A) {
+async function setupActiveDevice(label: string, orgId: string = orgA.id) {
   const emp = await seedEmployee(`${label}-EMP`, orgId);
+  // Create an employee + account for authenticated discovery
+  const empAccount = await seedEmployee(`${label}-ACC`, orgId);
+  const pwHash = await hashPassword(PASSWORD);
+  await createAgentAccount({ employeeId: empAccount.id, agentId: `${label}-ACC`, password: PASSWORD });
+  const loginRes = await loginApi.POST(req(null, { body: { agentId: `${label}-ACC`, password: PASSWORD } }));
+  const sessionToken = (await loginRes.json() as { token?: string }).token ?? null;
   const { discoverApi, authApi, claimApproveApi } = getApis();
-  const dres = await (discoverApi.POST as (r: NextRequest) => Promise<Response>)(req(null, {
+  const dres = await (discoverApi.POST as (r: NextRequest) => Promise<Response>)(req(sessionToken, {
     method: 'POST',
-    body: { deviceKey: `key-tele-${label.toLowerCase()}-device-abcdef`, hostname: 'PC-TELE', os: 'Windows 11', osVersion: '23H2', processor: 'x64', memory: '16GB', agentVersion: '1.2.0', arch: 'x64', enrollmentCode: code },
+    body: { deviceKey: `key-tele-${label.toLowerCase()}-device-abcdef`, hostname: 'PC-TELE', os: 'Windows 11', osVersion: '23H2', processor: 'x64', memory: '16GB', agentVersion: '1.2.0', arch: 'x64' },
     ip: '203.0.113.10',
   }));
   const dbody = (await dres.json().catch(() => ({}))) as Record<string, unknown>;

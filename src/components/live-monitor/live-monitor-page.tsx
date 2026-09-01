@@ -53,7 +53,6 @@ const ALL_EVENT_TYPES: { type: LiveEventType; label: string; icon: React.Element
   { type: 'screenshot', label: 'Screenshot', icon: Camera, color: 'text-violet-600 dark:text-violet-400', bgColor: 'bg-violet-100 dark:bg-violet-900/30' },
   { type: 'usb-event', label: 'USB', icon: Usb, color: 'text-rose-600 dark:text-rose-400', bgColor: 'bg-rose-100 dark:bg-rose-900/30' },
   { type: 'device-claim', label: 'Claim', icon: Laptop, color: 'text-indigo-600 dark:text-indigo-400', bgColor: 'bg-indigo-100 dark:bg-indigo-900/30' },
-  { type: 'guest', label: 'Guest', icon: UserPlus, color: 'text-cyan-600 dark:text-cyan-400', bgColor: 'bg-cyan-100 dark:bg-cyan-900/30' },
   { type: 'alert-event', label: 'Alert Event', icon: AlertTriangle, color: 'text-red-600 dark:text-red-400', bgColor: 'bg-red-100 dark:bg-red-900/30' },
   { type: 'project-time-update', label: 'Project Time', icon: Clock, color: 'text-blue-600 dark:text-blue-400', bgColor: 'bg-blue-100 dark:bg-blue-900/30' },
 ];
@@ -232,7 +231,6 @@ interface EventStatsPayload {
     screenshot: number;
     usb: number;
     deviceClaim: number;
-    guest: number;
     projectTime: number;
     alert: number;
     total: number;
@@ -251,12 +249,7 @@ const EVENT_TYPE_TO_STAT: Record<LiveEventType, keyof EventStatsPayload['counts'
   'device-claim': 'deviceClaim',
   'project-time-update': 'projectTime',
   'alert-event': 'alert',
-  // P3-2: guests have their own DB-backed count — never folded into claims.
-  'guest': 'guest',
-  // Location updates are invalidation-only (no stat card) — map to guest
-  // as a placeholder since the stat type is a union. The Live Monitor does
-  // not display a separate location stat card.
-  'location-update': 'guest',
+  'location-update': 'deviceClaim',
 };
 
 const RANGE_LABELS: Record<EventStatRange, string> = {

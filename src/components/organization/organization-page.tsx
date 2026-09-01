@@ -31,23 +31,9 @@ import {
   Clock,
   Info,
   Loader2,
-  KeyRound,
-  Copy,
-  RefreshCw,
-  Trash2,
-  AlertCircle,
 } from 'lucide-react';
 import { format, formatDistanceToNow } from 'date-fns';
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from '@/components/ui/alert-dialog';
+
 import { TeamHeatmap } from './team-heatmap';
 import { HeadcountChart } from './headcount-chart';
 import { RecentHires } from './recent-hires';
@@ -89,63 +75,7 @@ export function OrganizationPage() {
   const [timezoneOverride, setTimezoneOverride] = useState<string | null>(null);
   const [timezoneSaving, setTimezoneSaving] = useState(false);
 
-  // ── Enrollment Code state ──────────────────────────────────────────────
-  const [enrollmentCode, setEnrollmentCode] = useState<string | null>(null);
-  const [enrollmentSaving, setEnrollmentSaving] = useState(false);
-  const [showRevokeConfirm, setShowRevokeConfirm] = useState(false);
-  const [enrollmentCodeCopied, setEnrollmentCodeCopied] = useState(false);
 
-
-
-  const handleGenerateEnrollmentCode = async () => {
-    setEnrollmentSaving(true);
-    try {
-      const res = await fetch('/api/organization/enrollment-code', { method: 'POST' });
-      const data = await res.json();
-      if (!res.ok) {
-        toast.error(data.error || 'Failed to generate enrollment code');
-        return;
-      }
-      setEnrollmentCode(data.code);
-      setEnrollmentCodeCopied(false);
-      toast.success('Enrollment code generated. Copy it now — it will not be shown again.');
-    } catch {
-      toast.error('Failed to generate enrollment code');
-    } finally {
-      setEnrollmentSaving(false);
-    }
-  };
-
-  const handleRevokeEnrollmentCode = async () => {
-    setEnrollmentSaving(true);
-    try {
-      const res = await fetch('/api/organization/enrollment-code', { method: 'DELETE' });
-      const data = await res.json();
-      if (!res.ok) {
-        toast.error(data.error || 'Failed to revoke enrollment code');
-        return;
-      }
-      setEnrollmentCode(null);
-      setShowRevokeConfirm(false);
-      toast.success('Enrollment code revoked. New agent registrations will require a new code.');
-    } catch {
-      toast.error('Failed to revoke enrollment code');
-    } finally {
-      setEnrollmentSaving(false);
-    }
-  };
-
-  const copyEnrollmentCode = async () => {
-    if (!enrollmentCode) return;
-    try {
-      await navigator.clipboard.writeText(enrollmentCode);
-      setEnrollmentCodeCopied(true);
-      toast.success('Enrollment code copied to clipboard');
-      setTimeout(() => setEnrollmentCodeCopied(false), 2000);
-    } catch {
-      toast.error('Failed to copy to clipboard');
-    }
-  };
 
   const { data: org, isLoading: orgLoading } = useQuery({
     queryKey: ['organization'],
@@ -583,129 +513,7 @@ export function OrganizationPage() {
         </CardContent>
       </Card>
 
-      {/* Enrollment Code — zero-touch device enrollment credential.
-          POST /api/organization/enrollment-code generates/rotates (plaintext
-          returned exactly once); DELETE revokes. Admin-only, org-scoped. */}
-      <Card className="border shadow-sm">
-        <CardHeader className="pb-3">
-          <CardTitle className="text-base flex items-center gap-2">
-            <KeyRound className="w-4 h-4 text-emerald-500" />
-            Device Enrollment Code
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="rounded-lg bg-muted/30 p-4">
-            <div className="flex items-start gap-3">
-              <div className="h-10 w-10 rounded-lg bg-amber-500/10 flex items-center justify-center shrink-0">
-                <KeyRound className="w-5 h-5 text-amber-600" />
-              </div>
-              <div className="flex-1">
-                <p className="text-sm font-medium">Zero-Touch Device Enrollment</p>
-                <p className="text-xs text-muted-foreground mt-1">
-                  Allow new Windows Agent users to request joining your organization without
-                  manually creating an employee account. The enrollment code is required for
-                  the Agent's "Join as Guest" feature to work.
-                </p>
-              </div>
-            </div>
-          </div>
 
-          {enrollmentCode ? (
-            <div className="space-y-3">
-              <div className="rounded-lg border border-amber-200 bg-amber-50 p-4">
-                <div className="flex items-start gap-2">
-                  <AlertCircle className="w-4 h-4 text-amber-600 mt-0.5 shrink-0" />
-                  <div className="text-sm text-amber-800">
-                    <p className="font-medium">Copy this code now</p>
-                    <p className="text-xs mt-1">
-                      This code is returned only once at generation time. It cannot be retrieved later.
-                      Provide it to agents via build script, environment variable, or MDM.
-                    </p>
-                  </div>
-                </div>
-              </div>
-              <div className="flex items-center gap-2">
-                <code className="flex-1 px-3 py-2 bg-muted rounded-lg text-sm font-mono break-all select-all">
-                  {enrollmentCode}
-                </code>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => void copyEnrollmentCode()}
-                  className="shrink-0"
-                >
-                  {enrollmentCodeCopied ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
-                  {enrollmentCodeCopied ? 'Copied' : 'Copy'}
-                </Button>
-              </div>
-              <div className="flex items-center gap-2">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => void handleGenerateEnrollmentCode()}
-                  disabled={enrollmentSaving}
-                >
-                  {enrollmentSaving ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
-                  Regenerate Code
-                </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => setShowRevokeConfirm(true)}
-                  disabled={enrollmentSaving}
-                >
-                  <Trash2 className="w-4 h-4" /> Revoke Code
-                </Button>
-              </div>
-            </div>
-          ) : (
-            <div className="space-y-3">
-              <div className="flex items-center gap-3">
-                <div className="h-2 w-2 rounded-full bg-red-400" />
-                <span className="text-sm text-muted-foreground">No enrollment code configured</span>
-              </div>
-              <Button
-                variant="outline"
-                onClick={() => void handleGenerateEnrollmentCode()}
-                disabled={enrollmentSaving}
-              >
-                {enrollmentSaving ? <Loader2 className="w-4 h-4 animate-spin" /> : <KeyRound className="w-4 h-4" />}
-                Generate Enrollment Code
-              </Button>
-            </div>
-          )}
-
-          <p className="text-xs text-muted-foreground">
-            Anyone with this code can request device enrollment. Revoke it immediately if compromised.
-            Agent configuration: AGENT_ENROLLMENT_CODE (build-time) or WL_ENROLLMENT_CODE (runtime).
-          </p>
-        </CardContent>
-      </Card>
-
-      {/* Revoke confirmation dialog */}
-      <AlertDialog open={showRevokeConfirm} onOpenChange={setShowRevokeConfirm}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Revoke Enrollment Code?</AlertDialogTitle>
-            <AlertDialogDescription>
-              This will disable zero-touch device enrollment. New Agent installations will not be
-              able to request joining until a new code is generated. Existing enrolled devices are
-              not affected.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel disabled={enrollmentSaving}>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              onClick={() => void handleRevokeEnrollmentCode()}
-              disabled={enrollmentSaving}
-              className="bg-red-600 text-white hover:bg-red-700"
-            >
-              {enrollmentSaving ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : null}
-              Revoke Code
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
 
       {/* Monitoring Configuration — real org-scoped values from
           /api/settings/monitoring (the dead MonitoringPolicy table is gone). */}

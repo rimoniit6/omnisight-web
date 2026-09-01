@@ -14,7 +14,6 @@ import {
   deviceClaimInvalidation,
   anomalyInvalidation,
   alertEventInvalidation,
-  guestInvalidation,
   locationUpdateInvalidation,
 } from '@/lib/ws-invalidation';
 
@@ -86,16 +85,6 @@ export interface DeviceClaimEvent {
   timestamp: string;
 }
 
-export interface GuestEvent {
-  id: string;
-  deviceId: string;
-  deviceName: string;
-  hostname: string | null;
-  employeeId: string | null;
-  status: string;
-  timestamp: string;
-}
-
 
 
 export interface ConnectedEvent {
@@ -154,7 +143,7 @@ export interface PolicyViolationEvent {
   timestamp: string;
 }
 
-export type LiveEventType = 'device-status' | 'activity-ping' | 'notification' | 'break-status' | 'break-started' | 'break-ended' | 'screenshot' | 'usb-event' | 'project-time-update' | 'device-claim' | 'alert-event' | 'guest' | 'location-update';
+export type LiveEventType = 'device-status' | 'activity-ping' | 'notification' | 'break-status' | 'break-started' | 'break-ended' | 'screenshot' | 'usb-event' | 'project-time-update' | 'device-claim' | 'alert-event'  | 'location-update';
 
 export interface LiveEventLog {
   id: string;
@@ -179,7 +168,6 @@ interface WebSocketState {
   lastBreakStatus: BreakStatusEvent | null;
   lastScreenshot: ScreenshotEvent | null;
   lastDeviceClaim: DeviceClaimEvent | null;
-  lastGuest: GuestEvent | null;
   lastUsbEvent: UsbEventEvent | null;
   lastAlertEvent: AlertEvent | null;
   lastProjectTimeUpdate: ProjectTimeUpdateEvent | null;
@@ -235,7 +223,6 @@ export function WebSocketProvider({ children }: { children: ReactNode }) {
   const [lastBreakStatus, setLastBreakStatus] = useState<BreakStatusEvent | null>(null);
   const [lastScreenshot, setLastScreenshot] = useState<ScreenshotEvent | null>(null);
   const [lastDeviceClaim, setLastDeviceClaim] = useState<DeviceClaimEvent | null>(null);
-  const [lastGuest, setLastGuest] = useState<GuestEvent | null>(null);
   const [lastUsbEvent, setLastUsbEvent] = useState<UsbEventEvent | null>(null);
   const [lastAlertEvent, setLastAlertEvent] = useState<AlertEvent | null>(null);
   const [lastProjectTimeUpdate, setLastProjectTimeUpdate] = useState<ProjectTimeUpdateEvent | null>(null);
@@ -417,7 +404,7 @@ export function WebSocketProvider({ children }: { children: ReactNode }) {
     });
 
     // ─── Agent Registration (legacy path: creation + approve/reject) ───
-    // ─── Device Claim (zero-touch path: creation + lifecycle transitions) ───
+    // ─── Device Claim (device claim path: creation + lifecycle transitions) ───
     socket.on('device-claim', (event: DeviceClaimEvent) => {
       setLastDeviceClaim(event);
       const titles: Record<string, string> = {
@@ -441,31 +428,6 @@ export function WebSocketProvider({ children }: { children: ReactNode }) {
         queryClient.invalidateQueries({ queryKey: key });
       }
     });
-
-    // ─── Guest (guest enrollment creation + lifecycle transitions) ───
-    socket.on('guest', (event: GuestEvent) => {
-      setLastGuest(event);
-      const titles: Record<string, string> = {
-        ACTIVE: 'Guest Activated',
-        SUSPENDED: 'Guest Suspended',
-        REVOKED: 'Guest Revoked',
-        REJECTED: 'Guest Rejected',
-      };
-      addEventLog({
-        type: 'guest',
-        title: titles[event.status] ?? 'Guest Enrolled',
-        description: event.deviceName,
-        timestamp: event.timestamp,
-        priority: event.status === 'REVOKED' || event.status === 'SUSPENDED' ? 'medium' : 'low',
-      });
-      // Centralized mapping (src/lib/ws-invalidation.ts): the Guests page list
-      // (prefix-matched 'guests'), the sidebar badge and global aggregates.
-      for (const key of guestInvalidation()) {
-        queryClient.invalidateQueries({ queryKey: key });
-      }
-    });
-
-
 
     // ─── Location Update (new GPS fix arrived) ───
     // The event carries NO coordinates (privacy); the client refetches the
@@ -579,7 +541,6 @@ export function WebSocketProvider({ children }: { children: ReactNode }) {
         lastBreakStatus,
         lastScreenshot,
         lastDeviceClaim,
-        lastGuest,
         lastUsbEvent,
         lastAlertEvent,
         lastProjectTimeUpdate,

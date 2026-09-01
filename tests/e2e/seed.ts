@@ -101,7 +101,7 @@ async function main() {
     });
   }
   // A second-org owner — proves cross-tenant boundaries at the UI/API level.
-  await db.appUser.create({
+  const betaOwnerUser = await db.appUser.create({
     data: {
       email: CREDENTIALS.betaOwner.email,
       name: 'Beta Owner',
@@ -110,6 +110,27 @@ async function main() {
       organizationId: orgB.id,
       isActive: true,
     },
+  });
+
+  // ─── OrganizationMemberships (RBAC source of truth) ──────────────────
+  // The RBAC system resolves effective roles from OrganizationMembership,
+  // not AppUser.role. Without these rows, login falls back to the legacy
+  // AppUser.role field which may not match the membership hierarchy.
+  const orgAUsers = await db.appUser.findMany({ where: { organizationId: orgA.id } });
+  const roleMap: Record<string, string> = {
+    owner: 'admin',
+    admin: 'admin',
+    manager: 'manager',
+    viewer: 'viewer',
+  };
+  for (const u of orgAUsers) {
+    const memRole = roleMap[u.role] ?? 'viewer';
+    await db.organizationMembership.create({
+      data: { userId: u.id, organizationId: orgA.id, role: memRole, status: 'ACTIVE' },
+    });
+  }
+  await db.organizationMembership.create({
+    data: { userId: betaOwnerUser.id, organizationId: orgB.id, role: 'admin', status: 'ACTIVE' },
   });
 
   // ─── Departments / Employees / Devices ────────────────────────────────────

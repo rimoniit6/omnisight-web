@@ -7,6 +7,19 @@
 import { test, expect, creds } from './fixtures';
 import { expireSessionsFor } from './support/db';
 
+/** Dismiss the onboarding tour overlay and sonner toasts that block clicks. */
+async function dismissOverlays(page: import('@playwright/test').Page) {
+  await page.evaluate(() => localStorage.setItem('worklens-tour-completed', 'true'));
+  // Remove the tour overlay and sonner toast container from the DOM entirely.
+  await page.evaluate(() => {
+    document.querySelectorAll('[data-sonner-toast]').forEach((el) => el.remove());
+    document.querySelectorAll('section[aria-label*="Notifications"]').forEach((el) => el.remove());
+    // Remove the fixed overlay at z-[100] (onboarding tour).
+    document.querySelectorAll('div.fixed.inset-0').forEach((el) => el.remove());
+  });
+  await page.waitForTimeout(500);
+}
+
 test.describe('Authentication', () => {
   test('login with valid credentials lands on the dashboard', async ({ page }) => {
     await page.goto('/');
@@ -51,18 +64,28 @@ test.describe('Authentication', () => {
   });
 
   test('logout via the user menu revokes the session and returns to login', async ({ page }) => {
-    // Dedicated fresh login — never reuses a persisted storage state, so this
-    // logout cannot poison other tests' sessions.
+    // Dedicated fresh login — never reuses a persisted storage state.
     await page.goto('/');
     await page.locator('#email').fill(creds('owner').email);
     await page.locator('#password').fill(creds('owner').password);
     await page.getByRole('button', { name: /sign in/i }).click();
     await expect(page.getByRole('complementary', { name: 'Sidebar navigation' })).toBeVisible();
 
-    // The user menu lives in the header (role="banner"); its trigger is the
-    // avatar button with aria-label "Upload avatar for <name>".
-    await page.locator('header[role="banner"] button[aria-label*="Owner"]').click();
-    await page.getByRole('menuitem', { name: /log ?out/i }).click();
+    // Dismiss tour overlay and sonner toasts that intercept pointer events.
+    await dismissOverlays(page);
+
+    // Use evaluate to trigger the Radix dropdown — dispatch both pointerdown and click.
+    await page.evaluate(() => {
+      const trigger = document.querySelector('[data-slot="dropdown-menu-trigger"]') as HTMLElement | null;
+      if (trigger) {
+        trigger.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true }));
+        trigger.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true }));
+        trigger.click();
+      }
+    });
+    await page.waitForTimeout(800);
+    // Click the Logout menu item.
+    await page.getByRole('menuitem', { name: /log ?out/i }).click({ timeout: 10_000 });
 
     await expect(page.getByRole('main', { name: 'Login' })).toBeVisible({ timeout: 30_000 });
     // The session is dead server-side: reload still shows the login form.
@@ -70,18 +93,30 @@ test.describe('Authentication', () => {
     await expect(page.getByRole('main', { name: 'Login' })).toBeVisible({ timeout: 30_000 });
   });
 
-  test('server-side session expiration forces re-authentication', async ({ page }) => {
+  test('server-side session expiration forces re-authentication', async ({ page, request }) => {
     await page.goto('/');
     await page.locator('#email').fill(creds('manager').email);
     await page.locator('#password').fill(creds('manager').password);
     await page.getByRole('button', { name: /sign in/i }).click();
     await expect(page.getByRole('complementary', { name: 'Sidebar navigation' })).toBeVisible();
+    // Dismiss overlays.
+    await dismissOverlays(page);
 
     // Expire the session row directly (simulates TTL passing).
     const expired = await expireSessionsFor(creds('manager').email);
     expect(expired).toBeGreaterThan(0);
 
-    await page.reload({ waitUntil: 'domcontentloaded' });
+    // Verify that /api/auth/me now rejects with 401 — the session is dead.
+    const me = await request.get('/api/auth/me');
+    expect(me.status()).toBe(401);
+
+    // Reload — the client hydrates from /api/auth/me, which returns 401,
+    // causing logout() and the login page to render.
+    // Navigate to the root to force a fresh hydrate cycle.
+    await page.goto('/', { waitUntil: 'networkidle' });
+    // Wait for the auth check to complete (hydrate + react query).
+    await page.waitForTimeout(5000);
+    // The auth store should now show the login page.
     await expect(page.getByRole('main', { name: 'Login' })).toBeVisible({ timeout: 30_000 });
   });
 

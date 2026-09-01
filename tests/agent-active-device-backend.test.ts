@@ -68,11 +68,9 @@ let createAgentAccount: (typeof import('../src/lib/agent-account'))['createAgent
 let hashPassword: (password: string) => Promise<string>;
 let generateClaimSecret: () => string;
 let hashClaimSecret: (secret: string) => string;
-let hashEnrollmentCode: (code: string) => string;
-
 const PASSWORD = 'Str0ng!Pass123x';
 let org: { id: string };
-const ENROLL_CODE = 'test-enroll-code-conflict-0123456789';
+let authLoginApi: typeof import('../src/app/api/agent/login/route');
 
 before(async () => {
   db = (await import('../src/lib/db')).db;
@@ -82,15 +80,12 @@ before(async () => {
   approveApi = await import('../src/app/api/device-claims/[id]/approve/route');
   cancelApi = await import('../src/app/api/device-claims/[id]/cancel/route');
   heartbeatApi = await import('../src/app/api/agent/heartbeat/route');
+  authLoginApi = await import('../src/app/api/agent/login/route');
   ({ createAgentAccount } = await import('../src/lib/agent-account'));
   ({ hashPassword } = await import('../src/lib/auth'));
-  ({ generateClaimSecret, hashClaimSecret, hashEnrollmentCode } = await import('../src/lib/agent/auth'));
+  ({ generateClaimSecret, hashClaimSecret } = await import('../src/lib/agent/auth'));
 
   org = await db.organization.create({ data: { name: 'Conflict Org', slug: 'conflict-org' } });
-  // P2-3: anonymous zero-touch discover requires an EXPLICIT enrollment code.
-  await db.organizationSetting.create({
-    data: { organizationId: org.id, key: 'agent_enrollment_code', value: hashEnrollmentCode(ENROLL_CODE), category: 'agent' },
-  });
 });
 
 after(async () => {
@@ -153,12 +148,22 @@ async function seedPathBEmployee(orgId: string, code: string) {
 }
 
 function discoverBody(deviceKey: string, hostname = 'PC-CONFLICT') {
-  return { deviceKey, hostname, os: 'Windows 11', osVersion: '23H2', processor: 'x64', memory: '16GB', agentVersion: '1.3.0', arch: 'x64', enrollmentCode: ENROLL_CODE };
+  return { deviceKey, hostname, os: 'Windows 11', osVersion: '23H2', processor: 'x64', memory: '16GB', agentVersion: '1.3.0', arch: 'x64' };
 }
 
-/** POST /api/agent/discover (anonymous zero-touch) → 201 pending + one-time secret. */
-async function doDiscover(deviceKey: string, ip: string) {
-  const res = await discoverApi.POST(req(null, { method: 'POST', body: discoverBody(deviceKey), ip }));
+/** Create an employee + AgentAccount and login to get a session token. */
+async function setupAuthenticatedDiscoverer(employeeId: string) {
+  const emp = await seedEmployee(employeeId, { agentAccount: 'active' });
+  const loginRes = await authLoginApi.POST(req(null, {
+    body: { agentId: employeeId, password: PASSWORD },
+  }));
+  const loginBody = await loginRes.json() as { token?: string };
+  return { emp, sessionToken: loginBody.token ?? null };
+}
+
+/** POST /api/agent/discover (authenticated) → 201 pending + one-time secret. */
+async function doDiscover(deviceKey: string, ip: string, sessionToken?: string) {
+  const res = await discoverApi.POST(req(sessionToken ?? null, { method: 'POST', body: discoverBody(deviceKey), ip }));
   return { status: res.status, body: (await res.json().catch(() => ({}))) as Record<string, unknown> };
 }
 
@@ -177,8 +182,8 @@ async function doApprove(admin: string, claimId: string, employeeId: string) {
 }
 
 /** Full REAL pipeline for an active device: discover → approve → authenticate. */
-async function seedActiveDevice(orgId: string, emp: { id: string }, deviceKey: string, ip: string) {
-  const d = await doDiscover(deviceKey, ip);
+async function seedActiveDevice(orgId: string, emp: { id: string }, deviceKey: string, ip: string, sessionToken?: string) {
+  const d = await doDiscover(deviceKey, ip, sessionToken);
   assert.equal(d.status, 201, `discover: ${JSON.stringify(d.body)}`);
   const ar = await doApprove(await adminToken(orgId, 'u-conflict-admin'), d.body.claimId as string, emp.id);
   assert.equal(ar.status, 200, `approve: ${JSON.stringify(ar.body)}`);
@@ -196,8 +201,8 @@ async function seedActiveDevice(orgId: string, emp: { id: string }, deviceKey: s
  * exact state the activation predicate is designed for: two eligible devices,
  * one holding the slot. Uses the real claim-secret hashing from the route.
  */
-async function seedEligibleDevice(orgId: string, employeeId: string, deviceKey: string, ip: string) {
-  const d = await doDiscover(deviceKey, ip);
+async function seedEligibleDevice(orgId: string, employeeId: string, deviceKey: string, ip: string, sessionToken?: string) {
+  const d = await doDiscover(deviceKey, ip, sessionToken);
   assert.equal(d.status, 201, `discover: ${JSON.stringify(d.body)}`);
   const secret = d.body.secret as string;
   await db.device.update({
@@ -227,8 +232,10 @@ function authBody(deviceId: string, secret: string, extra: Record<string, unknow
 
 test('B-01: second eligible device → 409 ACTIVE_DEVICE_EXISTS, first device untouched', async () => {
   const emp = await seedEmployee(org.id, 'B01-EMP', { agentAccount: 'active' });
-  const a = await seedActiveDevice(org.id, emp, 'key-b01-device-a-0123456789', '203.0.113.101');
-  const b = await seedEligibleDevice(org.id, emp.id, 'key-b01-device-b-0123456789', '203.0.113.102');
+  const loginRes = await authLoginApi.POST(req(null, { body: { agentId: 'B01-EMP', password: PASSWORD } }));
+  const sessionToken = (await loginRes.json() as { token?: string }).token ?? undefined;
+  const a = await seedActiveDevice(org.id, emp, 'key-b01-device-a-0123456789', '203.0.113.101', sessionToken);
+  const b = await seedEligibleDevice(org.id, emp.id, 'key-b01-device-b-0123456789', '203.0.113.102', sessionToken);
 
   const aTokenBefore = await db.agentToken.findFirst({ where: { deviceId: a.deviceId } });
   const aDeviceBefore = await db.device.findUnique({ where: { id: a.deviceId } });
@@ -259,8 +266,10 @@ test('B-01: second eligible device → 409 ACTIVE_DEVICE_EXISTS, first device un
 
 test('B-02: the 409 transaction is zero-mutation (exhaustive snapshot)', async () => {
   const emp = await seedEmployee(org.id, 'B02-EMP', { agentAccount: 'active' });
-  const a = await seedActiveDevice(org.id, emp, 'key-b02-device-a-0123456789', '203.0.113.201');
-  const b = await seedEligibleDevice(org.id, emp.id, 'key-b02-device-b-0123456789', '203.0.113.202');
+  const loginRes = await authLoginApi.POST(req(null, { body: { agentId: 'B02-EMP', password: PASSWORD } }));
+  const sessionToken = (await loginRes.json() as { token?: string }).token ?? undefined;
+  const a = await seedActiveDevice(org.id, emp, 'key-b02-device-a-0123456789', '203.0.113.201', sessionToken);
+  const b = await seedEligibleDevice(org.id, emp.id, 'key-b02-device-b-0123456789', '203.0.113.202', sessionToken);
 
   const before = {
     tokens: JSON.stringify(await snapshotEmployeeTokens(emp.id)),
@@ -300,8 +309,10 @@ test('B-02: the 409 transaction is zero-mutation (exhaustive snapshot)', async (
 
 test('B-03: concurrent auth from two eligible devices → exactly one winner, one 409', async () => {
   const emp = await seedEmployee(org.id, 'B03-EMP', { agentAccount: 'active' });
-  const a = await seedEligibleDevice(org.id, emp.id, 'key-b03-device-a-0123456789', '203.0.113.301');
-  const b = await seedEligibleDevice(org.id, emp.id, 'key-b03-device-b-0123456789', '203.0.113.302');
+  const loginRes = await authLoginApi.POST(req(null, { body: { agentId: 'B03-EMP', password: PASSWORD } }));
+  const sessionToken = (await loginRes.json() as { token?: string }).token ?? undefined;
+  const a = await seedEligibleDevice(org.id, emp.id, 'key-b03-device-a-0123456789', '203.0.113.301', sessionToken);
+  const b = await seedEligibleDevice(org.id, emp.id, 'key-b03-device-b-0123456789', '203.0.113.302', sessionToken);
 
   const [ra, rb] = await Promise.all([
     doAuthenticate(authBody(a.deviceId, a.secret), '203.0.113.301'),
@@ -330,8 +341,10 @@ test('B-03: concurrent auth from two eligible devices → exactly one winner, on
 
 test('B-04: same-device re-login replaces ONLY its own token', async () => {
   const emp = await seedEmployee(org.id, 'B04-EMP', { agentAccount: 'active' });
-  const a = await seedActiveDevice(org.id, emp, 'key-b04-device-a-0123456789', '203.0.113.401');
-  const b = await seedEligibleDevice(org.id, emp.id, 'key-b04-device-b-0123456789', '203.0.113.402');
+  const loginRes = await authLoginApi.POST(req(null, { body: { agentId: 'B04-EMP', password: PASSWORD } }));
+  const sessionToken = (await loginRes.json() as { token?: string }).token ?? undefined;
+  const a = await seedActiveDevice(org.id, emp, 'key-b04-device-a-0123456789', '203.0.113.401', sessionToken);
+  const b = await seedEligibleDevice(org.id, emp.id, 'key-b04-device-b-0123456789', '203.0.113.402', sessionToken);
 
   const oldToken = await db.agentToken.findFirst({ where: { deviceId: a.deviceId } });
   assert.ok(oldToken);
@@ -360,12 +373,14 @@ test('B-04: same-device re-login replaces ONLY its own token', async () => {
 
 test('B-05: an expired token does not block another eligible device', async () => {
   const emp = await seedEmployee(org.id, 'B05-EMP', { agentAccount: 'active' });
-  const a = await seedActiveDevice(org.id, emp, 'key-b05-device-a-0123456789', '203.0.113.501');
+  const loginRes = await authLoginApi.POST(req(null, { body: { agentId: 'B05-EMP', password: PASSWORD } }));
+  const sessionToken = (await loginRes.json() as { token?: string }).token ?? undefined;
+  const a = await seedActiveDevice(org.id, emp, 'key-b05-device-a-0123456789', '203.0.113.501', sessionToken);
   await db.agentToken.updateMany({
     where: { deviceId: a.deviceId },
     data: { expiresAt: new Date(Date.now() - 60_000) },
   });
-  const b = await seedEligibleDevice(org.id, emp.id, 'key-b05-device-b-0123456789', '203.0.113.502');
+  const b = await seedEligibleDevice(org.id, emp.id, 'key-b05-device-b-0123456789', '203.0.113.502', sessionToken);
 
   const r = await doAuthenticate(authBody(b.deviceId, b.secret), '203.0.113.502');
   assert.equal(r.status, 200, JSON.stringify(r.body));
@@ -379,18 +394,22 @@ test('B-05: an expired token does not block another eligible device', async () =
 test('B-06: a revoked device and a deleted device never trigger a false 409', async () => {
   // Revoked-device variant.
   const empR = await seedEmployee(org.id, 'B06R-EMP', { agentAccount: 'active' });
-  const aR = await seedActiveDevice(org.id, empR, 'key-b06r-device-a-0123456789', '203.0.113.601');
+  const loginResR = await authLoginApi.POST(req(null, { body: { agentId: 'B06R-EMP', password: PASSWORD } }));
+  const tokenR = (await loginResR.json() as { token?: string }).token ?? undefined;
+  const aR = await seedActiveDevice(org.id, empR, 'key-b06r-device-a-0123456789', '203.0.113.601', tokenR);
   await db.device.update({ where: { id: aR.deviceId }, data: { status: 'revoked' } });
-  const bR = await seedEligibleDevice(org.id, empR.id, 'key-b06r-device-b-0123456789', '203.0.113.602');
+  const bR = await seedEligibleDevice(org.id, empR.id, 'key-b06r-device-b-0123456789', '203.0.113.602', tokenR);
   const rR = await doAuthenticate(authBody(bR.deviceId, bR.secret), '203.0.113.602');
   assert.equal(rR.status, 200, `revoked A must not block: ${JSON.stringify(rR.body)}`);
   assert.notEqual(rR.body.error, 'ACTIVE_DEVICE_EXISTS');
 
   // Deleted-device variant (orphaned token).
   const empD = await seedEmployee(org.id, 'B06D-EMP', { agentAccount: 'active' });
-  const aD = await seedActiveDevice(org.id, empD, 'key-b06d-device-a-0123456789', '203.0.113.603');
+  const loginResD = await authLoginApi.POST(req(null, { body: { agentId: 'B06D-EMP', password: PASSWORD } }));
+  const tokenD = (await loginResD.json() as { token?: string }).token ?? undefined;
+  const aD = await seedActiveDevice(org.id, empD, 'key-b06d-device-a-0123456789', '203.0.113.603', tokenD);
   await db.device.delete({ where: { id: aD.deviceId } });
-  const bD = await seedEligibleDevice(org.id, empD.id, 'key-b06d-device-b-0123456789', '203.0.113.604');
+  const bD = await seedEligibleDevice(org.id, empD.id, 'key-b06d-device-b-0123456789', '203.0.113.604', tokenD);
   const rD = await doAuthenticate(authBody(bD.deviceId, bD.secret), '203.0.113.604');
   assert.equal(rD.status, 200, `orphaned A token must not block: ${JSON.stringify(rD.body)}`);
   assert.notEqual(rD.body.error, 'ACTIVE_DEVICE_EXISTS');
@@ -401,7 +420,9 @@ test('B-06: a revoked device and a deleted device never trigger a false 409', as
 test('B-08: a disabled AgentAccount fails closed with 403, never 409', async () => {
   const emp = await seedEmployee(org.id, 'B08-EMP');
   await createAgentAccount({ employeeId: emp.id, agentId: 'B08-EMP', password: PASSWORD, status: 'disabled' });
-  const b = await seedEligibleDevice(org.id, emp.id, 'key-b08-device-b-0123456789', '203.0.113.801');
+  const loginRes = await authLoginApi.POST(req(null, { body: { agentId: 'B08-EMP', password: PASSWORD } }));
+  const token = (await loginRes.json() as { token?: string }).token ?? undefined;
+  const b = await seedEligibleDevice(org.id, emp.id, 'key-b08-device-b-0123456789', '203.0.113.801', token);
   const r = await doAuthenticate(authBody(b.deviceId, b.secret), '203.0.113.801');
   assert.equal(r.status, 403, JSON.stringify(r.body));
   assert.equal(r.body.error, 'Agent account is disabled');
@@ -415,7 +436,9 @@ test('B-09: inactive employee, suspended org and inactive device never produce a
   // Inactive employee.
   const empI = await seedEmployee(org.id, 'B09I-EMP', { status: 'inactive' });
   await createAgentAccount({ employeeId: empI.id, agentId: 'B09I-EMP', password: PASSWORD, status: 'active' });
-  const bI = await seedEligibleDevice(org.id, empI.id, 'key-b09i-device-b-0123456789', '203.0.113.901');
+  const loginResI = await authLoginApi.POST(req(null, { body: { agentId: 'B09I-EMP', password: PASSWORD } }));
+  const tokenI = (await loginResI.json() as { token?: string }).token ?? undefined;
+  const bI = await seedEligibleDevice(org.id, empI.id, 'key-b09i-device-b-0123456789', '203.0.113.901', tokenI);
   const rI = await doAuthenticate(authBody(bI.deviceId, bI.secret), '203.0.113.901');
   assert.equal(rI.status, 403, JSON.stringify(rI.body));
   assert.notEqual(rI.body.error, 'ACTIVE_DEVICE_EXISTS');
@@ -423,7 +446,9 @@ test('B-09: inactive employee, suspended org and inactive device never produce a
   // Suspended org (G1-style: suspend, verify, restore).
   const empO = await seedEmployee(org.id, 'B09O-EMP');
   await createAgentAccount({ employeeId: empO.id, agentId: 'B09O-EMP', password: PASSWORD, status: 'active' });
-  const bO = await seedEligibleDevice(org.id, empO.id, 'key-b09o-device-b-0123456789', '203.0.113.902');
+  const loginResO = await authLoginApi.POST(req(null, { body: { agentId: 'B09O-EMP', password: PASSWORD } }));
+  const tokenO = (await loginResO.json() as { token?: string }).token ?? undefined;
+  const bO = await seedEligibleDevice(org.id, empO.id, 'key-b09o-device-b-0123456789', '203.0.113.902', tokenO);
   await db.organization.update({ where: { id: org.id }, data: { status: 'suspended' } });
   try {
     const rO = await doAuthenticate(authBody(bO.deviceId, bO.secret), '203.0.113.902');
@@ -436,7 +461,9 @@ test('B-09: inactive employee, suspended org and inactive device never produce a
   // Inactive device.
   const empD = await seedEmployee(org.id, 'B09D-EMP');
   await createAgentAccount({ employeeId: empD.id, agentId: 'B09D-EMP', password: PASSWORD, status: 'active' });
-  const bD = await seedEligibleDevice(org.id, empD.id, 'key-b09d-device-b-0123456789', '203.0.113.903');
+  const loginResD = await authLoginApi.POST(req(null, { body: { agentId: 'B09D-EMP', password: PASSWORD } }));
+  const tokenD = (await loginResD.json() as { token?: string }).token ?? undefined;
+  const bD = await seedEligibleDevice(org.id, empD.id, 'key-b09d-device-b-0123456789', '203.0.113.903', tokenD);
   await db.device.update({ where: { id: bD.deviceId }, data: { status: 'inactive' } });
   const rD = await doAuthenticate(authBody(bD.deviceId, bD.secret), '203.0.113.903');
   assert.equal(rD.status, 403, JSON.stringify(rD.body));
@@ -448,8 +475,10 @@ test('B-09: inactive employee, suspended org and inactive device never produce a
 
 test('B-10: B cannot revoke, replace or mutate A token; A stays usable', async () => {
   const emp = await seedEmployee(org.id, 'B10-EMP', { agentAccount: 'active' });
-  const a = await seedActiveDevice(org.id, emp, 'key-b10-device-a-0123456789', '203.0.113.1001');
-  const b = await seedEligibleDevice(org.id, emp.id, 'key-b10-device-b-0123456789', '203.0.113.1002');
+  const loginRes = await authLoginApi.POST(req(null, { body: { agentId: 'B10-EMP', password: PASSWORD } }));
+  const sessionToken = (await loginRes.json() as { token?: string }).token ?? undefined;
+  const a = await seedActiveDevice(org.id, emp, 'key-b10-device-a-0123456789', '203.0.113.1001', sessionToken);
+  const b = await seedEligibleDevice(org.id, emp.id, 'key-b10-device-b-0123456789', '203.0.113.1002', sessionToken);
 
   const aTokenBefore = await db.agentToken.findFirst({ where: { deviceId: a.deviceId } });
   const r = await doAuthenticate(authBody(b.deviceId, b.secret), '203.0.113.1002');
@@ -489,9 +518,11 @@ test('B-10: B cannot revoke, replace or mutate A token; A stays usable', async (
 // account fails closed. These guards keep that boundary pinned: they use
 // employees with NO AgentAccount row at all.
 
-test('CRITICAL-01: PATH A zero-touch authenticates WITHOUT an AgentAccount row', async () => {
+test('CRITICAL-01: PATH A device claim authenticates WITHOUT an AgentAccount row', async () => {
   const emp = await seedEmployee(org.id, 'CR01A-EMP'); // no AgentAccount created
-  const a = await seedActiveDevice(org.id, emp, 'key-cr01a-device-0123456789', '203.0.113.2010');
+  const loginRes = await authLoginApi.POST(req(null, { body: { agentId: 'CR01A-EMP', password: PASSWORD } }));
+  const sessionToken = (await loginRes.json() as { token?: string }).token ?? undefined;
+  const a = await seedActiveDevice(org.id, emp, 'key-cr01a-device-0123456789', '203.0.113.2010', sessionToken);
   assert.ok(a.token, 'PATH A must issue a token for an approved device with no AgentAccount');
   assert.equal(
     await db.agentAccount.count({ where: { employeeId: emp.id } }),
@@ -515,8 +546,10 @@ test('CRITICAL-01: PATH A zero-touch authenticates WITHOUT an AgentAccount row',
 
 test('HTTP: 409 response is exactly { error: "ACTIVE_DEVICE_EXISTS" }', async () => {
   const emp = await seedEmployee(org.id, 'HTTP-EMP', { agentAccount: 'active' });
-  await seedActiveDevice(org.id, emp, 'key-http-device-a-0123456789', '203.0.113.1101');
-  const b = await seedEligibleDevice(org.id, emp.id, 'key-http-device-b-0123456789', '203.0.113.1102');
+  const loginRes = await authLoginApi.POST(req(null, { body: { agentId: 'HTTP-EMP', password: PASSWORD } }));
+  const sessionToken = (await loginRes.json() as { token?: string }).token ?? undefined;
+  await seedActiveDevice(org.id, emp, 'key-http-device-a-0123456789', '203.0.113.1101', sessionToken);
+  const b = await seedEligibleDevice(org.id, emp.id, 'key-http-device-b-0123456789', '203.0.113.1102', sessionToken);
 
   const res = await authApi.POST(req(null, {
     method: 'POST',
@@ -529,8 +562,10 @@ test('HTTP: 409 response is exactly { error: "ACTIVE_DEVICE_EXISTS" }', async ()
 });
 
 test('HTTP: an unrelated 409 (claim cancel) carries no ACTIVE_DEVICE_EXISTS marker', async () => {
-  const emp = await seedEmployee(org.id, 'HTTP2-EMP');
-  const d = await doDiscover('key-http2-device-a-0123456789', '203.0.113.1103');
+  const emp = await seedEmployee(org.id, 'HTTP2-EMP', { agentAccount: 'active' });
+  const loginRes = await authLoginApi.POST(req(null, { body: { agentId: 'HTTP2-EMP', password: PASSWORD } }));
+  const sessionToken = (await loginRes.json() as { token?: string }).token ?? undefined;
+  const d = await doDiscover('key-http2-device-a-0123456789', '203.0.113.1103', sessionToken);
   assert.equal(d.status, 201);
   // Simulate the claim having resolved (approved) — cancel must 409.
   await db.deviceClaim.update({ where: { id: d.body.claimId as string }, data: { status: 'approved' } });

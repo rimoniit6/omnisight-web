@@ -188,20 +188,15 @@ describe('RBAC — Role Resolution & Authorization', () => {
 
   describe('RBAC-13 to RBAC-18: Cross-organization access denial', () => {
     it('RBAC-13: Org A Admin cannot access Org B employees', async () => {
-      // Switch Org A admin to Org A context first
-      const switchRes = await apiPost('/api/me/organization/switch', orgAAdminToken, { organizationId: orgAId });
-      const tokenA = switchRes.body?.token || orgAAdminToken;
-
-      const { status } = await apiGet(`/api/employees?organizationId=${orgBId}`, tokenA);
+      // No switch needed — the session is already pinned to the seed org.
+      // Passing a cross-org organizationId query param must NOT switch context.
+      const { status } = await apiGet(`/api/employees?organizationId=${orgBId}`, orgAAdminToken);
       // Should either 403 or return only Org A employees
       assert.notEqual(status, 200, 'Org A admin should not have unrestricted access to Org B employees');
     });
 
     it('RBAC-14: Org A Admin cannot access Org B devices', async () => {
-      const switchRes = await apiPost('/api/me/organization/switch', orgAAdminToken, { organizationId: orgAId });
-      const tokenA = switchRes.body?.token || orgAAdminToken;
-
-      const { status } = await apiGet(`/api/devices?organizationId=${orgBId}`, tokenA);
+      const { status } = await apiGet(`/api/devices?organizationId=${orgBId}`, orgAAdminToken);
       assert.notEqual(status, 200, 'Org A admin should not have unrestricted access to Org B devices');
     });
 
@@ -216,8 +211,11 @@ describe('RBAC — Role Resolution & Authorization', () => {
           update: { role: 'admin', status: 'ACTIVE' },
         });
 
-        // Switch to Org A
-        const switchA = await apiPost('/api/me/organization/switch', orgAAdminToken, { organizationId: orgAId });
+        // Use a FRESH login so the shared orgAAdminToken session is not
+        // mutated (switching updates the session's activeOrganizationId,
+        // which invalidates the original token for subsequent tests).
+        const freshLogin = await login('org.admin@acmetech.com', 'demo1234');
+        const switchA = await apiPost('/api/me/organization/switch', freshLogin.token, { organizationId: orgAId });
         if (switchA.status === 200) {
           assert.equal(switchA.body.role, 'admin');
         }

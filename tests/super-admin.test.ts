@@ -74,10 +74,10 @@ let loginApi: LoginApi;
 let hasActiveConsent: (employeeId: string, consentType: string) => Promise<boolean>;
 let signJWT: (payload: { userId: string; email: string; role: string; organizationId?: string }) => Promise<string>;
 
-// The discovery org. Since P2-3 hardening, anonymous zero-touch discover binds
-// via an EXPLICIT admin-issued enrollment code (never "the first organization").
 let org: { id: string };
-const ENROLL_CODE = 'test-enroll-code-sa-0123456789abcdef';
+let createAgentAccount: (typeof import('../src/lib/agent-account'))['createAgentAccount'];
+let hashPassword: (p: string) => Promise<string>;
+const PASSWORD = 'TestPass-123!';
 
 before(async () => {
   const dbModule = await import('../src/lib/db');
@@ -89,6 +89,8 @@ before(async () => {
   seedAllowed = (await import('../src/lib/seed')).seedAllowed;
   hasActiveConsent = (await import('../src/lib/consent')).hasActiveConsent;
   signJWT = (await import('../src/lib/auth')).signJWT;
+  hashPassword = (await import('../src/lib/auth')).hashPassword;
+  createAgentAccount = (await import('../src/lib/agent-account')).createAgentAccount;
 
   const [dApi, caApi, actApi, lApi] = await Promise.all([
     import('../src/app/api/agent/discover/route'),
@@ -102,10 +104,6 @@ before(async () => {
   loginApi = lApi;
 
   org = await db.organization.create({ data: { name: 'SA Org', slug: 'sa-org' } });
-  const { hashEnrollmentCode } = await import('../src/lib/agent/auth');
-  await db.organizationSetting.create({
-    data: { organizationId: org.id, key: 'agent_enrollment_code', value: hashEnrollmentCode(ENROLL_CODE), category: 'agent' },
-  });
 });
 
 after(async () => {
@@ -148,6 +146,13 @@ async function seedEmployee(orgId: string, code: string) {
       agentApproved: false,
     },
   });
+}
+
+async function createTestEmployeeAndAccount(employeeId: string) {
+  const emp = await seedEmployee(org.id, employeeId);
+  const pwHash = await hashPassword(PASSWORD);
+  await createAgentAccount({ employeeId: emp.id, agentId: employeeId, password: PASSWORD });
+  return emp;
 }
 
 // ─── 1–4: env validation fails fast ────────────────────────────────────────
@@ -340,16 +345,20 @@ test('SA-14b: the seed CLI exits non-zero and wipes nothing in production', () =
 
 // ─── 15–17: zero-touch + consent regressions after bootstrap ──────────────
 
-test('SA-15: zero-touch discovery still works after production bootstrap', async () => {
+test('SA-15: authenticated discovery still works after production bootstrap', async () => {
+  // Create employee + account for authenticated discovery
+  const emp = await seedEmployee(org.id, 'SA15-EMP');
+  await createAgentAccount({ employeeId: emp.id, agentId: 'SA15-EMP', password: PASSWORD });
+  const loginRes = await loginApi.POST(req(null, { body: { agentId: 'SA15-EMP', password: PASSWORD } }));
+  const sessionToken = (await loginRes.json() as { token?: string }).token;
   const res = await discoverApi.POST(
-    req(null, {
+    req(sessionToken, {
       method: 'POST',
       body: {
         deviceKey: 'sa15-device-key-abcdef123456',
         hostname: 'SA15-PC',
         os: 'Windows 11',
         agentVersion: '1.2.0',
-        enrollmentCode: ENROLL_CODE,
       },
       ip: '203.0.113.15',
     })
@@ -364,10 +373,13 @@ test('SA-15: zero-touch discovery still works after production bootstrap', async
 
 test('SA-16: approval creates NO consent — device approval is not consent', async () => {
   const emp = await seedEmployee(org.id, 'SA16-EMP');
+  const empAccount = await createTestEmployeeAndAccount('SA16-ACC');
+  const loginRes = await loginApi.POST(req(null, { body: { agentId: 'SA16-ACC', password: PASSWORD } }));
+  const sessionToken = (await loginRes.json() as { token?: string }).token;
   const d = await discoverApi.POST(
-    req(null, {
+    req(sessionToken, {
       method: 'POST',
-      body: { deviceKey: 'sa16-device-key-abcdef123456', hostname: 'SA16-PC', os: 'Windows 11', agentVersion: '1.2.0', enrollmentCode: ENROLL_CODE },
+      body: { deviceKey: 'sa16-device-key-abcdef123456', hostname: 'SA16-PC', os: 'Windows 11', agentVersion: '1.2.0' },
       ip: '203.0.113.16',
     })
   );
@@ -386,10 +398,13 @@ test('SA-16: approval creates NO consent — device approval is not consent', as
 
 test('SA-17: consent fail-closed remains intact — no consent means 403 upload', async () => {
   const emp = await seedEmployee(org.id, 'SA17-EMP');
+  const empAccount = await createTestEmployeeAndAccount('SA17-ACC');
+  const loginRes = await loginApi.POST(req(null, { body: { agentId: 'SA17-ACC', password: PASSWORD } }));
+  const sessionToken = (await loginRes.json() as { token?: string }).token;
   const d = await discoverApi.POST(
-    req(null, {
+    req(sessionToken, {
       method: 'POST',
-      body: { deviceKey: 'sa17-device-key-abcdef123456', hostname: 'SA17-PC', os: 'Windows 11', agentVersion: '1.2.0', enrollmentCode: ENROLL_CODE },
+      body: { deviceKey: 'sa17-device-key-abcdef123456', hostname: 'SA17-PC', os: 'Windows 11', agentVersion: '1.2.0' },
       ip: '203.0.113.17',
     })
   );

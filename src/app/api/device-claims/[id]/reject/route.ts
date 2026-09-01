@@ -6,7 +6,7 @@ import { checkRateLimit, RATE_LIMITS, getClientIpFromHeaders } from '@/lib/rate-
 import { log, requestContext } from '@/lib/logger';
 
 // POST /api/device-claims/[id]/reject
-// Reject a pending zero-touch device claim (admin-only, org-scoped).
+// Reject a pending device claim (admin-only, org-scoped).
 // Rejected devices stay recorded for audit/history but can never
 // authenticate, collect data, or receive an AgentToken.
 export async function POST(
@@ -64,7 +64,7 @@ export async function POST(
         data: {
           action: 'update',
           resource: 'device',
-          description: `Zero-touch device "${claim.device.hostname || claim.device.name}" rejected${reason ? ` (${String(reason).slice(0, 200)})` : ''}`,
+          description: `Device "${claim.device.hostname || claim.device.name}" rejected${reason ? ` (${String(reason).slice(0, 200)})` : ''}`,
           resourceId: claim.deviceId,
           userId: admin.userId,
           ipAddress: clientIp,

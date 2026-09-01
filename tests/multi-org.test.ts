@@ -6,12 +6,11 @@
  *   MO-2  Cross-tenant isolation (Org A cannot access Org B)
  *   MO-3  Organization switching (JWT + active org)
  *   MO-4  AgentToken cross-org verification
- *   MO-5  Enrollment code per-organization
+ *   MO-5  Organization settings isolation
  *   MO-6  Super Admin org management
  *   MO-7  Organization lifecycle (suspend/archive)
  *   MO-8  Membership role enforcement
- *   MO-9  Concurrent enrollment code rotation
- *   MO-10 Agent organization suspension check
+ *   MO-9  Agent organization suspension check
  */
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
@@ -270,46 +269,40 @@ test('MO-4: AgentToken with organizationId — cross-org detection', async () =>
   });
 });
 
-// ─── MO-5: Enrollment code per-organization ──────────────────────────────────
+// ─── MO-5: Organization settings isolation ──────────────────────────────────
 
-test('MO-5: Enrollment codes are organization-scoped', async () => {
-  const { hashEnrollmentCode, generateEnrollmentCode, ENROLLMENT_CODE_SETTING_KEY } = await import('../src/lib/agent/auth');
-
-  // Set enrollment code for Org A
-  const codeA = generateEnrollmentCode();
-  const hashA = hashEnrollmentCode(codeA);
+test('MO-5: Organization settings are isolated between orgs', async () => {
+  // Set a setting for Org A
   await db.organizationSetting.upsert({
-    where: { organizationId_key: { organizationId: orgA.id, key: ENROLLMENT_CODE_SETTING_KEY } },
-    update: { value: hashA, category: 'agent' },
-    create: { organizationId: orgA.id, key: ENROLLMENT_CODE_SETTING_KEY, value: hashA, category: 'agent' },
+    where: { organizationId_key: { organizationId: orgA.id, key: 'test_setting_a' } },
+    update: { value: 'value-a', category: 'general' },
+    create: { organizationId: orgA.id, key: 'test_setting_a', value: 'value-a', category: 'general' },
   });
 
-  // Set different enrollment code for Org B
-  const codeB = generateEnrollmentCode();
-  const hashB = hashEnrollmentCode(codeB);
+  // Set a different setting for Org B
   await db.organizationSetting.upsert({
-    where: { organizationId_key: { organizationId: orgB.id, key: ENROLLMENT_CODE_SETTING_KEY } },
-    update: { value: hashB, category: 'agent' },
-    create: { organizationId: orgB.id, key: ENROLLMENT_CODE_SETTING_KEY, value: hashB, category: 'agent' },
+    where: { organizationId_key: { organizationId: orgB.id, key: 'test_setting_b' } },
+    update: { value: 'value-b', category: 'general' },
+    create: { organizationId: orgB.id, key: 'test_setting_b', value: 'value-b', category: 'general' },
   });
 
-  // Code A must only match Org A
+  // Setting A must only match Org A
   const matchA = await db.organizationSetting.findFirst({
-    where: { key: ENROLLMENT_CODE_SETTING_KEY, value: hashA },
+    where: { key: 'test_setting_a', value: 'value-a' },
   });
-  assert.equal(matchA.organizationId, orgA.id, 'Code A must resolve to Org A only');
+  assert.equal(matchA.organizationId, orgA.id, 'Setting A must resolve to Org A only');
 
-  // Code B must only match Org B
+  // Setting B must only match Org B
   const matchB = await db.organizationSetting.findFirst({
-    where: { key: ENROLLMENT_CODE_SETTING_KEY, value: hashB },
+    where: { key: 'test_setting_b', value: 'value-b' },
   });
-  assert.equal(matchB.organizationId, orgB.id, 'Code B must resolve to Org B only');
+  assert.equal(matchB.organizationId, orgB.id, 'Setting B must resolve to Org B only');
 
-  // Code A must NOT match Org B
+  // Setting A must NOT match Org B
   const wrongMatch = await db.organizationSetting.findFirst({
-    where: { organizationId: orgB.id, key: ENROLLMENT_CODE_SETTING_KEY, value: hashA },
+    where: { organizationId: orgB.id, key: 'test_setting_a', value: 'value-a' },
   });
-  assert.equal(wrongMatch, null, 'Code A must NOT match Org B');
+  assert.equal(wrongMatch, null, 'Setting A must NOT match Org B');
 });
 
 // ─── MO-6: Super Admin org management ────────────────────────────────────────
@@ -399,40 +392,9 @@ test('MO-8: Membership roles are correctly stored and differentiated', async () 
   assert.ok(roles.includes('viewer'), 'Should have viewer role');
 });
 
-// ─── MO-9: Enrollment code rotation ──────────────────────────────────────────
+// ─── MO-9: Agent organization suspension blocks token ───────────────────────
 
-test('MO-9: Enrollment code rotation replaces old hash', async () => {
-  const { hashEnrollmentCode, generateEnrollmentCode, ENROLLMENT_CODE_SETTING_KEY } = await import('../src/lib/agent/auth');
-
-  // Generate first code
-  const code1 = generateEnrollmentCode();
-  const hash1 = hashEnrollmentCode(code1);
-  await db.organizationSetting.upsert({
-    where: { organizationId_key: { organizationId: orgA.id, key: ENROLLMENT_CODE_SETTING_KEY } },
-    update: { value: hash1 },
-    create: { organizationId: orgA.id, key: ENROLLMENT_CODE_SETTING_KEY, value: hash1, category: 'agent' },
-  });
-
-  // Generate second code (rotation)
-  const code2 = generateEnrollmentCode();
-  const hash2 = hashEnrollmentCode(code2);
-  await db.organizationSetting.upsert({
-    where: { organizationId_key: { organizationId: orgA.id, key: ENROLLMENT_CODE_SETTING_KEY } },
-    update: { value: hash2 },
-    create: { organizationId: orgA.id, key: ENROLLMENT_CODE_SETTING_KEY, value: hash2, category: 'agent' },
-  });
-
-  // Only the new code should match
-  const setting = await db.organizationSetting.findUnique({
-    where: { organizationId_key: { organizationId: orgA.id, key: ENROLLMENT_CODE_SETTING_KEY } },
-  });
-  assert.equal(setting.value, hash2, 'Setting should contain the new hash');
-  assert.notEqual(setting.value, hash1, 'Old hash should be replaced');
-});
-
-// ─── MO-10: Agent organization suspension blocks token ───────────────────────
-
-test('MO-10: Suspended organization blocks agent token validation', async () => {
+test('MO-9: Suspended organization blocks agent token validation', async () => {
   // Suspend org A
   await db.organization.update({
     where: { id: orgA.id },

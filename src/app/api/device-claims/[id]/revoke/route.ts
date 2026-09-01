@@ -67,7 +67,7 @@ export async function POST(
         data: {
           action: 'update',
           resource: 'device',
-          description: `Zero-touch device "${claim.device.hostname || claim.device.name}" revoked${reason ? ` (${String(reason).slice(0, 200)})` : ''}`,
+          description: `Device "${claim.device.hostname || claim.device.name}" revoked${reason ? ` (${String(reason).slice(0, 200)})` : ''}`,
           resourceId: claim.deviceId,
           userId: admin.userId,
           ipAddress: clientIp,

@@ -463,7 +463,7 @@ test('REG-25: device-claims responses never serialize agentPassword', async () =
   });
   const admin = await tokenFor(orgA.id, 'admin', 'u-regs-admin');
 
-  // Zero-touch claims list (device + employee includes).
+  // Claims list (device + employee includes).
   const claimsList = await import('../src/app/api/device-claims/route').then((m) =>
     m.GET(req(admin, { url: 'http://localhost:3000/api/device-claims?pageSize=50' }))
   );
@@ -474,7 +474,7 @@ test('REG-25: device-claims responses never serialize agentPassword', async () =
   );
 });
 
-test('REG-26: proxy RBAC — device-claims + guests lists are admin-gated', async () => {
+test('REG-26: proxy RBAC — device-claims list is admin-gated', async () => {
   const proxy = await import('../src/proxy');
   const mkReq = async (role: string, path: string) =>
     new NextRequest(`http://localhost:3000${path}`, {
@@ -483,17 +483,13 @@ test('REG-26: proxy RBAC — device-claims + guests lists are admin-gated', asyn
       },
     });
 
-  // Viewer: claims + guests lists denied (403).
-  for (const path of ['/api/device-claims', '/api/guests']) {
-    const res = await proxy.proxy(await mkReq('viewer', path));
-    assert.equal(res.status, 403, `viewer must be denied ${path}`);
-  }
+  // Viewer: claims list denied (403).
+  const viewerRes = await proxy.proxy(await mkReq('viewer', '/api/device-claims'));
+  assert.equal(viewerRes.status, 403, 'viewer must be denied device-claims');
 
   // Admin: allowed through (NextResponse.next() → 200 pass-through).
-  for (const path of ['/api/device-claims', '/api/guests']) {
-    const res = await proxy.proxy(await mkReq('admin', path));
-    assert.equal(res.status, 200, `admin must pass ${path}`);
-  }
+  const adminRes = await proxy.proxy(await mkReq('admin', '/api/device-claims'));
+  assert.equal(adminRes.status, 200, 'admin must pass device-claims');
 
   // Device-owned cancel stays proxy-public (claim-secret auth inside route)
   // even for a non-session request — gating must not break the agent flow.

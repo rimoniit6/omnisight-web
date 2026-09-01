@@ -125,8 +125,8 @@ console.log(`    consents=${consents} consentLogs=${consentLogs} policies=${cons
 console.log(`    activities=${activities} screenshots=${screenshots} audit=${audit}`);
 console.log(`    projects=${projects} members=${members}`);
 
-// ── 6. VERIFY: zero-touch discovery would see the restored claim data ───────
-console.log('[6] ZERO-TOUCH surface check on restored db');
+// ── 6. VERIFY: device claim data is intact after restore ────────────────────
+console.log('[6] Device claim surface check on restored db');
 const z = new DatabaseSync(testDb, { readOnly: true });
 const pending = z.prepare("SELECT COUNT(*) AS c FROM DeviceClaim WHERE status='pending'").get().c;
 const approved = z.prepare("SELECT COUNT(*) AS c FROM DeviceClaim WHERE status='approved'").get().c;

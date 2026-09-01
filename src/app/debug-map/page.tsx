@@ -8,7 +8,7 @@ import { LocationPanel } from '@/components/employees/telemetry/location-panel';
 export default function DebugMapPage() {
   return (
     <div style={{ padding: 24, maxWidth: 1100, margin: '0 auto' }}>
-      <h1 style={{ fontSize: 18, marginBottom: 12 }}>Debug Map — Guest Rimon</h1>
+      <h1 style={{ fontSize: 18, marginBottom: 12 }}>Debug Map</h1>
       <LocationPanel employeeId="cmtckt5u7006ffi68jpl5kr5s" />
     </div>
   );

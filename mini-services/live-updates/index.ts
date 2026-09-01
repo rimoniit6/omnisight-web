@@ -265,9 +265,6 @@ const deviceStatus = new Map<string, string>();
 // rationale as deviceStatus): the first poll after a restart emits each
 // existing claim once, matching the device-status behavior.
 const claimStatus = new Map<string, string>();
-// Last known guest status per guest — only real status transitions (created /
-// suspended / reactivated / revoked / converted) are emitted.
-const guestStatus = new Map<string, string>();
 // Per-employee live presence (derived from heartbeat freshness, NOT Device.status).
 const employeePresence: PresenceMap = new Map();
 // Department id → name lookup for activity events.
@@ -322,7 +319,7 @@ async function pollOnce(): Promise<void> {
   const now = new Date();
 
   try {
-    const [changedDevices, newActivities, newNotifications, newScreenshots, newUsbEvents, breakActivities, newAutoTimeEntries, newClaims, newAnomalies, changedAppPolicy, newPolicyViolations, newAlerts,        newGuests, newLocations] =
+    const [changedDevices, newActivities, newNotifications, newScreenshots, newUsbEvents, breakActivities, newAutoTimeEntries, newClaims, newAnomalies, changedAppPolicy, newPolicyViolations, newAlerts, newLocations] =
       await Promise.all([
         db.device.findMany({
           where: { updatedAt: { gt: since } },
@@ -402,7 +399,7 @@ async function pollOnce(): Promise<void> {
           orderBy: { updatedAt: 'desc' },
           take: 10,
         }),
-        // Zero-touch device claims — the admin approval queue. Polled on
+        // Device claims — the admin approval queue. Polled on
         // `updatedAt` so claim creation AND lifecycle transitions (approved /
         // rejected / revoked / cancelled / expired, plus re-registration back
         // to pending) reach the org's admins in real time. Emission is
@@ -475,21 +472,6 @@ async function pollOnce(): Promise<void> {
           orderBy: { createdAt: 'desc' },
           take: 10,
         }),
-        // Guest enrollments — creation AND lifecycle transitions (created /
-        // suspended / reactivated / revoked). Polled on `updatedAt` so the
-        // Guests page + sidebar badge refresh in real time; emission is
-        // transition-only via guestStatus (a converted guest is deleted, so
-        // its disappearance is covered by the client-side mutation
-        // invalidation).
-        db.guest.findMany({
-          where: { updatedAt: { gt: since } },
-          include: {
-            device: { select: { id: true, name: true, hostname: true, organizationId: true } },
-            employee: { select: { id: true, employeeId: true, firstName: true, lastName: true } },
-          },
-          orderBy: { updatedAt: 'desc' },
-          take: 5,
-        }),
         // Location events — new GPS fixes from agents. Polled on createdAt
         // (each row is immutable). Emission is org-scoped so only the
         // affected organization's admin receives the update. The client uses
@@ -530,7 +512,6 @@ async function pollOnce(): Promise<void> {
       ...newAnomalies.map((a) => ({ ts: a.createdAt })),
       ...changedAppPolicy.map((p) => ({ ts: p.updatedAt })),
       ...newPolicyViolations.map((v) => ({ ts: v.createdAt })),
-      ...newGuests.map((g) => ({ ts: g.updatedAt })),
       ...newLocations.map((l) => ({ ts: l.createdAt })),
     ]);
 
@@ -652,7 +633,7 @@ async function pollOnce(): Promise<void> {
       });
     }
 
-    // Zero-touch device claims (creation AND lifecycle transitions — the
+    // Device claims (creation AND lifecycle transitions — the
     // claimStatus map keeps re-fetched rows silent; status is included so the
     // client can render approved/rejected/cancelled/expired accurately).
     for (const c of newClaims) {
@@ -743,26 +724,6 @@ async function pollOnce(): Promise<void> {
       });
     }
 
-    // Guest enrollments (creation AND lifecycle transitions — the guestStatus
-    // map keeps re-fetched rows silent; status is included so the client can
-    // render pending/active/suspended/revoked accurately).
-    for (const g of newGuests) {
-      const prev = guestStatus.get(g.id);
-      if (prev === g.status) continue;
-      guestStatus.set(g.id, g.status);
-      const dev = g.device;
-      if (!dev) continue;
-      io.to(`org:${dev.organizationId}`).emit('guest', {
-        id: g.id,
-        deviceId: dev.id,
-        deviceName: dev.name,
-        hostname: dev.hostname,
-        employeeId: g.employee?.employeeId ?? null,
-        status: g.status,
-        timestamp: g.updatedAt.toISOString(),
-      });
-    }
-
     // Location events — notify the admin's org that a new location fix
     // arrived. The event carries NO coordinates (privacy); the client
     // refetches the employee's location API to get the actual data.
@@ -794,7 +755,6 @@ const REQUIRED_POLL_MODELS: (keyof PrismaClient)[] = [
   'alert',
   'screenshot',
   'usbEvent',
-  'guest',
   'timeEntry',
   'anomaly',
   'employee',

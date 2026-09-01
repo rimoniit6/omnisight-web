@@ -12,7 +12,7 @@ import { checkRateLimit, RATE_LIMITS, getClientIpFromHeaders } from '@/lib/rate-
 import { log, requestContext } from '@/lib/logger';
 
 // POST /api/agent/authenticate
-// Zero-touch device credential authentication (deviceId + deviceSecret).
+// Device credential authentication (deviceId + deviceSecret).
 // Issues a 24h AgentToken. The token is only ever returned to the agent;
 // it never reaches the admin renderer.
 //
@@ -53,7 +53,7 @@ export async function POST(req: NextRequest) {
   }
 }
 
-/** PATH A — zero-touch device credential authentication. */
+/** PATH A — device credential authentication. */
 async function authenticateDevice(args: {
   req: NextRequest;
   clientIp: string;
@@ -115,23 +115,9 @@ async function authenticateDevice(args: {
   if (!employee.agentApproved) {
     return NextResponse.json({ error: 'Employee not approved by admin' }, { status: 403 });
   }
-  // Guest fail-closed: a guest-owned device may only authenticate while its
-  // Guest enrollment is ACTIVE. Suspended/revoked guests are rejected even if
-  // the employee row were somehow left active (defense in depth — suspend and
-  // revoke also set employee.status = 'inactive').
-  if (employee.type === 'guest') {
-    const guest = await db.guest.findFirst({
-      where: { deviceId, employeeId: employee.id },
-      select: { status: true },
-    });
-    if (!guest || guest.status !== 'ACTIVE') {
-      return NextResponse.json({ error: 'Guest access is not active' }, { status: 403 });
-    }
-  }
-
   // Pre-check AgentAccount + Organization + Device status (fast fail; the
   // locked transaction re-checks all three to close disable/revoke races).
-  // CRITICAL-01: an ABSENT AgentAccount is NOT a failure for zero-touch PATH
+  // CRITICAL-01: an ABSENT AgentAccount is NOT a failure for device-claim PATH
   // A (approved devices never create one). Only a present-but-disabled
   // account fails closed — matching validateAgentToken()/validateAgentSession().
   const account = await db.agentAccount.findUnique({
@@ -200,7 +186,7 @@ async function authenticateDevice(args: {
       data: {
         action: 'login',
         resource: 'device',
-        description: `Agent authenticated (zero-touch): ${employee.firstName} ${employee.lastName} on device "${device.hostname || device.name}"`,
+        description: `Agent authenticated (device credential): ${employee.firstName} ${employee.lastName} on device "${device.hostname || device.name}"`,
         resourceId: device.id,
         userId: employee.id,
         ipAddress: clientIp,

@@ -345,7 +345,7 @@ test('OB-13: no demo business data was ever created', async () => {
   const users = await db.appUser.findMany({ select: { email: true, role: true } });
   assert.ok(users.some((u) => u.email === 'bootstrap@corp.local' && u.role === 'super_admin'));
   assert.ok(!users.some((u) => ['admin@techvision.com', 'manager@techvision.com', 'viewer@techvision.com'].includes(u.email)), 'no demo users');
-  // Zero-touch: no device/claim until a real agent EXE calls discover.
+  // No device/claim until a real agent EXE calls discover.
   assert.equal(await db.deviceClaim.count(), 0);
   assert.equal(await db.consent.count(), 0);
   assert.equal(await db.consentPolicy.count(), 0);

@@ -10,11 +10,12 @@ import { test, expect, navigate, apiAs } from './fixtures';
 // ─── Expected sidebar visibility per role (mirrors src/lib/navigation.ts) ──
 const MONITORING = [
   'Dashboard', 'Employees', 'Departments', 'Devices', 'Activities', 'Screenshots',
-  'Break Monitor', 'Live Monitor', 'Analytics', 'AI Insights', 'Sentiment',
-  'Notifications', 'Alerts', 'Policies', 'Anomaly Detection', 'Projects',
+  'Break Monitor', 'Live Monitor', 'Analytics',
+  'AI Insights', 'Sentiment', 'Notifications', 'Alerts', 'Policies', 'Anomaly Detection',
+  'Projects',
 ];
 const MANAGER_ONLY = ['Audit Logs', 'Consent', 'Reports', 'Daily Report', 'Employee Portal'];
-const ADMIN_ONLY = ['AI Provider', 'Agent Approvals', 'Guests', 'Organization', 'Agent Security', 'Settings'];
+const ADMIN_ONLY = ['Audio Transcriptions', 'AI Provider', 'Agent Approvals', 'Organization', 'Users & Members', 'Agent Security', 'Settings'];
 const ALL = [...MONITORING, ...MANAGER_ONLY, ...ADMIN_ONLY];
 
 async function expectNav(page: import('@playwright/test').Page, allowed: string[], forbidden: string[]) {
@@ -101,10 +102,8 @@ test.describe('Authorization — direct API access matrix', () => {
 
   test('admin-only endpoints reject manager sessions', async ({ playwright }) => {
     const mgr = await apiAs(playwright, 'manager');
-    for (const path of ['/api/organization', '/api/guests']) {
-      const res = await mgr.get(path);
-      expect(res.status(), `GET ${path} as manager`).toBe(403);
-    }
+    const res = await mgr.get('/api/organization');
+    expect(res.status(), 'GET /api/organization as manager').toBe(403);
     await mgr.dispose();
   });
 

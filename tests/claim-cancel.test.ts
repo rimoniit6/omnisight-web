@@ -60,32 +60,34 @@ let claimRejectApi: ClaimRejectApi;
 let claimCancelApi: ClaimCancelApi;
 
 let org: { id: string };
-const ENROLL_CODE = 'test-enroll-code-cancel-0123456789';
+let authLoginApi: typeof import('../src/app/api/agent/login/route');
+let hashPassword: (password: string) => Promise<string>;
+let createAgentAccount: (typeof import('../src/lib/agent-account'))['createAgentAccount'];
+const PASSWORD = 'TestPass-123!';
 
 before(async () => {
   const dbModule = await import('../src/lib/db');
   db = dbModule.db;
   signJWT = (await import('../src/lib/auth')).signJWT;
+  hashPassword = (await import('../src/lib/auth')).hashPassword;
+  createAgentAccount = (await import('../src/lib/agent-account')).createAgentAccount;
 
-  const [dApi, cApi, caApi, crApi, ccApi] = await Promise.all([
+  const [dApi, cApi, caApi, crApi, ccApi, loginApi] = await Promise.all([
     import('../src/app/api/agent/discover/route'),
     import('../src/app/api/device-claims/route'),
     import('../src/app/api/device-claims/[id]/approve/route'),
     import('../src/app/api/device-claims/[id]/reject/route'),
     import('../src/app/api/device-claims/[id]/cancel/route'),
+    import('../src/app/api/agent/login/route'),
   ]);
   discoverApi = dApi;
   claimsApi = cApi;
   claimApproveApi = caApi;
   claimRejectApi = crApi;
   claimCancelApi = ccApi;
+  authLoginApi = loginApi;
 
   org = await db.organization.create({ data: { name: 'Cancel Org', slug: 'cancel-org' } });
-  // P2-3: anonymous zero-touch discover requires an EXPLICIT enrollment code.
-  const { hashEnrollmentCode } = await import('../src/lib/agent/auth');
-  await db.organizationSetting.create({
-    data: { organizationId: org.id, key: 'agent_enrollment_code', value: hashEnrollmentCode(ENROLL_CODE), category: 'agent' },
-  });
 });
 
 after(async () => {
@@ -135,13 +137,25 @@ async function seedEmployee(code: string) {
 }
 
 function discoverBody(deviceKey: string, hostname = 'PC-CANCEL') {
-  return { deviceKey, hostname, os: 'Windows 11', agentVersion: '1.2.0', reRegister: true, enrollmentCode: ENROLL_CODE };
+  return { deviceKey, hostname, os: 'Windows 11', agentVersion: '1.2.0', reRegister: true };
+}
+
+/** Setup an employee with AgentAccount and login to get a session token. */
+async function setupAuth(employeeId: string) {
+  const emp = await db.employee.create({
+    data: { employeeId, firstName: 'Cancel', lastName: 'Test', email: `${employeeId.toLowerCase()}@test.local`, organizationId: org.id, status: 'active', agentApproved: false },
+  });
+  const pwHash = await hashPassword(PASSWORD);
+  await createAgentAccount({ employeeId: emp.id, agentId: employeeId, password: PASSWORD, status: 'active' });
+  const loginRes = await authLoginApi.POST(req(null, { body: { agentId: employeeId, password: PASSWORD } }));
+  const sessionToken = (await loginRes.json() as { token?: string }).token ?? null;
+  return { emp, sessionToken };
 }
 
 /** Fresh discovery → pending claim + one-time secret. */
-async function discover(deviceKey: string, ip: string, reRegister = true) {
+async function discover(deviceKey: string, ip: string, sessionToken?: string | null, reRegister = true) {
   const res = await discoverApi.POST(
-    req(null, { method: 'POST', body: { ...discoverBody(deviceKey), reRegister }, ip })
+    req(sessionToken ?? null, { method: 'POST', body: { ...discoverBody(deviceKey), reRegister }, ip })
   );
   return { status: res.status, body: await res.json().catch(() => ({})) as Record<string, unknown> };
 }
@@ -165,7 +179,8 @@ async function approve(adminToken: string, claimId: string, employeeId: string) 
 // ─── C-1: discovery → pending (the core path that must always work) ────────
 
 test('CC-1: fresh discover creates a PENDING claim with the right identity', async () => {
-  const { status, body } = await discover('key-cc-0001-device-identity-abcdef', '203.0.113.1');
+  const { sessionToken } = await setupAuth('CC1-EMP');
+  const { status, body } = await discover('key-cc-0001-device-identity-abcdef', '203.0.113.1', sessionToken);
   assert.equal(status, 201);
   assert.equal(body.status, 'pending');
   assert.ok(body.claimId);
@@ -191,8 +206,9 @@ test('CC-1: fresh discover creates a PENDING claim with the right identity', asy
 // ─── C-2: employee cancel semantics ─────────────────────────────────────────
 
 test('CC-2: device cancels its OWN pending claim → CANCELLED with audit fields', async () => {
+  const { sessionToken } = await setupAuth('CC2-EMP');
   const key = 'key-cc-0002-self-cancel-abcdef';
-  const { body } = await discover(key, '203.0.113.2');
+  const { body } = await discover(key, '203.0.113.2', sessionToken);
   assert.equal(body.status, 'pending');
 
   const before = await db.auditLog.count({ where: { organizationId: org.id, resource: 'device' } });
@@ -211,8 +227,9 @@ test('CC-2: device cancels its OWN pending claim → CANCELLED with audit fields
 });
 
 test('CC-3: cancellation is idempotent — a second cancel returns success without re-mutating', async () => {
+  const { sessionToken } = await setupAuth('CC3-EMP');
   const key = 'key-cc-0003-idempotent-abcdef';
-  const { body } = await discover(key, '203.0.113.3');
+  const { body } = await discover(key, '203.0.113.3', sessionToken);
   const first = await cancel(body.claimId as string, key, body.secret as string);
   assert.equal(first.status, 200);
   const second = await cancel(body.claimId as string, key, body.secret as string);
@@ -224,10 +241,11 @@ test('CC-3: cancellation is idempotent — a second cancel returns success witho
 });
 
 test('CC-4: wrong secret cannot cancel (401) — another device cannot cancel (404)', async () => {
+  const { sessionToken } = await setupAuth('CC4-EMP');
   const keyA = 'key-cc-0004a-wrong-secret-abcdef';
   const keyB = 'key-cc-0004b-other-device-abcdef';
-  const { body } = await discover(keyA, '203.0.113.4');
-  await discover(keyB, '203.0.113.4');
+  const { body } = await discover(keyA, '203.0.113.4', sessionToken);
+  await discover(keyB, '203.0.113.4', sessionToken);
 
   const wrongSecret = await cancel(body.claimId as string, keyA, 'wrong-secret-value');
   assert.equal(wrongSecret.status, 401, 'wrong claim secret must be rejected');
@@ -240,9 +258,10 @@ test('CC-4: wrong secret cannot cancel (401) — another device cannot cancel (4
 });
 
 test('CC-5: APPROVED claim cannot be cancelled (409) — employee cannot cancel an active device', async () => {
+  const { sessionToken } = await setupAuth('CC5-EMP');
   const key = 'key-cc-0005-approved-cancel-abcdef';
   const emp = await seedEmployee('CC5-EMP');
-  const { body } = await discover(key, '203.0.113.5');
+  const { body } = await discover(key, '203.0.113.5', sessionToken);
   const admin = await tokenFor('admin', 'u-cc5-admin');
   const ar = await approve(admin, body.claimId as string, emp.id);
   assert.equal(ar.status, 200);
@@ -256,9 +275,10 @@ test('CC-5: APPROVED claim cannot be cancelled (409) — employee cannot cancel 
 });
 
 test('CC-6: cancelled claim cannot be approved or rejected (guarded transitions)', async () => {
+  const { sessionToken } = await setupAuth('CC6-EMP');
   const key = 'key-cc-0006-cancelled-approve-abcdef';
   const emp = await seedEmployee('CC6-EMP');
-  const { body } = await discover(key, '203.0.113.6');
+  const { body } = await discover(key, '203.0.113.6', sessionToken);
   await cancel(body.claimId as string, key, body.secret as string);
 
   const admin = await tokenFor('admin', 'u-cc6-admin');
@@ -276,13 +296,14 @@ test('CC-6: cancelled claim cannot be approved or rejected (guarded transitions)
 // ─── C-3: fresh re-request after cancel (the automatic re-discovery flow) ───
 
 test('CC-7: after cancel, a fresh discover creates a NEW pending claim (new id + new secret)', async () => {
+  const { sessionToken } = await setupAuth('CC7-EMP');
   const key = 'key-cc-0007-fresh-request-abcdef';
-  const first = await discover(key, '203.0.113.7');
+  const first = await discover(key, '203.0.113.7', sessionToken);
   assert.equal(first.status, 201);
   await cancel(first.body.claimId as string, key, first.body.secret as string);
 
   // Agent auto re-discovers (reRegister intent) — same device, NEW claim.
-  const second = await discover(key, '203.0.113.7');
+  const second = await discover(key, '203.0.113.7', sessionToken);
   assert.equal(second.status, 201, 'fresh claim must be issued after cancel');
   assert.notEqual(second.body.claimId, first.body.claimId, 'new claim id — never reused');
   assert.equal(second.body.deviceId, first.body.deviceId, 'same physical device');
@@ -302,14 +323,15 @@ test('CC-7: after cancel, a fresh discover creates a NEW pending claim (new id +
 });
 
 test('CC-8: rapid re-discover does not create duplicate pending claims', async () => {
+  const { sessionToken } = await setupAuth('CC8-EMP');
   const key = 'key-cc-0008-rapid-retry-abcdef';
-  const first = await discover(key, '203.0.113.8');
+  const first = await discover(key, '203.0.113.8', sessionToken);
   await cancel(first.body.claimId as string, key, first.body.secret as string);
 
   const results = await Promise.all([
-    discover(key, '203.0.113.8'),
-    discover(key, '203.0.113.8'),
-    discover(key, '203.0.113.8'),
+    discover(key, '203.0.113.8', sessionToken),
+    discover(key, '203.0.113.8', sessionToken),
+    discover(key, '203.0.113.8', sessionToken),
   ]);
   // The serialized per-device transaction guarantees a single pending claim.
   const pendingClaims = await db.deviceClaim.findMany({
@@ -322,8 +344,9 @@ test('CC-8: rapid re-discover does not create duplicate pending claims', async (
 // ─── C-4: expired / rejected lifecycle re-registration ──────────────────────
 
 test('CC-9: EXPIRED pending claim → fresh discover issues a new claim (the P2002 regression)', async () => {
+  const { sessionToken } = await setupAuth('CC9-EMP');
   const key = 'key-cc-0009-expired-rereg-abcdef';
-  const first = await discover(key, '203.0.113.9');
+  const first = await discover(key, '203.0.113.9', sessionToken);
   assert.equal(first.status, 201);
 
   // Simulate the 30-day expiry: force the claim into the past.
@@ -332,7 +355,7 @@ test('CC-9: EXPIRED pending claim → fresh discover issues a new claim (the P20
     data: { expiresAt: new Date(Date.now() - 60_000) },
   });
 
-  const second = await discover(key, '203.0.113.9');
+  const second = await discover(key, '203.0.113.9', sessionToken);
   // MUST NOT be a 500 (the old P2002 unique violation) — a fresh claim is issued.
   assert.notEqual(second.status, 500, 'expired re-registration must not 500');
   assert.equal(second.status, 201);
@@ -346,8 +369,9 @@ test('CC-9: EXPIRED pending claim → fresh discover issues a new claim (the P20
 });
 
 test('CC-10: REJECTED claim is surfaced during polling, and re-registers only with explicit intent', async () => {
+  const { sessionToken } = await setupAuth('CC10-EMP');
   const key = 'key-cc-0010-rejected-rereg-abcdef';
-  const first = await discover(key, '203.0.113.10');
+  const first = await discover(key, '203.0.113.10', sessionToken);
   const admin = await tokenFor('admin', 'u-cc10-admin');
   const rr = await claimRejectApi.POST(
     req(admin, { method: 'POST', body: { reason: 'Not an employee device' }, ip: '198.51.100.10' }),
@@ -356,21 +380,22 @@ test('CC-10: REJECTED claim is surfaced during polling, and re-registers only wi
   assert.equal(rr.status, 200);
 
   // Polling (NO reRegister) must surface the rejection — never silently undo it.
-  const poll = await discover(key, '203.0.113.10', false);
+  const poll = await discover(key, '203.0.113.10', sessionToken, false);
   assert.equal(poll.body.status, 'rejected', 'polling surfaces rejection');
   assert.equal(poll.body.claimId, first.body.claimId);
 
   // Explicit re-registration intent → fresh pending claim.
-  const second = await discover(key, '203.0.113.10', true);
+  const second = await discover(key, '203.0.113.10', sessionToken, true);
   assert.equal(second.status, 201);
   assert.notEqual(second.body.claimId, first.body.claimId);
   assert.equal(second.body.status, 'pending');
 });
 
 test('CC-11: REVOKED device never auto re-registers — fail closed even with reRegister intent', async () => {
+  const { sessionToken } = await setupAuth('CC11-EMP');
   const key = 'key-cc-0011-revoked-rereg-abcdef';
   const emp = await seedEmployee('CC11-EMP');
-  const { body } = await discover(key, '203.0.113.11');
+  const { body } = await discover(key, '203.0.113.11', sessionToken);
   const admin = await tokenFor('admin', 'u-cc11-admin');
   const ar = await approve(admin, body.claimId as string, emp.id);
   assert.equal(ar.status, 200);
@@ -383,7 +408,7 @@ test('CC-11: REVOKED device never auto re-registers — fail closed even with re
   assert.equal(rv.status, 200);
 
   // Even an explicit reRegister attempt must NOT create a fresh claim.
-  const retry = await discover(key, '203.0.113.11', true);
+  const retry = await discover(key, '203.0.113.11', sessionToken, true);
   assert.equal(retry.body.status, 'revoked', 'revoked device fails closed');
   assert.equal(retry.body.claimId, body.claimId);
   const claims = await db.deviceClaim.findMany({ where: { deviceId: body.deviceId as string } });
@@ -393,8 +418,9 @@ test('CC-11: REVOKED device never auto re-registers — fail closed even with re
 // ─── C-5: cancel does not weaken org isolation / RBAC / consent ─────────────
 
 test('CC-12: admin cannot cancel via the employee endpoint; unauthenticated cancel is 401/400', async () => {
+  const { sessionToken } = await setupAuth('CC12-EMP');
   const key = 'key-cc-0012-rbac-abcdef';
-  const { body } = await discover(key, '203.0.113.12');
+  const { body } = await discover(key, '203.0.113.12', sessionToken);
 
   // No deviceKey → 400; no secret → 400.
   const noKey = await claimCancelApi.POST(req(null, { method: 'POST', body: { secret: 'x' }, ip: '203.0.113.12' }), { params: Promise.resolve({ id: body.claimId as string }) });
@@ -410,11 +436,12 @@ test('CC-12: admin cannot cancel via the employee endpoint; unauthenticated canc
 });
 
 test('CC-13: approval still never grants consent — cancel/re-request flow unchanged', async () => {
+  const { sessionToken } = await setupAuth('CC13-EMP');
   const key = 'key-cc-0013-consent-abcdef';
   const emp = await seedEmployee('CC13-EMP');
-  const first = await discover(key, '203.0.113.13');
+  const first = await discover(key, '203.0.113.13', sessionToken);
   await cancel(first.body.claimId as string, key, first.body.secret as string);
-  const second = await discover(key, '203.0.113.13');
+  const second = await discover(key, '203.0.113.13', sessionToken);
   const admin = await tokenFor('admin', 'u-cc13-admin');
   const ar = await approve(admin, second.body.claimId as string, emp.id);
   assert.equal(ar.status, 200);

@@ -7,7 +7,7 @@ import { log, requestContext } from '@/lib/logger';
 
 // POST /api/device-claims/[id]/cancel
 //
-// Employee-initiated cancellation of a PENDING zero-touch registration — the
+// Employee-initiated cancellation of a PENDING device registration — the
 // ONLY employee-side control in the zero-control agent. Semantics:
 //
 //   - Authenticated with the device's own claim secret (the one-time
@@ -115,7 +115,7 @@ export async function POST(
         data: {
           action: 'update',
           resource: 'device',
-          description: `Zero-touch device "${claim.device.hostname || claim.device.name}" registration cancelled by the device (employee_agent)`,
+          description: `Device "${claim.device.hostname || claim.device.name}" registration cancelled by the device (employee_agent)`,
           resourceId: claim.deviceId,
           ipAddress: clientIp,
           organizationId: claim.organizationId,
