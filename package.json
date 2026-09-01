@@ -16,6 +16,7 @@
     "test:consent-summary": "tsx --test tests/consent-summary.test.ts",
     "test:projects": "tsx --test tests/projects.test.ts",
     "test:super-admin": "tsx --test tests/super-admin.test.ts",
+    "test:super-admin-orgs": "tsx --test tests/super-admin-organizations.test.ts",
     "test:agent-account": "tsx --test tests/agent-account.test.ts",
     "test:agent-account-admin": "tsx --test tests/agent-account-admin.test.ts",
     "test:agent-login": "tsx --test tests/agent-auth-login.test.ts",

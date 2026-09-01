@@ -112,7 +112,7 @@ export function SuperAdminOrganizationsPage() {
     },
     placeholderData: (prev) => prev,
   });
-  const organizations = (orgsData?.organizations || []) as Organization[];
+  const organizations = (orgsData?.data || []) as Organization[];
   const pagination = orgsData?.pagination || { page: 1, pageSize: 20, total: 0, pages: 0 };
 
   const handleStatusChange = async () => {
