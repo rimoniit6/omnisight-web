@@ -27,6 +27,8 @@
 
 import { db } from '@/lib/db';
 import { hashPasswordSync } from '@/lib/auth';
+import { promises as fs } from 'fs';
+import { join } from 'path';
 
 // ─── Production Safety ──────────────────────────────────────────────────────
 function assertSeedAllowed(): void {
@@ -65,6 +67,26 @@ function pick<T>(arr: readonly T[]): T {
 function pickN<T>(arr: readonly T[], n: number): T[] {
   const shuffled = [...arr].sort(() => _rng() - 0.5);
   return shuffled.slice(0, Math.min(n, shuffled.length));
+}
+
+/**
+ * Generate a minimal valid 1x1 PNG file (67 bytes). Used by the seed to create
+ * placeholder screenshot files on disk so the Admin Screenshot page can serve
+ * them. The PNG is a valid IHDR+IDAT+IEND chunk sequence.
+ */
+function createMinimalPng(): Buffer {
+  // Pre-computed 1x1 white pixel PNG (67 bytes)
+  return Buffer.from([
+    0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, // PNG signature
+    0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52, // IHDR chunk
+    0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, // 1x1
+    0x08, 0x02, 0x00, 0x00, 0x00, 0x90, 0x77, 0x53, // 8-bit RGB
+    0xde, 0x00, 0x00, 0x00, 0x0c, 0x49, 0x44, 0x41, // IDAT chunk
+    0x54, 0x08, 0xd7, 0x63, 0xf8, 0xcf, 0xc0, 0x00,
+    0x00, 0x00, 0x02, 0x00, 0x01, 0xe2, 0x21, 0xbc,
+    0x33, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4e, // IEND chunk
+    0x44, 0xae, 0x42, 0x60, 0x82,
+  ]);
 }
 function daysAgo(n: number): Date {
   const d = new Date();
@@ -791,7 +813,27 @@ async function seedDemoFull(): Promise<SeedCounts> {
     const result = await db.screenshot.createMany({ data: chunk, skipDuplicates: true });
     counts.screenshots += result.count;
   }
-  console.log(`   ✅ ${counts.screenshots} screenshots\n`);
+
+  // Write placeholder PNG files to disk so the screenshot serving endpoint
+  // can serve them. The LocalStorageDriver resolves
+  // "screenshots/<orgId>/<file>" to "<cwd>/uploads/screenshots/<file>"
+  // (flat layout — orgId segment is dropped).
+  const uploadsDir = join(process.cwd(), 'uploads', 'screenshots');
+  await fs.mkdir(uploadsDir, { recursive: true });
+  const pngBytes = createMinimalPng();
+  let filesWritten = 0;
+  for (const s of screenshotBatch) {
+    const filename = s.filePath.split('/').pop();
+    if (!filename) continue;
+    const dest = join(uploadsDir, filename);
+    try {
+      await fs.access(dest); // skip if already exists
+    } catch {
+      await fs.writeFile(dest, pngBytes);
+      filesWritten++;
+    }
+  }
+  console.log(`   ✅ ${counts.screenshots} screenshots, ${filesWritten} placeholder files written\n`);
 
   // ══════════════════════════════════════════════════════════════════════════
   // 9. CONSENT POLICIES + CONSENTS + CONSENT LOGS
