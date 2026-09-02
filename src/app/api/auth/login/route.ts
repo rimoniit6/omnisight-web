@@ -30,10 +30,12 @@ export async function POST(req: NextRequest) {
     const emailRl = await checkRateLimit(emailRlKey, RATE_LIMITS.login.limit, RATE_LIMITS.login.windowMs);
     if (!emailRl.allowed) {
       log.warn('auth.login.rate_limited', { email: normalizedEmail, reason: 'email_throttle' }, requestContext(req));
-      return NextResponse.json(
-        { error: `Too many login attempts. Try again in ${emailRl.retryAfterSeconds} seconds.` },
+      const res = NextResponse.json(
+        { error: 'Too many login attempts. Please try again later.', retryAfter: emailRl.retryAfterSeconds },
         { status: 429 }
       );
+      res.headers.set('Retry-After', String(emailRl.retryAfterSeconds));
+      return res;
     }
 
     // Layer 2: per IP+email rate limit (defeats distributed attacks)
@@ -41,10 +43,12 @@ export async function POST(req: NextRequest) {
     const rl = await checkRateLimit(rlKey, RATE_LIMITS.login.limit, RATE_LIMITS.login.windowMs);
     if (!rl.allowed) {
       log.warn('auth.login.rate_limited', { email: normalizedEmail, reason: 'ip_throttle' }, requestContext(req));
-      return NextResponse.json(
-        { error: `Too many login attempts. Try again in ${rl.retryAfterSeconds} seconds.` },
+      const res = NextResponse.json(
+        { error: 'Too many login attempts. Please try again later.', retryAfter: rl.retryAfterSeconds },
         { status: 429 }
       );
+      res.headers.set('Retry-After', String(rl.retryAfterSeconds));
+      return res;
     }
 
     // Find user by email. Fast path: exact (lowercased) match uses the

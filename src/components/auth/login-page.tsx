@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import Image from 'next/image';
 import { Eye, EyeOff, Lock, Mail, Loader2, ArrowRight } from 'lucide-react';
 import { useAuthStore } from '@/lib/store';
@@ -14,18 +14,53 @@ export function LoginPage() {
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
+  const [retryAfter, setRetryAfter] = useState(0);
+  const retryTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const login = useAuthStore((s) => s.login);
   const branding = useEffectiveBranding();
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  // Countdown timer for rate-limit retry
+  useEffect(() => {
+    if (retryAfter <= 0) {
+      if (retryTimerRef.current) {
+        clearInterval(retryTimerRef.current);
+        retryTimerRef.current = null;
+      }
+      return;
+    }
+    retryTimerRef.current = setInterval(() => {
+      setRetryAfter((prev) => {
+        if (prev <= 1) {
+          if (retryTimerRef.current) {
+            clearInterval(retryTimerRef.current);
+            retryTimerRef.current = null;
+          }
+          setError('');
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+    return () => {
+      if (retryTimerRef.current) {
+        clearInterval(retryTimerRef.current);
+        retryTimerRef.current = null;
+      }
+    };
+  }, [retryAfter > 0]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const handleSubmit = useCallback(async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
+    setRetryAfter(0);
 
     if (!email.trim() || !password.trim()) {
       setError('Please enter both email and password');
       return;
     }
+
+    if (retryAfter > 0) return;
 
     setIsLoading(true);
 
@@ -39,7 +74,12 @@ export function LoginPage() {
       const data = await res.json();
 
       if (!res.ok) {
-        setError(data.error || 'Login failed');
+        if (res.status === 429 && typeof data.retryAfter === 'number') {
+          setRetryAfter(data.retryAfter);
+          setError(`Too many sign-in attempts. Try again in ${data.retryAfter} seconds.`);
+        } else {
+          setError(data.error || 'Login failed');
+        }
         setIsLoading(false);
         return;
       }
@@ -50,7 +90,7 @@ export function LoginPage() {
       setError('Network error. Please try again.');
       setIsLoading(false);
     }
-  };
+  }, [email, password, retryAfter, login]);
 
   const inputBase =
     'w-full h-11 pl-10 pr-3 rounded-lg border bg-card/80 backdrop-blur text-sm outline-none transition-colors ' +
@@ -164,11 +204,13 @@ export function LoginPage() {
             {/* Submit */}
             <button
               type="submit"
-              disabled={isLoading}
+              disabled={isLoading || retryAfter > 0}
               className="w-full h-11 bg-primary hover:bg-primary/90 text-primary-foreground font-medium text-sm rounded-lg border-0 cursor-pointer flex items-center justify-center gap-2 shadow-sm transition-colors duration-200 disabled:opacity-70 disabled:cursor-not-allowed"
             >
               {isLoading ? (
                 <><Loader2 size={16} className="animate-spin" /> Signing in...</>
+              ) : retryAfter > 0 ? (
+                <><Loader2 size={16} /> Try again in {retryAfter}s</>
               ) : (
                 <>Sign In <ArrowRight size={16} /></>
               )}
