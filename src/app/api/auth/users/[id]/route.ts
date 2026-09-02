@@ -135,6 +135,15 @@ export async function PUT(
       if (role === 'super_admin' && payload.role !== 'super_admin') {
         return NextResponse.json({ error: 'Only Super Admin can assign Super Admin role' }, { status: 403 });
       }
+      // C-3: Self-role-change guard — non-super-admin users must not manipulate
+      // their own role through this endpoint. Super Admin is exempt (may
+      // reassign themselves for platform operations).
+      if (id === payload.userId && payload.role !== 'super_admin') {
+        return NextResponse.json(
+          { error: 'Cannot modify your own role through this endpoint' },
+          { status: 403 }
+        );
+      }
       // C-2: Privilege escalation guard — assigner must have >= target role level.
       const assignerLevel = ROLE_LEVELS[payload.role] ?? 0;
       const targetLevel = ROLE_LEVELS[role] ?? 0;

@@ -47,7 +47,7 @@ export async function PATCH(
     if (body.role !== undefined) {
       const targetRole = typeof body.role === 'string' ? body.role.trim().toLowerCase() : '';
       if (!isOrgRole(targetRole)) {
-        return apiError(`Invalid role. Must be one of: owner, admin, manager, viewer`, 400);
+        return apiError(`Invalid role. Must be one of: org_admin, manager, viewer`, 400);
       }
       // super_admin is a global role and is never a per-org membership;
       // isOrgRole above already excludes it.

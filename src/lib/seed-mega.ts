@@ -274,7 +274,7 @@ export async function seedMega() {
       data: { email: ownerEmail, name: `${FIRST_NAMES[userIndex % FIRST_NAMES.length]} ${LAST_NAMES[0]}`, password: demoHash, role: 'user', isActive: true },
     });
     allUsers.push({ id: owner.id, email: ownerEmail, name: owner.name });
-    allMemberships.push({ userId: owner.id, organizationId: org.id, role: 'owner', status: 'ACTIVE' });
+    allMemberships.push({ userId: owner.id, organizationId: org.id, role: 'org_admin', status: 'ACTIVE' });
     userIndex++;
 
     // Create remaining members

@@ -5,6 +5,7 @@ import { format, startOfMonth, endOfMonth } from 'date-fns';
 import { authError, requireManagerOrg, isValidDate, parseJsonBody, BodyParseError } from '@/lib/api';
 import { NON_INTERNAL_AGENT_ACTIVITY_FILTER, excludeInternalAgentActivities } from '@/lib/agent-process';
 import { log, requestContext } from '@/lib/logger';
+import { getEffectiveBranding } from '@/lib/branding';
 
 export async function POST(request: NextRequest) {
   try {
@@ -134,6 +135,8 @@ export async function POST(request: NextRequest) {
       ? await db.organization.findUnique({ where: { id: scope.organizationId }, select: { name: true } })
       : null;
 
+    const effectiveBranding = await getEffectiveBranding(scope.organizationId);
+
     // Build employee data for PDF generator
     const employeeData = {
       id: employee.id,
@@ -174,6 +177,7 @@ export async function POST(request: NextRequest) {
       {
         dateRange: { start: startDate, end: endDate },
         organization: org?.name || 'OmniSight',
+        branding: { brandName: effectiveBranding.brandName, primaryColor: effectiveBranding.primaryColor, tagline: effectiveBranding.tagline },
       },
     );
 

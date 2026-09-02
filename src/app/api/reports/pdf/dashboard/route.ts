@@ -7,6 +7,7 @@ import { hasRolePermission as hasRole } from '@/lib/auth';
 import { NON_INTERNAL_AGENT_ACTIVITY_FILTER } from '@/lib/agent-process';
 import { effectiveLiveStatus } from '@/lib/presence';
 import { log, requestContext } from '@/lib/logger';
+import { getEffectiveBranding } from '@/lib/branding';
 
 export async function POST(request: NextRequest) {
   try {
@@ -90,6 +91,8 @@ export async function POST(request: NextRequest) {
       // Active projects
       db.project.count({ where: { status: 'active', ...orgFilter } }),
     ]);
+
+    const effectiveBranding = await getEffectiveBranding(scope.organizationId);
 
     const activeDevices = orgDevices.filter(
       (d) => effectiveLiveStatus(d.status, d.lastHeartbeat) === 'online'
@@ -253,6 +256,7 @@ export async function POST(request: NextRequest) {
       {
         dateRange: { start: startDate, end: endDate },
         organization: org?.name || 'OmniSight',
+        branding: { brandName: effectiveBranding.brandName, primaryColor: effectiveBranding.primaryColor, tagline: effectiveBranding.tagline },
       },
     );
 

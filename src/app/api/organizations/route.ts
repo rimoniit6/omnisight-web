@@ -123,14 +123,14 @@ export async function POST(req: NextRequest) {
       });
 
       // P1 (unified creation): the creator's OrganizationMembership is the
-      // authoritative membership record for this org (owner role), so the
+      // authoritative membership record for this org (org_admin role), so the
       // org-switcher and membership management work for them immediately.
       await tx.organizationMembership.upsert({
         where: {
           userId_organizationId: { userId: auth.userId, organizationId: org.id },
         },
-        create: { userId: auth.userId, organizationId: org.id, role: 'owner', status: 'ACTIVE' },
-        update: { role: 'owner', status: 'ACTIVE' },
+        create: { userId: auth.userId, organizationId: org.id, role: 'org_admin', status: 'ACTIVE' },
+        update: { role: 'org_admin', status: 'ACTIVE' },
       });
 
       await tx.auditLog.create({

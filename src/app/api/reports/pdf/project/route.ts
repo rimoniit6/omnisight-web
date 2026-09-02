@@ -5,6 +5,7 @@ import { format } from 'date-fns';
 import { authError, authenticateRequest, requireSessionOrg } from '@/lib/api';
 import { hasRolePermission as hasRole } from '@/lib/auth';
 import { log, requestContext } from '@/lib/logger';
+import { getEffectiveBranding } from '@/lib/branding';
 
 export async function POST(request: NextRequest) {
   try {
@@ -68,6 +69,8 @@ export async function POST(request: NextRequest) {
       ? await db.organization.findUnique({ where: { id: scope.organizationId }, select: { name: true } })
       : null;
 
+    const effectiveBranding = await getEffectiveBranding(scope.organizationId);
+
     // Parse tags
     let tags: string[] = [];
     if (project.tags) {
@@ -109,6 +112,7 @@ export async function POST(request: NextRequest) {
       })),
       {
         organization: org?.name || 'OmniSight',
+        branding: { brandName: effectiveBranding.brandName, primaryColor: effectiveBranding.primaryColor, tagline: effectiveBranding.tagline },
       },
     );
 

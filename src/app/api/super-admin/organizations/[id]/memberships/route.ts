@@ -83,8 +83,8 @@ export async function POST(
   const role = body.role as string | undefined;
 
   if (!userId || typeof userId !== 'string') return apiError('userId is required', 422);
-  if (!role || !['owner', 'org_admin', 'admin', 'manager', 'viewer'].includes(role)) {
-    return apiError('Invalid role. Must be: owner, org_admin, admin, manager, or viewer', 422);
+  if (!role || !['org_admin', 'manager', 'viewer'].includes(role)) {
+    return apiError('Invalid role. Must be: org_admin, manager, or viewer', 422);
   }
 
   // Verify user exists

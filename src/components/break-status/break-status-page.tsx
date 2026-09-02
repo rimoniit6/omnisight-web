@@ -22,6 +22,7 @@ import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Switch } from '@/components/ui/switch';
 import { Input } from '@/components/ui/input';
+import { hasRolePermission } from '@/lib/auth';
 import {
   Select,
   SelectContent,
@@ -294,7 +295,7 @@ export function BreakStatusPage() {
   const { user } = useCurrentUser();
   // API RBAC is the security boundary; this is UX only — a viewer/manager must
   // not see admin-only mutation buttons they cannot use.
-  const isAdmin = !!user && ['admin', 'owner', 'super_admin'].includes(user.role);
+  const isAdmin = !!user && hasRolePermission(user.role, 'admin');
   const [statusFilter, setStatusFilter] = useState('all');
   const [search, setSearch] = useState('');
   const [searchDebounced, setSearchDebounced] = useState('');

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
-import { authenticateRequest, getSessionOrg } from '@/lib/api';
+import { authenticateRequest, getSessionOrg, requireManagerOrg, authError } from '@/lib/api';
 import { hasRolePermission } from '@/lib/auth';
 import { RETENTION_KEYS } from '@/lib/jobs/settings';
 import type { RetentionKey } from '@/lib/jobs/settings';
@@ -26,18 +26,16 @@ function validateRetentionValue(raw: unknown): number | null {
 }
 
 // GET /api/settings/retention — current retention configuration for the org.
-// Any authenticated member of the org may read it.
+// Manager+ (defense-in-depth: retention policies reveal operational data lifecycles).
 export async function GET(req: NextRequest) {
   try {
-    const auth = await authenticateRequest(req);
-    if (!auth) {
-      return NextResponse.json({ error: 'Unauthorized. Please sign in.' }, { status: 401 });
+    const scope = await requireManagerOrg(req);
+    if (!scope.ok) {
+      return authError(scope);
     }
-    const org = await getSessionOrg(req);
-    if (!org) return NextResponse.json({ error: 'No organization found' }, { status: 404 });
 
     const rows = await db.organizationSetting.findMany({
-      where: { organizationId: org.id, key: { in: Object.keys(RETENTION_KEYS) } },
+      where: { organizationId: scope.organizationId, key: { in: Object.keys(RETENTION_KEYS) } },
     });
     const raw = new Map(rows.map((r) => [r.key, r.value]));
 

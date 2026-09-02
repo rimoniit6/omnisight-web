@@ -4,6 +4,7 @@ import { useState } from 'react';
 import Image from 'next/image';
 import { Eye, EyeOff, Lock, Mail, Loader2, ArrowRight } from 'lucide-react';
 import { useAuthStore } from '@/lib/store';
+import { useEffectiveBranding } from '@/hooks/use-effective-branding';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 
@@ -15,6 +16,7 @@ export function LoginPage() {
   const [error, setError] = useState('');
 
   const login = useAuthStore((s) => s.login);
+  const branding = useEffectiveBranding();
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -63,20 +65,31 @@ export function LoginPage() {
       <div className="relative z-10 w-full max-w-md px-4">
         {/* Logo */}
         <div className="text-center mb-8">
-          <Image
-            src="/logos/omnisight.svg"
-            alt="OmniSight logo"
-            width={112}
-            height={112}
-            className="object-contain mx-auto mb-4"
-            priority
-            unoptimized
-          />
+          {branding.logoType === 'svg' && branding.logoSvg ? (
+            <div
+              style={{
+                width: branding.logoWidth && branding.logoWidth > 0 ? branding.logoWidth : 112,
+                height: branding.logoHeight && branding.logoHeight > 0 ? branding.logoHeight : 112,
+              }}
+              dangerouslySetInnerHTML={{ __html: branding.logoSvg }}
+              className="mx-auto mb-4 flex items-center justify-center"
+            />
+          ) : (
+            <Image
+              src={branding.logoUrl}
+              alt={`${branding.brandName} logo`}
+              width={112}
+              height={112}
+              className="object-contain mx-auto mb-4"
+              priority
+              unoptimized
+            />
+          )}
           <h1 className="text-[22px] font-semibold tracking-tight text-foreground">
-            OmniSight
+            {branding.brandName}
           </h1>
           <p className="text-xs font-medium uppercase tracking-[0.2em] text-primary mt-1">
-            REMOTE INSIGHTS
+            {branding.tagline}
           </p>
           <p className="text-sm text-muted-foreground mt-1">
             Sign in to your workforce intelligence platform
@@ -165,7 +178,7 @@ export function LoginPage() {
         </div>
 
         <p className="text-center text-xs text-muted-foreground mt-6">
-          © 2026 OmniSight · Workforce Intelligence Platform
+          © 2026 {branding.brandName} · Workforce Intelligence Platform
         </p>
       </div>
     </div>

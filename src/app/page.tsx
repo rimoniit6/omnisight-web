@@ -9,6 +9,7 @@ import { LoginPage } from '@/components/auth/login-page';
 import { CreateOrganizationScreen } from '@/components/auth/create-organization-screen';
 import { useAppStore, useAuthStore } from '@/lib/store';
 import { useIsMobile } from '@/hooks/use-mobile';
+import { useEffectiveBranding } from '@/hooks/use-effective-branding';
 import { Sheet, SheetContent } from '@/components/ui/sheet';
 import { motion, AnimatePresence } from 'framer-motion';
 
@@ -47,6 +48,7 @@ const AudioPage = dynamic(() => import('@/components/audio/audio-page').then(m =
 const UsersPage = dynamic(() => import('@/components/users/users-page').then(m => ({ default: m.UsersPage })), { ssr: false });
 const SuperAdminOrganizationsPage = dynamic(() => import('@/components/super-admin/super-admin-organizations-page').then(m => ({ default: m.SuperAdminOrganizationsPage })), { ssr: false });
 const SuperAdminOrganizationDetailPage = dynamic(() => import('@/components/super-admin/super-admin-organization-detail-page').then(m => ({ default: m.SuperAdminOrganizationDetailPage })), { ssr: false });
+const BrandingPage = dynamic(() => import('@/components/branding/branding-page').then(m => ({ default: m.BrandingPage })), { ssr: false });
 
 const pageComponents: Record<string, React.ComponentType> = {
   dashboard: DashboardPage,
@@ -80,11 +82,13 @@ const pageComponents: Record<string, React.ComponentType> = {
   users: UsersPage,
   'super-admin-organizations': SuperAdminOrganizationsPage,
   'super-admin-organization-detail': SuperAdminOrganizationDetailPage,
+  branding: BrandingPage,
 };
 
 function AppLayout() {
   const { currentPage, mobileOpen, setMobileOpen } = useAppStore();
   const isMobile = useIsMobile();
+  const branding = useEffectiveBranding();
   const PageComponent = pageComponents[currentPage] || DashboardPage;
 
   return (
@@ -115,7 +119,7 @@ function AppLayout() {
           </main>
           <footer className='py-3 px-4 md:px-6 text-center text-xs text-muted-foreground'>
             <div className='flex flex-col items-center gap-1'>
-              <span>© 2026 OmniSight v1.0.0</span>
+              <span>© 2026 {branding.brandName} v1.0.0</span>
               <div className='hidden md:flex items-center gap-2' suppressHydrationWarning>
                 <FooterLink page='dashboard'>Dashboard</FooterLink><span>·</span>
                 <FooterLink page='employees'>Employees</FooterLink><span>·</span>

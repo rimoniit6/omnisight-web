@@ -5,6 +5,7 @@ import { useQuery } from '@tanstack/react-query';
 import { useAppStore, type PageType, useAuthStore } from '@/lib/store';
 import { useCurrentUser } from '@/hooks/use-current-user';
 import { canAccessPage } from '@/lib/navigation';
+import { useEffectiveBranding } from '@/hooks/use-effective-branding';
 import {
   LayoutDashboard,
   Users,
@@ -33,6 +34,7 @@ import {
   HeartPulse,
   Mic,
   Crown,
+  Palette,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import {
@@ -110,6 +112,7 @@ const navGroups: NavGroup[] = [
       { page: 'reports', label: 'Reports', icon: FileText },
       { page: 'daily-report', label: 'Daily Report', icon: FileBarChart },
       { page: 'settings', label: 'Settings', icon: Settings },
+      { page: 'branding', label: 'Branding', icon: Palette },
     ],
   },
   {
@@ -130,6 +133,7 @@ export function AppSidebar({ onNavigate }: AppSidebarProps) {
   const authUser = useAuthStore((s) => s.user);
   const displayUser = user || authUser;
   const [unreadCount, setUnreadCount] = useState<number>(0);
+  const branding = useEffectiveBranding();
 
   // S-2: role-aware navigation — a viewer must never see admin-only items.
   // API RBAC remains the security boundary; this is UX filtering only.
@@ -198,17 +202,42 @@ export function AppSidebar({ onNavigate }: AppSidebarProps) {
           )}
         >
           <div className={cn('flex items-center min-w-0', sidebarOpen ? 'gap-3' : 'justify-center')}>
-            <Image
-              src="/logos/omnisight.svg"
-              alt="OmniSight"
-              width={64}
-              height={64}
-              className={cn('object-contain shrink-0', !sidebarOpen && 'w-12 h-12')}
-              unoptimized
-            />
+            <div className={cn(
+              'flex items-center justify-center shrink-0',
+              !sidebarOpen && 'w-12 h-12'
+            )}
+            style={sidebarOpen ? {
+              width: branding.logoWidth && branding.logoWidth > 0 ? branding.logoWidth + 16 : 64,
+              height: branding.logoHeight && branding.logoHeight > 0 ? branding.logoHeight + 16 : 64,
+            } : undefined}
+            >
+              {branding.logoType === 'svg' && branding.logoSvg ? (
+                <div
+                  style={{
+                    width: sidebarOpen
+                      ? (branding.logoWidth && branding.logoWidth > 0 ? branding.logoWidth : 48)
+                      : 48,
+                    height: sidebarOpen
+                      ? (branding.logoHeight && branding.logoHeight > 0 ? branding.logoHeight : 48)
+                      : 48,
+                  }}
+                  dangerouslySetInnerHTML={{ __html: branding.logoSvg }}
+                  className="flex items-center justify-center"
+                />
+              ) : (
+                <Image
+                  src={branding.logoUrl}
+                  alt={branding.brandName}
+                  width={64}
+                  height={64}
+                  className={cn('object-contain shrink-0', !sidebarOpen && 'w-12 h-12')}
+                  unoptimized
+                />
+              )}
+            </div>
             {sidebarOpen && (
               <span className="font-semibold text-lg tracking-tight text-sidebar-foreground truncate">
-                OmniSight
+                {branding.brandName}
               </span>
             )}
           </div>

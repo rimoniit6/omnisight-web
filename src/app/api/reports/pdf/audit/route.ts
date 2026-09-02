@@ -4,6 +4,7 @@ import { generateAuditReport } from '@/lib/pdf-generator';
 import { format, startOfMonth, endOfMonth } from 'date-fns';
 import { getSessionOrg, authError, requireManagerOrg, isValidDate, parseJsonBody, BodyParseError } from '@/lib/api';
 import { log, requestContext } from '@/lib/logger';
+import { getEffectiveBranding } from '@/lib/branding';
 
 export async function POST(request: NextRequest) {
   try {
@@ -77,6 +78,8 @@ export async function POST(request: NextRequest) {
       ? await db.organization.findUnique({ where: { id: sessionOrg.id }, select: { name: true } })
       : null;
 
+    const effectiveBranding = await getEffectiveBranding(scope.organizationId);
+
     // Generate PDF
     const pdfBuffer = await generateAuditReport(
       auditLogs.map((log) => ({
@@ -103,6 +106,7 @@ export async function POST(request: NextRequest) {
       },
       {
         organization: org?.name || 'OmniSight',
+        branding: { brandName: effectiveBranding.brandName, primaryColor: effectiveBranding.primaryColor, tagline: effectiveBranding.tagline },
       },
     );
 

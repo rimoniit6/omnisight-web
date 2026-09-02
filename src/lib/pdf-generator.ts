@@ -52,6 +52,11 @@ interface ReportOptions {
   dateRange?: { start: Date; end: Date };
   organization?: string;
   generatedBy?: string;
+  branding?: {
+    brandName?: string;
+    primaryColor?: string;
+    tagline?: string;
+  };
 }
 
 interface EmployeeData {
@@ -125,7 +130,7 @@ function registerBundledFonts(doc: PDFKit.PDFDocument): void {
   doc.registerFont('Helvetica-Bold', join(fontDir, 'arialbd.ttf'));
 }
 
-function createBufferCollector(): { doc: PDFKit.PDFDocument; getBuffer: () => Promise<Buffer> } {
+function createBufferCollector(branding?: { brandName?: string }): { doc: PDFKit.PDFDocument; getBuffer: () => Promise<Buffer> } {
   const buffers: Buffer[] = [];
 
   const doc = new PDFDocument({
@@ -142,9 +147,9 @@ function createBufferCollector(): { doc: PDFKit.PDFDocument; getBuffer: () => Pr
     // fails under turbopack because __dirname is mangled.
     font: '',
     info: {
-      Creator: 'OmniSight',
-      Producer: 'OmniSight PDF Generator',
-      Title: 'OmniSight Report',
+      Creator: branding?.brandName || 'OmniSight',
+      Producer: `${branding?.brandName || 'OmniSight'} PDF Generator`,
+      Title: `${branding?.brandName || 'OmniSight'} Report`,
     },
   });
 
@@ -178,7 +183,7 @@ export function formatDuration(seconds: number): string {
 // Core: createPdfDocument
 // ============================================================================
 
-export function createPdfDocument(): PDFKit.PDFDocument {
+export function createPdfDocument(branding?: { brandName?: string }): PDFKit.PDFDocument {
   const doc = new PDFDocument({
     size: 'letter',
     margins: {
@@ -192,9 +197,9 @@ export function createPdfDocument(): PDFKit.PDFDocument {
     // registered, avoiding the turbopack-broken Helvetica.afm path.
     font: '',
     info: {
-      Creator: 'OmniSight',
-      Producer: 'OmniSight PDF Generator',
-      Title: 'OmniSight Report',
+      Creator: branding?.brandName || 'OmniSight',
+      Producer: `${branding?.brandName || 'OmniSight'} PDF Generator`,
+      Title: `${branding?.brandName || 'OmniSight'} Report`,
     },
   });
   registerBundledFonts(doc);
@@ -221,18 +226,21 @@ export function addHeader(
   title: string,
   subtitle?: string,
   orgName?: string,
+  branding?: { brandName?: string; primaryColor?: string; tagline?: string },
 ): void {
   const x = MARGINS.left;
   const y = MARGINS.top;
 
   // Green accent bar at top
+  const primaryColor = branding?.primaryColor || COLORS.primary;
   doc.save();
-  doc.rect(x, y - 10, CONTENT_WIDTH, 4).fill(COLORS.primary);
+  doc.rect(x, y - 10, CONTENT_WIDTH, 4).fill(primaryColor);
   doc.restore();
 
-  // OmniSight text logo (left)
-  doc.font('Helvetica-Bold').fontSize(11).fillColor(COLORS.primary);
-  doc.text('OmniSight', x, y, { continued: false });
+  // Brand text logo (left)
+  const brandName = branding?.brandName || 'OmniSight';
+  doc.font('Helvetica-Bold').fontSize(11).fillColor(primaryColor);
+  doc.text(brandName, x, y, { continued: false });
 
   // Organization name (right-aligned)
   if (orgName) {
@@ -273,6 +281,7 @@ export function addFooter(
   doc: PDFKit.PDFDocument,
   _pageNumber?: number,
   totalPages?: number,
+  branding?: { brandName?: string; tagline?: string },
 ): void {
   const x = MARGINS.left;
   const y = PAGE_HEIGHT - 30;
@@ -283,8 +292,10 @@ export function addFooter(
   doc.restore();
 
   // Left side: branding
+  const brandName = branding?.brandName || 'OmniSight';
+  const tagline = branding?.tagline || 'AI-Powered Workforce Intelligence';
   doc.font('Helvetica').fontSize(7).fillColor(COLORS.textLight);
-  doc.text('OmniSight \u2014 AI-Powered Workforce Intelligence', x, y);
+  doc.text(`${brandName} \u2014 ${tagline}`, x, y);
 
   // Right side: page number and generation date
   const genDate = format(new Date(), 'MMM d, yyyy HH:mm');
@@ -577,13 +588,13 @@ export async function generateEmployeeReport(
   },
   options?: ReportOptions,
 ): Promise<Buffer> {
-  const { doc, getBuffer } = createBufferCollector();
+  const { doc, getBuffer } = createBufferCollector(options?.branding);
 
   // Header
   const dateRange = options?.dateRange
     ? `${format(options.dateRange.start, 'MMM d, yyyy')} - ${format(options.dateRange.end, 'MMM d, yyyy')}`
     : format(new Date(), 'MMMM yyyy');
-  addHeader(doc, 'Employee Performance Report', dateRange, options?.organization);
+  addHeader(doc, 'Employee Performance Report', dateRange, options?.organization, options?.branding);
   addDivider(doc);
 
   // Employee name subtitle
@@ -738,12 +749,12 @@ export async function generateDashboardReport(
   },
   options?: ReportOptions,
 ): Promise<Buffer> {
-  const { doc, getBuffer } = createBufferCollector();
+  const { doc, getBuffer } = createBufferCollector(options?.branding);
 
   const dateRange = options?.dateRange
     ? `${format(options.dateRange.start, 'MMM d, yyyy')} - ${format(options.dateRange.end, 'MMM d, yyyy')}`
     : format(new Date(), 'MMMM d, yyyy');
-  addHeader(doc, 'Dashboard Summary Report', dateRange, orgData?.name || options?.organization);
+  addHeader(doc, 'Dashboard Summary Report', dateRange, orgData?.name || options?.organization, options?.branding);
   addDivider(doc);
 
   // Stats Grid
@@ -844,9 +855,9 @@ export async function generateProjectReport(
   timeEntries: Partial<TimeEntry>[],
   options?: ReportOptions,
 ): Promise<Buffer> {
-  const { doc, getBuffer } = createBufferCollector();
+  const { doc, getBuffer } = createBufferCollector(options?.branding);
 
-  addHeader(doc, 'Project Status Report', project.name, options?.organization);
+  addHeader(doc, 'Project Status Report', project.name, options?.organization, options?.branding);
   addDivider(doc);
 
   // Stats Grid
@@ -972,9 +983,9 @@ export async function generateActivityReport(
   },
   options?: ReportOptions,
 ): Promise<Buffer> {
-  const { doc, getBuffer } = createBufferCollector();
+  const { doc, getBuffer } = createBufferCollector(options?.branding);
 
-  addHeader(doc, 'Activity Log Report', undefined, options?.organization);
+  addHeader(doc, 'Activity Log Report', undefined, options?.organization, options?.branding);
   addDivider(doc);
 
   // Filter summary bar
@@ -1081,9 +1092,9 @@ export async function generateAuditReport(
   },
   options?: ReportOptions,
 ): Promise<Buffer> {
-  const { doc, getBuffer } = createBufferCollector();
+  const { doc, getBuffer } = createBufferCollector(options?.branding);
 
-  addHeader(doc, 'Audit Log Report', undefined, options?.organization);
+  addHeader(doc, 'Audit Log Report', undefined, options?.organization, options?.branding);
   addDivider(doc);
 
   // Filter summary bar

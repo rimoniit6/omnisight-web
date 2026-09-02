@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
-import { authenticateRequest, getSessionOrg } from '@/lib/api';
+import { authenticateRequest, getSessionOrg, requireManagerOrg, authError } from '@/lib/api';
 import { hasRolePermission } from '@/lib/auth';
 import {
   MONITORING_KEYS,
@@ -23,17 +23,16 @@ import { log, requestContext } from '@/lib/logger';
 // GET /api/settings/monitoring — current monitoring configuration for the org
 // with validation metadata (type, default, min/max) so the UI renders the
 // right control without duplicating any validation rules.
+// Manager+ (defense-in-depth: monitoring config reveals agent scheduling behavior).
 export async function GET(req: NextRequest) {
   try {
-    const auth = await authenticateRequest(req);
-    if (!auth) {
-      return NextResponse.json({ error: 'Unauthorized. Please sign in.' }, { status: 401 });
+    const scope = await requireManagerOrg(req);
+    if (!scope.ok) {
+      return authError(scope);
     }
-    const org = await getSessionOrg(req);
-    if (!org) return NextResponse.json({ error: 'No organization found' }, { status: 404 });
 
     const rows = await db.organizationSetting.findMany({
-      where: { organizationId: org.id, key: { in: Object.keys(MONITORING_KEYS) } },
+      where: { organizationId: scope.organizationId, key: { in: Object.keys(MONITORING_KEYS) } },
     });
     const stored = new Map(rows.map((r) => [r.key, r.value]));
 

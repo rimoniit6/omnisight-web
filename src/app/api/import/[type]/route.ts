@@ -1,9 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import * as XLSX from 'xlsx';
 import { db } from '@/lib/db';
-import { getRequestToken, hasRolePermission } from '@/lib/auth';
-import { verifySessionToken } from '@/lib/session';
-import { getSessionOrg } from '@/lib/api';
+import { requireAdminOrg, authError } from '@/lib/api';
 import { log, requestContext } from '@/lib/logger';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
@@ -357,22 +355,10 @@ export async function POST(
   { params }: { params: Promise<{ type: string }> }
 ) {
   try {
-    // 1. Auth check
-    const token = getRequestToken(req);
-    if (!token) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
-    const payload = await verifySessionToken(token);
-    if (!payload) {
-      return NextResponse.json({ error: 'Invalid token' }, { status: 401 });
-    }
-
-    // M-9: Handler-level role authorization — never rely solely on proxy.
-    if (!hasRolePermission(payload.role, 'admin')) {
-      return NextResponse.json({ error: 'Insufficient permissions' }, { status: 403 });
-    }
-    if (!payload.organizationId) {
-      return NextResponse.json({ error: 'Organization scope required' }, { status: 403 });
+    // 1. M-9: Centralized handler-level auth + role + org validation.
+    const admin = await requireAdminOrg(req);
+    if (!admin.ok) {
+      return authError(admin);
     }
 
     // 2. Parse type param
@@ -433,37 +419,31 @@ export async function POST(
       );
     }
 
-    // 6. Get organization
-    const org = await getSessionOrg(req);
-    if (!org) {
-      return NextResponse.json({ error: 'No organization found' }, { status: 400 });
-    }
-
-    // 7. Perform import based on type
+    // 6. Perform import based on type (org from requireAdminOrg, not client input)
     let result: ImportResult;
 
     switch (type) {
       case 'employees':
-        result = await importEmployees(rows, org.id);
+        result = await importEmployees(rows, admin.organizationId);
         break;
       case 'projects':
-        result = await importProjects(rows, org.id);
+        result = await importProjects(rows, admin.organizationId);
         break;
       case 'time-entries':
-        result = await importTimeEntries(rows, org.id);
+        result = await importTimeEntries(rows, admin.organizationId);
         break;
       default:
         return NextResponse.json({ error: 'Invalid import type' }, { status: 400 });
     }
 
-    // 8. Audit log
+    // 7. Audit log
     await db.auditLog.create({
       data: {
         action: 'import',
         resource: type,
         description: `Imported ${result.imported} ${type} (${result.errors} errors, ${result.details.skipped} skipped)`,
-        userId: payload.userId,
-        organizationId: org.id,
+        userId: admin.userId,
+        organizationId: admin.organizationId,
       },
     });
 

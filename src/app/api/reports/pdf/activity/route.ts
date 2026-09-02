@@ -5,6 +5,7 @@ import { format, startOfMonth, endOfMonth } from 'date-fns';
 import { getSessionOrg, authError, requireManagerOrg, isValidDate, parseJsonBody, BodyParseError } from '@/lib/api';
 import { excludeInternalAgentActivities } from '@/lib/agent-process';
 import { log, requestContext } from '@/lib/logger';
+import { getEffectiveBranding } from '@/lib/branding';
 
 export async function POST(request: NextRequest) {
   try {
@@ -135,6 +136,8 @@ export async function POST(request: NextRequest) {
       ? await db.organization.findUnique({ where: { id: sessionOrg.id }, select: { name: true } })
       : null;
 
+    const effectiveBranding = await getEffectiveBranding(scope.organizationId);
+
     // Resolve employee name for filter display — org-scoped; a foreign
     // employeeId is concealed (404) rather than echoed into the PDF.
     let employeeName: string | undefined;
@@ -179,6 +182,7 @@ export async function POST(request: NextRequest) {
       },
       {
         organization: org?.name || 'OmniSight',
+        branding: { brandName: effectiveBranding.brandName, primaryColor: effectiveBranding.primaryColor, tagline: effectiveBranding.tagline },
       },
     );
 

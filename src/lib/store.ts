@@ -31,7 +31,8 @@ export type PageType =
   | 'audio'
   | 'users'
   | 'super-admin-organizations'
-  | 'super-admin-organization-detail';
+  | 'super-admin-organization-detail'
+  | 'branding';
 
 function getInitialTourState(): boolean {
   if (typeof window === 'undefined') return false;

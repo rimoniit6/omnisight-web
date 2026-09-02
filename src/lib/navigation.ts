@@ -14,7 +14,7 @@
 import type { PageType } from '@/lib/store';
 import { hasRolePermission } from '@/lib/auth';
 
-export type NavMinRole = 'viewer' | 'manager' | 'admin' | 'org_admin';
+export type NavMinRole = 'viewer' | 'manager' | 'admin' | 'org_admin' | 'super_admin';
 
 export const PAGE_MIN_ROLE: Record<PageType, NavMinRole> = {
   // viewer — monitoring / analytics surface
@@ -53,26 +53,20 @@ export const PAGE_MIN_ROLE: Record<PageType, NavMinRole> = {
   users: 'org_admin',
   security: 'org_admin',
   settings: 'org_admin',
-  // Super Admin pages — PAGE_MIN_ROLE is 'org_admin' for the type requirement,
-  // but canAccessPage() has a special case that enforces exact 'super_admin' role.
-  'super-admin-organizations': 'org_admin',
-  'super-admin-organization-detail': 'org_admin',
+  // Super Admin pages — require exact super_admin role (not just org_admin+ hierarchy)
+  'super-admin-organizations': 'super_admin',
+  'super-admin-organization-detail': 'super_admin',
+  // Branding: admin+ for org branding, super_admin for platform branding
+  branding: 'admin',
 };
 
 /**
  * Whether a user with `role` may navigate to `page`.
  * Unknown roles are denied; super_admin/org_admin/manager satisfy every gate
  * via the shared role hierarchy.
- *
- * Special case: super-admin-* pages require EXACTLY super_admin (not just
- * org_admin+ hierarchy) because they are platform management, not org management.
  */
 export function canAccessPage(role: string | null | undefined, page: PageType): boolean {
   if (!role) return false;
-  // Super Admin pages are restricted to super_admin only
-  if (page === 'super-admin-organizations' || page === 'super-admin-organization-detail') {
-    return role === 'super_admin';
-  }
   const minRole = PAGE_MIN_ROLE[page];
   if (!minRole) return false;
   return hasRolePermission(role, minRole);

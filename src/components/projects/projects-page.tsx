@@ -119,6 +119,7 @@ interface ProjectMember {
   leftAt: string | null;
   employee: {
     id: string;
+    employeeId: string;
     firstName: string;
     lastName: string;
     email: string;
@@ -385,7 +386,7 @@ export function ProjectsPage() {
     () =>
       (projectMembers?.data || projectMembers || []).map((m: ProjectMember) => ({
         id: m.employeeId,
-        employeeId: m.employee.id || m.employeeId,
+        employeeId: m.employee.employeeId || '',
         firstName: m.employee.firstName,
         lastName: m.employee.lastName,
         email: m.employee.email ?? null,

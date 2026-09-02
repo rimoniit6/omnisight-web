@@ -154,9 +154,16 @@ interface RoleRule {
   minRole: 'admin' | 'manager';
 }
 const ROLE_RULES: RoleRule[] = [
+  // Manager+ read-only settings sub-routes (defense-in-depth: retention
+  // policies and monitoring config reveal operational data lifecycles but
+  // are read-only). Longest-prefix match wins over the general /api/settings
+  // admin rule below.
+  { prefix: '/api/settings/retention', minRole: 'manager' },
+  { prefix: '/api/settings/monitoring', minRole: 'manager' },
   // Admin+ only (super_admin, owner, admin)
   { prefix: '/api/settings', minRole: 'admin' },
   { prefix: '/api/organization', minRole: 'admin' },
+  { prefix: '/api/branding/organization', minRole: 'admin' },
   // Device claims are admin workflows (the Agent
   // Approvals page is admin-gated in navigation.ts). The list
   // exposes pending-device identities, so reads must match the

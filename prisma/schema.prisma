@@ -70,6 +70,7 @@ model Organization {
   audioRecordings     AudioRecording[]
   audioTranscriptions AudioTranscription[]
   agentTokens         AgentToken[]
+  branding            OrganizationBranding?
 }
 
 // ==================== Department ====================
@@ -1284,4 +1285,52 @@ model AudioTranscription {
 
   @@index([organizationId])
   @@index([createdAt])
+}
+
+// ==================== Platform Branding ====================
+// Singleton record controlling the platform-wide branding defaults.
+// Only super_admin may read or modify this. Exactly ONE row must exist
+// (enforced by application logic; the seed creates it).
+
+model PlatformBranding {
+  id            String   @id @default(cuid())
+  brandName     String   @default("OmniSight")
+  logoUrl       String?  // storage key for uploaded logo (null = use built-in default)
+  logoType      String?  // 'file' | 'svg' (null = use file/default)
+  logoSvg       String?  // sanitized SVG code (null = no inline SVG)
+  logoWidth     Int?     // display width in px (null = original/default size)
+  logoHeight    Int?     // display height in px (null = auto from aspect ratio)
+  faviconUrl    String?  // storage key for uploaded favicon (null = use built-in default)
+  primaryColor  String?  // hex color e.g. "#059669" (null = use built-in default)
+  browserTitle  String?  // custom document title (null = use default)
+  tagline       String?  // product tagline (null = use default)
+  updatedAt     DateTime @updatedAt
+  updatedBy     String?  // userId of the super_admin who last updated
+}
+
+// ==================== Organization Branding ====================
+// Per-organization branding overrides. NULL fields mean "inherit from
+// platform branding". At most one row per organization (enforced by
+// the unique constraint on organizationId).
+
+model OrganizationBranding {
+  id            String   @id @default(cuid())
+  organizationId String  @unique
+  brandName     String?  // null = inherit platform
+  logoUrl       String?  // null = inherit platform
+  logoType      String?  // 'file' | 'svg' (null = inherit platform)
+  logoSvg       String?  // sanitized SVG code (null = inherit platform)
+  logoWidth     Int?     // display width in px (null = inherit platform)
+  logoHeight    Int?     // display height in px (null = inherit platform)
+  faviconUrl    String?  // null = inherit platform
+  primaryColor  String?  // null = inherit platform
+  browserTitle  String?  // null = inherit platform
+  tagline       String?  // null = inherit platform
+  updatedAt     DateTime @updatedAt
+  updatedBy     String?  // userId of the actor who last updated
+
+  // Relations
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId])
 }

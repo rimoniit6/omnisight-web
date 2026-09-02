@@ -275,6 +275,7 @@ export function EmployeeTable({
                         />
                       </div>
                       <p className="text-xs text-muted-foreground truncate mt-0.5">{emp.email}</p>
+                      <p className="text-[10px] text-muted-foreground font-mono truncate">{emp.employeeId}</p>
                       <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mt-2 text-xs text-muted-foreground">
                         <span className="inline-flex items-center gap-1.5 min-w-0">
                           <Building2 className="w-3 h-3 shrink-0" />
@@ -374,10 +375,10 @@ export function EmployeeTable({
                         </Avatar>
                         <div className="min-w-0">
                           <span className="flex items-center gap-2">
-                            <PresenceDot employeeId={emp.id} />
-                            <p className="font-medium truncate">{emp.firstName} {emp.lastName}</p>
-                          </span>
-                          <p className="text-xs text-muted-foreground truncate">{emp.employeeId}</p>
+                          <PresenceDot employeeId={emp.id} />
+                          <p className="font-medium truncate">{emp.firstName} {emp.lastName}</p>
+                        </span>
+                        <p className="text-xs text-muted-foreground truncate font-mono">{emp.employeeId}</p>
                         </div>
                       </div>
                     </td>

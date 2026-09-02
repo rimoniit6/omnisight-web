@@ -26,7 +26,7 @@ export async function GET(
       include: {
         employee: {
           select: {
-            id: true, firstName: true, lastName: true, avatar: true,
+            id: true, employeeId: true, firstName: true, lastName: true, avatar: true,
             designation: true, department: { select: { name: true } },
             // Lets the Team tab render the admin-selected active tracking
             // project state without a second fetch.
@@ -174,7 +174,7 @@ export async function POST(
               include: {
                 employee: {
                   select: {
-                    id: true, firstName: true, lastName: true, avatar: true,
+                    id: true, employeeId: true, firstName: true, lastName: true, avatar: true,
                     designation: true, department: { select: { name: true } },
                   },
                 },
@@ -191,7 +191,7 @@ export async function POST(
               include: {
                 employee: {
                   select: {
-                    id: true, firstName: true, lastName: true, avatar: true,
+                    id: true, employeeId: true, firstName: true, lastName: true, avatar: true,
                     designation: true, department: { select: { name: true } },
                   },
                 },

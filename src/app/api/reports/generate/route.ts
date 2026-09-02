@@ -279,8 +279,7 @@ async function computeAttendanceReport(orgId: string, startDate: Date, endDate: 
     const lastActivity = empActs[empActs.length - 1]?.timestamp?.toISOString() || null;
 
     return {
-      employeeId: e.id,
-      employeeCode: e.employeeId,
+      employeeId: e.employeeId,
       name: `${e.firstName} ${e.lastName}`,
       department: e.department?.name || 'Unassigned',
       status: e.status,
@@ -422,7 +421,7 @@ async function computeDepartmentReport(orgId: string, departmentId: string, star
     const prod = empActs.filter(a => a.category === 'productive').reduce((s, a) => s + a.duration, 0);
     const activeDays = new Set(empActs.map(a => a.timestamp.toISOString().split('T')[0])).size;
     return {
-      employeeId: e.id,
+      employeeId: e.employeeId,
       name: `${e.firstName} ${e.lastName}`,
       totalHours: Math.round(dur / 3600 * 10) / 10,
       productiveHours: Math.round(prod / 3600 * 10) / 10,

@@ -3,6 +3,7 @@
 import { useAppStore, useAuthStore, type PageType } from '@/lib/store';
 import { useCurrentUser } from '@/hooks/use-current-user';
 import { canAccessPage } from '@/lib/navigation';
+import { useEffectiveBranding } from '@/hooks/use-effective-branding';
 import {
   LayoutDashboard,
   Users,
@@ -28,6 +29,7 @@ import {
   HeartPulse,
   Radio,
   Crown,
+  Palette,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
@@ -97,6 +99,7 @@ const navGroups: NavGroup[] = [
       { page: 'reports', label: 'Reports', icon: FileText },
       { page: 'daily-report', label: 'Daily Report', icon: FileBarChart },
       { page: 'settings', label: 'Settings', icon: Settings },
+      { page: 'branding', label: 'Branding', icon: Palette },
     ],
   },
   {
@@ -116,6 +119,7 @@ export function MobileSidebarContent({ onNavigate }: MobileSidebarContentProps) 
   const { user } = useCurrentUser();
   const authUser = useAuthStore((s) => s.user);
   const displayUser = user || authUser;
+  const branding = useEffectiveBranding();
 
   // S-2: role-aware navigation (mirrors the desktop sidebar).
   const role = displayUser?.role ?? null;
@@ -138,8 +142,19 @@ export function MobileSidebarContent({ onNavigate }: MobileSidebarContentProps) 
       {/* Logo area */}
       <div className="flex items-center h-16 px-4 border-b border-border">
         <div className="flex items-center gap-3">
-          <Image src="/logos/omnisight.svg" alt="OmniSight" width={48} height={48} className="object-contain shrink-0" unoptimized />
-          <span className="font-semibold text-lg">OmniSight</span>
+          {branding.logoType === 'svg' && branding.logoSvg ? (
+            <div
+              style={{
+                width: branding.logoWidth && branding.logoWidth > 0 ? branding.logoWidth : 48,
+                height: branding.logoHeight && branding.logoHeight > 0 ? branding.logoHeight : 48,
+              }}
+              dangerouslySetInnerHTML={{ __html: branding.logoSvg }}
+              className="shrink-0 flex items-center justify-center"
+            />
+          ) : (
+            <Image src={branding.logoUrl} alt={branding.brandName} width={48} height={48} className="object-contain shrink-0" unoptimized />
+          )}
+          <span className="font-semibold text-lg">{branding.brandName}</span>
         </div>
       </div>
 
