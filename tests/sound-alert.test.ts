@@ -15,6 +15,11 @@ import {
   writeSoundPreference,
   isThrottled,
   SOUNDS,
+  severityFromPriority,
+  soundForSeverity,
+  volumeForSeverity,
+  SEVERITY_VOLUME,
+  DEFAULT_VOLUME,
 } from '../src/lib/sound-alert';
 import type { LiveEventLog } from '../src/components/providers/websocket-provider';
 
@@ -35,13 +40,37 @@ function makeEvent(overrides: Partial<LiveEventLog> = {}): LiveEventLog {
 // ─── SOUNDS Constant ────────────────────────────────────────────────────────
 
 describe('SOUNDS constant', () => {
-  it('has a notification sound path', () => {
-    assert.ok(SOUNDS.notification);
-    assert.ok(SOUNDS.notification.endsWith('.wav'));
+  it('has a default notification sound path', () => {
+    assert.ok(SOUNDS.default);
+    assert.ok(SOUNDS.default.endsWith('.wav'));
   });
 
-  it('notification path starts with /', () => {
-    assert.ok(SOUNDS.notification.startsWith('/'));
+  it('default path starts with /', () => {
+    assert.ok(SOUNDS.default.startsWith('/'));
+  });
+
+  it('has critical sound path', () => {
+    assert.ok(SOUNDS.critical);
+    assert.ok(SOUNDS.critical.endsWith('.wav'));
+    assert.ok(SOUNDS.critical.includes('critical'));
+  });
+
+  it('has warning sound path', () => {
+    assert.ok(SOUNDS.warning);
+    assert.ok(SOUNDS.warning.endsWith('.wav'));
+    assert.ok(SOUNDS.warning.includes('warning'));
+  });
+
+  it('has info sound path', () => {
+    assert.ok(SOUNDS.info);
+    assert.ok(SOUNDS.info.endsWith('.wav'));
+    assert.ok(SOUNDS.info.includes('info'));
+  });
+
+  it('all paths start with /', () => {
+    for (const key of Object.keys(SOUNDS)) {
+      assert.ok(SOUNDS[key as keyof typeof SOUNDS].startsWith('/'), `${key} path should start with /`);
+    }
   });
 });
 
@@ -104,6 +133,106 @@ describe('readSoundPreference / writeSoundPreference', () => {
   });
 });
 
+// ─── severityFromPriority ───────────────────────────────────────────────────
+
+describe('severityFromPriority', () => {
+  it('maps critical to critical', () => {
+    assert.equal(severityFromPriority('critical'), 'critical');
+  });
+
+  it('maps high to warning', () => {
+    assert.equal(severityFromPriority('high'), 'warning');
+  });
+
+  it('maps medium to info', () => {
+    assert.equal(severityFromPriority('medium'), 'info');
+  });
+
+  it('maps low to info (fallback)', () => {
+    assert.equal(severityFromPriority('low'), 'info');
+  });
+
+  it('maps undefined to info (fallback)', () => {
+    assert.equal(severityFromPriority(undefined), 'info');
+  });
+
+  it('maps unknown string to info (fallback)', () => {
+    assert.equal(severityFromPriority('unknown'), 'info');
+  });
+});
+
+// ─── soundForSeverity ──────────────────────────────────────────────────────
+
+describe('soundForSeverity', () => {
+  it('returns critical sound for critical severity', () => {
+    assert.equal(soundForSeverity('critical'), SOUNDS.critical);
+  });
+
+  it('returns warning sound for warning severity', () => {
+    assert.equal(soundForSeverity('warning'), SOUNDS.warning);
+  });
+
+  it('returns info sound for info severity', () => {
+    assert.equal(soundForSeverity('info'), SOUNDS.info);
+  });
+
+  it('returns default sound for unknown severity', () => {
+    assert.equal(soundForSeverity('unknown'), SOUNDS.default);
+  });
+
+  it('returns default sound for default severity', () => {
+    assert.equal(soundForSeverity('default'), SOUNDS.default);
+  });
+});
+
+// ─── volumeForSeverity ─────────────────────────────────────────────────────
+
+describe('volumeForSeverity', () => {
+  it('returns 0.8 for critical', () => {
+    assert.equal(volumeForSeverity('critical'), 0.8);
+  });
+
+  it('returns 0.5 for warning', () => {
+    assert.equal(volumeForSeverity('warning'), 0.5);
+  });
+
+  it('returns 0.3 for info', () => {
+    assert.equal(volumeForSeverity('info'), 0.3);
+  });
+
+  it('returns 0 for low (silent)', () => {
+    assert.equal(volumeForSeverity('low'), 0);
+  });
+
+  it('returns DEFAULT_VOLUME for unknown severity', () => {
+    assert.equal(volumeForSeverity('unknown'), DEFAULT_VOLUME);
+  });
+
+  it('DEFAULT_VOLUME is 0.4', () => {
+    assert.equal(DEFAULT_VOLUME, 0.4);
+  });
+});
+
+// ─── SEVERITY_VOLUME ───────────────────────────────────────────────────────
+
+describe('SEVERITY_VOLUME', () => {
+  it('has critical, warning, info, and low entries', () => {
+    assert.ok('critical' in SEVERITY_VOLUME);
+    assert.ok('warning' in SEVERITY_VOLUME);
+    assert.ok('info' in SEVERITY_VOLUME);
+    assert.ok('low' in SEVERITY_VOLUME);
+  });
+
+  it('critical volume is highest', () => {
+    assert.ok(SEVERITY_VOLUME.critical > SEVERITY_VOLUME.warning);
+    assert.ok(SEVERITY_VOLUME.warning > SEVERITY_VOLUME.info);
+  });
+
+  it('low volume is zero (silent)', () => {
+    assert.equal(SEVERITY_VOLUME.low, 0);
+  });
+});
+
 // ─── isThrottled ────────────────────────────────────────────────────────────
 
 describe('isThrottled', () => {
@@ -132,10 +261,7 @@ describe('SOUND_THROTTLE_MS', () => {
   it('is set to 2000ms', () => {
     assert.equal(SOUND_THROTTLE_MS, 2000);
   });
-});
-
-// ─── Sound Decision Pipeline (integration-style unit tests) ─────────────────
-
+});// ─── Sound Decision Pipeline (integration-style unit tests) ─────────────────
 describe('Sound decision pipeline', () => {
   // Simulates the full decision pipeline from the hook:
   // 1. Dedup: event.id === lastSoundedEvent → skip
@@ -143,17 +269,20 @@ describe('Sound decision pipeline', () => {
   // 3. Unlock: audioUnlockState !== 'unlocked' → skip
   // 4. Policy: !isSoundWorthy → skip
   // 5. Throttle: within window → skip
+  // 6. Severity: priority → severity → sound file + volume
 
   let lastSoundedId: string | null = null;
   let lastSoundTime = 0;
   let soundEnabled = true;
   let audioUnlocked = true;
+  let lastPlayedSeverity: string | null = null;
 
   function reset() {
     lastSoundedId = null;
     lastSoundTime = 0;
     soundEnabled = true;
     audioUnlocked = true;
+    lastPlayedSeverity = null;
   }
 
   function shouldPlaySound(event: LiveEventLog): boolean {
@@ -165,6 +294,7 @@ describe('Sound decision pipeline', () => {
     const now = Date.now();
     if (event.priority !== 'critical' && now - lastSoundTime < SOUND_THROTTLE_MS) return false;
     lastSoundTime = now;
+    lastPlayedSeverity = severityFromPriority(event.priority);
     return true;
   }
 
@@ -234,6 +364,27 @@ describe('Sound decision pipeline', () => {
     reset();
     const event = makeEvent({ type: 'activity-ping', priority: 'low' });
     assert.equal(shouldPlaySound(event), false);
+  });
+
+  it('resolves critical priority to critical severity', () => {
+    reset();
+    const event = makeEvent({ type: 'alert-event', priority: 'critical' });
+    shouldPlaySound(event);
+    assert.equal(lastPlayedSeverity, 'critical');
+  });
+
+  it('resolves high priority to warning severity', () => {
+    reset();
+    const event = makeEvent({ type: 'device-status', priority: 'high' });
+    shouldPlaySound(event);
+    assert.equal(lastPlayedSeverity, 'warning');
+  });
+
+  it('resolves medium priority to info severity', () => {
+    reset();
+    const event = makeEvent({ type: 'notification', priority: 'medium' });
+    shouldPlaySound(event);
+    assert.equal(lastPlayedSeverity, 'info');
   });
 });
 

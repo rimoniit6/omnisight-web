@@ -81,10 +81,10 @@ export async function GET(req: NextRequest) {
       break: breakState,
       features: {
         // Break/privacy mode is implemented end-to-end (server state → config
-        // → agent collector pause/resume). Tamper detection remains
-        // unimplemented by the agent — the flag stays false.
+        // → agent collector pause/resume). Tamper detection monitors agent
+        // integrity and reports events to the server.
         breakModeEnabled: true,
-        tamperDetectionEnabled: false,
+        tamperDetectionEnabled: monitoring.tamper_detection,
         // Org-scoped USB monitoring flag (default false) — the agent may only
         // collect USB events when the org enables it AND the employee holds
         // usb_monitoring consent. Server re-enforces both on every upload.

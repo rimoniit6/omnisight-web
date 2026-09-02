@@ -19,6 +19,9 @@ import {
   SOUNDS,
   readSoundPreference,
   writeSoundPreference,
+  severityFromPriority,
+  soundForSeverity,
+  volumeForSeverity,
 } from '@/lib/sound-alert';
 import type { LiveEventLog } from '@/components/providers/websocket-provider';
 
@@ -29,10 +32,26 @@ let sharedAudio: HTMLAudioElement | null = null;
 function getSharedAudio(): HTMLAudioElement | null {
   if (typeof window === 'undefined') return null;
   if (!sharedAudio) {
-    sharedAudio = new Audio(SOUNDS.notification);
+    sharedAudio = new Audio(SOUNDS.default);
     sharedAudio.preload = 'auto';
   }
   return sharedAudio;
+}
+
+/**
+ * Prepare the shared audio element for a specific severity level.
+ * Swaps the src only when the severity changes to avoid unnecessary reloads.
+ * Returns false if the audio element is unavailable.
+ */
+function prepareForSeverity(severity: string): boolean {
+  const audio = getSharedAudio();
+  if (!audio) return false;
+  const targetSrc = soundForSeverity(severity);
+  if (audio.src !== targetSrc && !audio.src.endsWith(targetSrc)) {
+    audio.src = targetSrc;
+    audio.load();
+  }
+  return true;
 }
 
 // ─── Unlock State Machine ────────────────────────────────────────────────────
@@ -95,11 +114,14 @@ export function useLiveEventSound(): UseLiveEventSoundReturn {
   }, []);
 
   // ── Play helper ──
-  const playSound = useCallback(async (priority?: string): Promise<boolean> => {
+  // Plays a severity-appropriate sound.  The severity is derived from the
+  // event's priority via severityFromPriority() in the caller.
+  const playSound = useCallback(async (severity: string): Promise<boolean> => {
+    if (!prepareForSeverity(severity)) return false;
     const audio = getSharedAudio();
     if (!audio) return false;
     try {
-      audio.volume = priority === 'critical' ? 0.8 : 0.4;
+      audio.volume = volumeForSeverity(severity);
       audio.currentTime = 0;
       await audio.play();
       return true;
@@ -126,6 +148,8 @@ export function useLiveEventSound(): UseLiveEventSoundReturn {
       return false;
     }
     try {
+      // Use the info sound for the unlock blip (soft, unobtrusive)
+      prepareForSeverity('info');
       audio.volume = 0.3;
       audio.currentTime = 0;
       await audio.play();
@@ -185,7 +209,7 @@ export function useLiveEventSound(): UseLiveEventSoundReturn {
       }
 
       lastSoundTimeRef.current = now;
-      void playSound(event.priority);
+      void playSound(severityFromPriority(event.priority));
       return true;
     },
     [soundEnabled, audioUnlockState, playSound]

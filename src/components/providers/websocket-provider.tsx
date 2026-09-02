@@ -143,7 +143,7 @@ export interface PolicyViolationEvent {
   timestamp: string;
 }
 
-export type LiveEventType = 'device-status' | 'activity-ping' | 'notification' | 'break-status' | 'break-started' | 'break-ended' | 'screenshot' | 'usb-event' | 'project-time-update' | 'device-claim' | 'alert-event'  | 'location-update';
+export type LiveEventType = 'device-status' | 'activity-ping' | 'notification' | 'break-status' | 'break-started' | 'break-ended' | 'screenshot' | 'usb-event' | 'project-time-update' | 'device-claim' | 'alert-event' | 'location-update' | 'policy-violation' | 'anomaly';
 
 export interface LiveEventLog {
   id: string;
@@ -442,7 +442,14 @@ export function WebSocketProvider({ children }: { children: ReactNode }) {
     // Refreshes the Anomalies page (any list/filter/pagination variant, via
     // the 'anomalies' prefix) and dashboard aggregates without polling. The
     // event carries no sensitive telemetry — only attribution + type/severity.
-    socket.on('anomaly', (_event: AnomalyEvent) => {
+    socket.on('anomaly', (event: AnomalyEvent) => {
+      addEventLog({
+        type: 'anomaly',
+        title: `Anomaly: ${event.title}`,
+        description: `${event.type} — Severity ${event.severity}`,
+        timestamp: event.timestamp,
+        priority: event.severity === 'critical' ? 'critical' : event.severity === 'high' ? 'high' : 'medium',
+      });
       for (const key of anomalyInvalidation()) {
         queryClient.invalidateQueries({ queryKey: key });
       }
@@ -488,7 +495,14 @@ export function WebSocketProvider({ children }: { children: ReactNode }) {
     });
 
     // ─── Policy Violation (agent blocked a process against a blacklist) ───
-    socket.on('policy-violation', (_event: PolicyViolationEvent) => {
+    socket.on('policy-violation', (event: PolicyViolationEvent) => {
+      addEventLog({
+        type: 'policy-violation',
+        title: `Policy Violation: ${event.executableName}`,
+        description: `Severity ${event.severity}${event.employeeId ? ` — Employee ${event.employeeId}` : ''}`,
+        timestamp: event.timestamp,
+        priority: event.severity === 'critical' ? 'critical' : event.severity === 'high' ? 'high' : 'medium',
+      });
       for (const key of policyViolationInvalidation()) {
         queryClient.invalidateQueries({ queryKey: key });
       }

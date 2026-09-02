@@ -42,6 +42,8 @@ import {
   PauseCircle,
   PlayCircle,
   AlertTriangle,
+  ShieldAlert,
+  Brain,
 } from 'lucide-react';
 
 // ─── Constants ───
@@ -55,6 +57,8 @@ const ALL_EVENT_TYPES: { type: LiveEventType; label: string; icon: React.Element
   { type: 'device-claim', label: 'Claim', icon: Laptop, color: 'text-indigo-600 dark:text-indigo-400', bgColor: 'bg-indigo-100 dark:bg-indigo-900/30' },
   { type: 'alert-event', label: 'Alert Event', icon: AlertTriangle, color: 'text-red-600 dark:text-red-400', bgColor: 'bg-red-100 dark:bg-red-900/30' },
   { type: 'project-time-update', label: 'Project Time', icon: Clock, color: 'text-blue-600 dark:text-blue-400', bgColor: 'bg-blue-100 dark:bg-blue-900/30' },
+  { type: 'policy-violation', label: 'Policy', icon: ShieldAlert, color: 'text-red-600 dark:text-red-400', bgColor: 'bg-red-100 dark:bg-red-900/30' },
+  { type: 'anomaly', label: 'Anomaly', icon: Brain, color: 'text-purple-600 dark:text-purple-400', bgColor: 'bg-purple-100 dark:bg-purple-900/30' },
 ];
 
 const priorityBorderMap: Record<string, string> = {
@@ -173,6 +177,8 @@ const EVENT_TYPE_TO_STAT: Record<LiveEventType, keyof EventStatsPayload['counts'
   'project-time-update': 'projectTime',
   'alert-event': 'alert',
   'location-update': 'deviceClaim',
+  'policy-violation': 'alert',
+  'anomaly': 'alert',
 };
 
 const RANGE_LABELS: Record<EventStatRange, string> = {

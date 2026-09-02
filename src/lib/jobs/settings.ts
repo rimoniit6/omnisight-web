@@ -97,6 +97,10 @@ export const MONITORING_KEYS = {
   // consent AND the agent has the native capability, the agent reports USB
   // device insert/remove events. Defaults false — never silently enabled.
   usb_monitoring: { type: 'boolean', default: false },
+  // Tamper detection: when true the agent monitors its own integrity
+  // (config changes, repeated restarts) and reports tamper events to the
+  // server. Defaults true — the feature is implemented and safe.
+  tamper_detection: { type: 'boolean', default: true },
   // App policy enforcement: when true the agent actively monitors running
   // processes against the org's whitelist/blacklist and reports violations.
   // Defaults false — the agent NEVER enforces until an admin opts in.

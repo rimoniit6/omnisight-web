@@ -223,6 +223,7 @@ const MONITORING_LABELS: Record<string, string> = {
   work_end_time: 'Work End Time',
   ai_anomaly_detection: 'Anomaly Detection',
   usb_monitoring: 'USB Device Monitoring',
+  tamper_detection: 'Agent Tamper Detection',
   app_policy_enforcement: 'App Policy Enforcement',
   app_policy_terminate: 'Terminate Blocked Apps',
   location_tracking: 'Location Tracking',

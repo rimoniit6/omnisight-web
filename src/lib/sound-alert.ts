@@ -9,9 +9,60 @@ import type { LiveEventLog } from '@/components/providers/websocket-provider';
 
 // ─── Constants ───
 
+/**
+ * Severity-based sound map. Each severity level has a distinct audio cue:
+ *   critical — urgent double-beep (880 Hz, high volume)
+ *   warning  — single medium beep (660 Hz, normal volume)
+ *   info     — soft low blip (440 Hz, low volume)
+ *   default  — legacy fallback (the original notification sound)
+ */
 export const SOUNDS = {
-  notification: '/sounds/notification.wav',
+  critical: '/sounds/critical.wav',
+  warning: '/sounds/warning.wav',
+  info: '/sounds/info.wav',
+  default: '/sounds/notification.wav',
 } as const;
+
+/** Volume level per severity (0–1). */
+export const SEVERITY_VOLUME: Record<string, number> = {
+  critical: 0.8,
+  warning: 0.5,
+  info: 0.3,
+  low: 0,
+};
+
+/** Fallback volume for unknown severities. */
+export const DEFAULT_VOLUME = 0.4;
+
+/**
+ * Map an event's priority to a severity bucket for sound selection.
+ * The mapping follows the existing OmniSight priority taxonomy:
+ *   critical → critical sound
+ *   high     → warning sound
+ *   medium   → info sound
+ *   low      → no sound (handled by isSoundWorthy)
+ */
+export function severityFromPriority(priority?: string): 'critical' | 'warning' | 'info' {
+  switch (priority) {
+    case 'critical': return 'critical';
+    case 'high': return 'warning';
+    case 'medium': return 'info';
+    default: return 'info';
+  }
+}
+
+/** Get the sound file path for a given severity. */
+export function soundForSeverity(severity: string): string {
+  if (severity in SOUNDS && severity !== 'default') {
+    return SOUNDS[severity as keyof typeof SOUNDS];
+  }
+  return SOUNDS.default;
+}
+
+/** Get the volume for a given severity. */
+export function volumeForSeverity(severity: string): number {
+  return SEVERITY_VOLUME[severity] ?? DEFAULT_VOLUME;
+}
 
 export const SOUND_PREF_KEY = 'omnisight-live-monitor-sound';
 
