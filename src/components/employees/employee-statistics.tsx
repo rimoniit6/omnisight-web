@@ -6,6 +6,7 @@ import { Users, UserPlus, Clock, Trophy } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 interface DepartmentStat {
+  departmentId: string | null;
   name: string;
   count: number;
   activeCount: number;
@@ -99,7 +100,7 @@ export function EmployeeStatistics() {
           </div>
           <div className="space-y-2.5 max-h-48 overflow-y-auto pr-1 custom-scrollbar">
             {data.byDepartment.map((dept) => (
-              <div key={dept.name} className="space-y-1">
+              <div key={dept.departmentId ?? dept.name} className="space-y-1">
                 <div className="flex items-center justify-between text-xs">
                   <span className="text-foreground font-medium truncate max-w-[120px]">{dept.name}</span>
                   <span className="text-muted-foreground tabular-nums">{dept.count} <span className="text-primary">({dept.activeCount})</span></span>

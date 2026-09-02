@@ -75,6 +75,7 @@ export async function GET(req: NextRequest) {
 
     const departmentStats = byDepartment
       .map((d) => ({
+        departmentId: d.departmentId || null,
         name: d.departmentId ? (deptMap.get(d.departmentId) || 'Unknown') : 'Unassigned',
         count: d._count.id,
         activeCount: d.departmentId ? (activeDeptMap.get(d.departmentId) || 0) : 0,

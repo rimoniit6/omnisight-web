@@ -880,7 +880,7 @@ export function ProjectsPage() {
   const analyticsData = useMemo(() => {
     const entries: TimeEntry[] = timeEntries?.data || timeEntries || [];
     const categoryHours: Record<string, number> = {};
-    const memberHours: Record<string, { name: string; hours: number }> = {};
+    const memberHours: Record<string, { employeeId: string; name: string; hours: number }> = {};
     const dailyHours: Record<string, number> = {};
     let billableHours = 0;
     let nonBillableHours = 0;
@@ -893,7 +893,7 @@ export function ProjectsPage() {
       // Member breakdown
       const memberName = `${entry.employee.firstName} ${entry.employee.lastName}`;
       if (!memberHours[entry.employeeId]) {
-        memberHours[entry.employeeId] = { name: memberName, hours: 0 };
+        memberHours[entry.employeeId] = { employeeId: entry.employeeId, name: memberName, hours: 0 };
       }
       memberHours[entry.employeeId].hours += entry.hours;
 
@@ -2172,7 +2172,7 @@ export function ProjectsPage() {
                           {analyticsData.memberBreakdown.map((m, i) => {
                             const pct = analyticsData.totalHours > 0 ? (m.hours / analyticsData.totalHours) * 100 : 0;
                             return (
-                              <div key={m.name} className="flex items-center gap-3">
+                              <div key={m.employeeId} className="flex items-center gap-3">
                                 <Avatar className="h-7 w-7">
                                   <AvatarFallback className={`text-[10px] ${getAvatarColor(i)}`}>
                                     {m.name.split(' ').map((n: string) => n[0]).join('')}
