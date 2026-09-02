@@ -152,9 +152,6 @@ function getProviderStatus(
   apiKey: string,
   liveTested: boolean,
 ): 'connected' | 'configured' | 'not_configured' | 'error' {
-  // DS-P3-1: "Connected" is only truthful after a live test succeeded in this
-  // session. A stored key alone means "Configured" — the audit proved a
-  // key-presence badge can claim connectivity for a config that 404s.
   if (providerId === activeProvider && liveTested) return 'connected';
   if (providerId === activeProvider && apiKey) return 'configured';
   return 'not_configured';
@@ -174,11 +171,11 @@ export function AiProviderPage() {
   const [localApiKey, setLocalApiKey] = useState('');
   const [localBaseUrl, setLocalBaseUrl] = useState('');
 
-  // Fetch settings
+  // Fetch AI settings from org-scoped API
   const { data: settings, isLoading } = useQuery({
-    queryKey: ['settings'],
+    queryKey: ['ai-settings'],
     queryFn: async () => {
-      const res = await fetch('/api/settings');
+      const res = await fetch('/api/organization/ai-settings');
       const json = await res.json();
       const map: Record<string, string> = {};
       (json.data || []).forEach((s: { key: string; value: string }) => {
@@ -216,7 +213,6 @@ export function AiProviderPage() {
   const systemPrompt = settings?.ai_system_prompt || '';
 
   // M-7: Debounced save to prevent request storms on slider/input changes.
-  // Uses a ref-based debounce so rapid changes coalesce into a single API call.
   const saveTimersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
   const latestValuesRef = useRef<Map<string, string>>(new Map());
 
@@ -225,7 +221,7 @@ export function AiProviderPage() {
     if (value === undefined) return;
     latestValuesRef.current.delete(key);
     try {
-      const res = await fetch('/api/settings', {
+      const res = await fetch('/api/organization/ai-settings', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ key, value }),
@@ -235,20 +231,19 @@ export function AiProviderPage() {
         toast.error(json.error || 'Failed to update setting');
         return;
       }
-      queryClient.invalidateQueries({ queryKey: ['settings'] });
+      queryClient.invalidateQueries({ queryKey: ['ai-settings'] });
     } catch {
       toast.error('Failed to update setting');
     }
   }, [queryClient]);
 
-  // Immediate save — used for explicit Save buttons and non-stormy actions.
+  // Immediate save
   const handleSaveImmediate = useCallback(async (key: string, value: string): Promise<boolean> => {
-    // Clear any pending debounced save for this key.
     const timer = saveTimersRef.current.get(key);
     if (timer) { clearTimeout(timer); saveTimersRef.current.delete(key); }
     latestValuesRef.current.delete(key);
     try {
-      const res = await fetch('/api/settings', {
+      const res = await fetch('/api/organization/ai-settings', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ key, value }),
@@ -259,7 +254,7 @@ export function AiProviderPage() {
         return false;
       }
       toast.success('Setting updated');
-      queryClient.invalidateQueries({ queryKey: ['settings'] });
+      queryClient.invalidateQueries({ queryKey: ['ai-settings'] });
       return true;
     } catch {
       toast.error('Failed to update setting');
@@ -267,7 +262,6 @@ export function AiProviderPage() {
     }
   }, [queryClient]);
 
-  // Debounced save — used for sliders and continuous input changes.
   const handleSaveDebounced = useCallback((key: string, value: string, delay = 500) => {
     latestValuesRef.current.set(key, value);
     const existing = saveTimersRef.current.get(key);
@@ -275,14 +269,13 @@ export function AiProviderPage() {
     saveTimersRef.current.set(key, setTimeout(() => flushSave(key), delay));
   }, [flushSave]);
 
-  // Legacy alias for backward compatibility with existing callers.
   const handleSave = handleSaveImmediate;
 
   const handleTestConnection = async (providerId: string) => {
     setTestLoading(providerId);
     setTestResult((prev) => ({ ...prev, [providerId]: null }));
     try {
-      const res = await fetch('/api/ai-provider/test-connection', {
+      const res = await fetch('/api/organization/ai-settings/test-connection', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -306,17 +299,9 @@ export function AiProviderPage() {
 
   const handleSetProvider = async (providerId: string) => {
     const cfg = PROVIDERS.find((p) => p.id === providerId);
-    // Order matters: the server now validates provider/model/baseUrl
-    // compatibility. Save a compatible default model first so switching never
-    // leaves an invalid combination (e.g. google + stale gpt-4o).
     if (cfg && cfg.models.length > 0) {
       await handleSave('ai_model', cfg.models[0].id);
     }
-    // Provider-native providers (google/anthropic/ollama) have a fixed API
-    // path; a leftover OpenAI-compatible gateway base URL would 404. Reset it
-    // so the provider default endpoint is used. OpenAI-style providers
-    // (openai/mistral/custom) keep their custom base URL — gateways are valid
-    // there.
     if (providerId === 'google' || providerId === 'anthropic' || providerId === 'ollama') {
       await handleSave('ai_base_url', '');
     }
@@ -347,7 +332,7 @@ export function AiProviderPage() {
       <div className="mb-6">
         <h2 className="text-xl font-semibold tracking-tight">AI Providers</h2>
         <p className="text-sm text-muted-foreground mt-1">
-          Select and configure the AI provider for OmniSight features.
+          Select and configure the AI provider for your organization.
         </p>
       </div>
 
@@ -371,7 +356,6 @@ export function AiProviderPage() {
                   isExpanded && 'shadow-md',
                 )}
               >
-                {/* Active indicator bar */}
                 {isActive && (
                   <motion.div
                     layoutId="active-provider-bar"
@@ -457,7 +441,6 @@ export function AiProviderPage() {
                     </div>
                   </div>
 
-                  {/* Inline expansion */}
                   <AnimatePresence>
                     {isExpanded && (
                       <motion.div
@@ -790,8 +773,6 @@ export function AiProviderPage() {
   );
 
   // ── Usage Tab ─────────────────────────────────────────────────────────
-  // Rendered by AiProviderUsageTab (extracted module) — see
-  // ai-provider-usage-tab.tsx.
 
   const renderUsageTab = () => (
     <AiProviderUsageTab usage={usage} onRefresh={() => refetchUsage()} />
@@ -817,7 +798,6 @@ export function AiProviderPage() {
           </p>
         </div>
 
-        {/* Feature Toggles */}
         <div className="grid gap-3">
           {toggleItems.map((item, i) => (
             <motion.div
@@ -858,11 +838,10 @@ export function AiProviderPage() {
 
         <Separator />
 
-        {/* System Prompt */}
         <motion.div
           initial={{ opacity: 0, y: 16 }}
           animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.3, duration: 0.35, ease: [0.25, 0.46, 0.45, 0.94] }}
+          transition={{ delay: 0.3, duration: 0.35, ease: 'easeOut' }}
         >
           <Card>
             <CardHeader>
@@ -965,7 +944,6 @@ export function AiProviderPage() {
 
             <Separator className="my-5" />
 
-            {/* Active provider summary */}
             <div className="px-2 space-y-2">
               <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">Active Provider</p>
               <div className="flex items-center gap-2.5">

@@ -2,7 +2,7 @@
 
 import { useState, useMemo, useCallback, useRef, useEffect } from 'react';
 import { useWebSocket, type LiveEventType, type LiveEventLog } from '@/components/providers/websocket-provider';
-import { isSoundWorthy, SOUND_THROTTLE_MS, SOUNDS, readSoundPreference, writeSoundPreference } from '@/lib/sound-alert';
+import { useLiveEventSound } from '@/hooks/use-live-event-sound';
 import { PresenceDot } from '@/components/ui/presence-dot';
 import { useQuery } from '@tanstack/react-query';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -63,83 +63,6 @@ const priorityBorderMap: Record<string, string> = {
   high: 'border-l-rose-400 dark:border-l-rose-600',
   critical: 'border-l-red-500 dark:border-l-red-400',
 };
-
-// ─── Sound Alert (LM-SOUND) ───
-// A single shared HTMLAudioElement (lazy-created on the client only). Reusing
-// one element avoids re-fetch/decode churn, prevents overlapping chimes, and —
-// because the element is first touched inside the "Sound" button's click
-// handler — keeps the browser's autoplay gate satisfied for the programmatic
-// plays that follow. No autoplay bypass is used.
-//
-// Pure utility functions live in src/lib/sound-alert.ts for testability.
-let alertAudio: HTMLAudioElement | null = null;
-
-function getAlertAudio(): HTMLAudioElement | null {
-  if (typeof window === 'undefined') return null;
-  if (!alertAudio) {
-    alertAudio = new Audio(SOUNDS.notification);
-    alertAudio.preload = 'auto';
-  }
-  return alertAudio;
-}
-
-async function playAlertSound(priority?: string): Promise<boolean> {
-  const audio = getAlertAudio();
-  if (!audio) return false;
-  try {
-    // 0 < volume <= 1; critical is louder, everything else stays modest.
-    audio.volume = priority === 'critical' ? 0.8 : 0.4;
-    audio.currentTime = 0; // restart from the beginning (never overlaps)
-    await audio.play();
-    return true;
-  } catch (error) {
-    // Playback can legitimately fail (page never interacted with, audio
-    // unavailable). Stay graceful in production; log a useful diagnostic in
-    // development only so normal operation never spams the console.
-    if (process.env.NODE_ENV === 'development') {
-      console.warn('[LiveMonitor] Failed to play alert sound', error);
-    }
-    return false;
-  }
-}
-
-/** Warm the audio element inside the "Sound" toggle's click gesture: decode
- *  the asset and prove playback is permitted, then emit a brief, low-volume
- *  confirmation blip. This is the explicit user opt-in — not an autoplay
- *  bypass.
- *
- *  Returns true when the browser accepted the unlock, false when it did not
- *  (autoplay policy still blocks, audio asset missing, etc.). */
-function warmUpAlertAudio(): boolean {
-  const audio = getAlertAudio();
-  if (!audio) return false;
-  try {
-    audio.volume = 0.3;
-    audio.currentTime = 0;
-    // Fire-and-forget: the Promise resolves once the browser begins audio
-    // output.  A short blip (120 ms) followed by pause proves the gate is
-    // unlocked.  Errors mean autoplay is still blocked — we surface this to
-    // the caller so the UI can show feedback.
-    void audio.play()
-      .then(() => {
-        setTimeout(() => {
-          audio.pause();
-          audio.currentTime = 0;
-        }, 120);
-      })
-      .catch(() => {
-        // Autoplay unavailable — caller will see the false return.
-      });
-    // Optimistic: if we got here without throwing synchronously the audio
-    // element exists and the user gesture is fresh.  The real gate is the
-    // async play() above, but returning true here lets the UI immediately
-    // show the "enabled" state while the confirmation blip plays.
-    return true;
-  } catch {
-    // audio not supported
-    return false;
-  }
-}
 
 // ─── Event Type Config ───
 function getEventConfig(type: LiveEventType) {
@@ -548,31 +471,18 @@ export function LiveMonitorPage() {
     clearEventLog,
   } = useWebSocket();
 
+  const {
+    soundEnabled,
+    audioUnlockState,
+    toggleSound,
+    onEvent,
+    isUnlocked,
+  } = useLiveEventSound();
+
   const [activeFilters, setActiveFilters] = useState<Set<LiveEventType>>(new Set(ALL_EVENT_TYPES.map(t => t.type)));
-  const [soundEnabled, setSoundEnabled] = useState(readSoundPreference);
-  const [audioReady, setAudioReady] = useState(false);
   const [isPaused, setIsPaused] = useState(false);
   const [pausedSnapshot, setPausedSnapshot] = useState<LiveEventLog[] | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
-  // Sound cursor: id of the newest event already considered for sound, plus
-  // the wall-clock time of the last non-critical sound (throttle).
-  const lastSoundedEventRef = useRef<string | null>(null);
-  const lastSoundTimeRef = useRef(0);
-
-  // Persist sound preference to localStorage
-  useEffect(() => {
-    writeSoundPreference(soundEnabled);
-  }, [soundEnabled]);
-
-  // When sound is enabled, attempt audio unlock.  If the user has previously
-  // enabled sound (persisted preference), try to unlock automatically — the
-  // first user gesture on the page will have already satisfied the browser's
-  // autoplay gate.  If the unlock fails, set audioReady=false so the UI can
-  // show the user they need to click.
-  useEffect(() => {
-    const ready = soundEnabled ? warmUpAlertAudio() : false;
-    setAudioReady(ready);
-  }, [soundEnabled]);
 
   // Filter events
   const filteredEvents = useMemo(() => {
@@ -591,25 +501,6 @@ export function LiveMonitorPage() {
     setIsPaused(prev => !prev);
   }, [isPaused, filteredEvents]);
 
-  // Sound toggle: the explicit user opt-in. Enabling warms the audio element
-  // inside this click gesture (decode + autoplay unlock + confirmation blip);
-  // disabling stops any in-flight chime immediately.
-  const handleToggleSound = useCallback(() => {
-    const next = !soundEnabled;
-    setSoundEnabled(next);
-    if (next) {
-      const unlocked = warmUpAlertAudio();
-      setAudioReady(unlocked);
-    } else {
-      setAudioReady(false);
-      const audio = getAlertAudio();
-      if (audio) {
-        audio.pause();
-        audio.currentTime = 0;
-      }
-    }
-  }, [soundEnabled]);
-
   // Auto-scroll to top on new events
   useEffect(() => {
     if (scrollRef.current && !isPaused) {
@@ -617,30 +508,15 @@ export function LiveMonitorPage() {
     }
   }, [displayedEvents.length, isPaused]);
 
-  // Baseline the sound cursor at the newest event present on mount — the
-  // stream history that already exists when the page loads must never sound.
-  useEffect(() => {
-    lastSoundedEventRef.current = eventLog[0]?.id ?? null;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  // Sound alerts: fire for genuinely NEW events entering the Live Event Stream
-  // (eventLog[0] is the newest). Each event is considered exactly once (per
-  // event id), gated on the toggle, filtered by isSoundWorthy, and throttled
-  // for non-critical events. No sound on mount, no repeats for the same event,
-  // no heartbeat spam, and toggling OFF stops in-flight chimes via the button.
+  // Fire sound for genuinely NEW events entering the Live Event Stream.
+  // The hook handles: dedup (event.id), sound-worthiness, throttle, and
+  // autoplay gate. No sound on mount (lastSoundedEventRef is seeded by the
+  // hook on first render).
   useEffect(() => {
     const newest = eventLog[0];
     if (!newest) return;
-    if (newest.id === lastSoundedEventRef.current) return; // already considered
-    lastSoundedEventRef.current = newest.id;
-    if (!soundEnabled) return;
-    if (!isSoundWorthy(newest)) return;
-    const now = Date.now();
-    if (newest.priority !== 'critical' && now - lastSoundTimeRef.current < SOUND_THROTTLE_MS) return;
-    lastSoundTimeRef.current = now;
-    playAlertSound(newest.priority);
-  }, [eventLog, soundEnabled]);
+    onEvent(newest);
+  }, [eventLog, onEvent]);
 
   const toggleFilter = useCallback((type: LiveEventType) => {
     setActiveFilters(prev => {
@@ -690,14 +566,23 @@ export function LiveMonitorPage() {
               <Button
                 variant={soundEnabled ? 'default' : 'outline'}
                 size="sm"
-                className={cn('h-8 gap-1.5 text-xs', soundEnabled && !audioReady && 'border-amber-300 text-amber-600 dark:border-amber-700 dark:text-amber-400')}
-                onClick={handleToggleSound}
+                className={cn(
+                  'h-8 gap-1.5 text-xs',
+                  soundEnabled && !isUnlocked && 'border-amber-300 text-amber-600 dark:border-amber-700 dark:text-amber-400'
+                )}
+                onClick={toggleSound}
               >
                 {soundEnabled ? <Volume2 className="h-3.5 w-3.5" /> : <VolumeX className="h-3.5 w-3.5" />}
-                {soundEnabled ? (audioReady ? 'Sound' : 'Sound…') : 'Enable Sound'}
+                {soundEnabled ? (isUnlocked ? 'Sound' : 'Sound…') : 'Enable Sound'}
               </Button>
             </TooltipTrigger>
-            <TooltipContent><p className="text-xs">{soundEnabled ? (audioReady ? 'Sound alerts active' : 'Click to enable audio') : 'Enable sound alerts for live events'}</p></TooltipContent>
+            <TooltipContent>
+              <p className="text-xs">
+                {soundEnabled
+                  ? (isUnlocked ? 'Sound alerts active' : 'Click to enable audio')
+                  : 'Enable sound alerts for live events'}
+              </p>
+            </TooltipContent>
           </Tooltip>
 
           {/* Pause toggle */}
