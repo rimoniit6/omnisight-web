@@ -5,6 +5,7 @@ import { authError, requireSessionOrg, validatePagination } from '@/lib/api';
 import { authenticateRequest } from '@/lib/api';
 import { hasRolePermission } from '@/lib/auth';
 import { log, requestContext } from '@/lib/logger';
+import { aggregateActionDistribution } from '@/lib/audit-action-normalizer';
 
 export async function GET(req: NextRequest) {
   try {
@@ -59,11 +60,15 @@ export async function GET(req: NextRequest) {
 
     const totalPages = Math.ceil(total / pageSize);
 
-    // Action distribution (aggregated in the DB — no full-table load)
-    const actionDist: Record<string, number> = {};
+    // Action distribution (aggregated in the DB, then normalized to
+    // canonical human-readable categories for the chart).
+    const rawActionDist: Record<string, number> = {};
     const resourceDist: Record<string, number> = {};
-    for (const g of actionGroup) actionDist[g.action] = g._count._all;
+    for (const g of actionGroup) rawActionDist[g.action] = g._count._all;
     for (const g of resourceGroup) resourceDist[g.resource] = g._count._all;
+
+    // Normalize raw DB actions → canonical chart categories
+    const actionDist = aggregateActionDistribution(rawActionDist);
 
     // Most common action
     const sortedActions = Object.entries(actionDist).sort((a, b) => b[1] - a[1]);

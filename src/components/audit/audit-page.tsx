@@ -10,7 +10,7 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { PaginationControls } from '@/components/ui/pagination-controls';
 import { EmptyState } from '@/components/ui/empty-state';
 import { formatDistanceToNow, isToday, isYesterday, format } from 'date-fns';
-import { ClipboardList, FileDown, Plus, Pencil, Trash2, LogIn, LogOut, Download, Settings, BarChart3, Target, Hash } from 'lucide-react';
+import { ClipboardList, FileDown, Plus, Pencil, Trash2, LogIn, LogOut, Download, Settings, BarChart3, Target, Hash, Brain, Upload, Key, ShieldAlert, Search } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { toast } from 'sonner';
 import { exportToCSV } from '@/lib/csv-export';
@@ -24,6 +24,12 @@ const actionColors: Record<string, string> = {
   logout: 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400',
   export: 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-400',
   configure: 'bg-purple-100 text-purple-700 dark:bg-purple-900/40 dark:text-purple-400',
+  detect: 'bg-sky-100 text-sky-700 dark:bg-sky-900/40 dark:text-sky-400',
+  ai_analysis: 'bg-indigo-100 text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-400',
+  import: 'bg-cyan-100 text-cyan-700 dark:bg-cyan-900/40 dark:text-cyan-400',
+  reset: 'bg-orange-100 text-orange-700 dark:bg-orange-900/40 dark:text-orange-400',
+  revoke: 'bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-400',
+  other: 'bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400',
 };
 
 const actionBorderColors: Record<string, string> = {
@@ -34,6 +40,12 @@ const actionBorderColors: Record<string, string> = {
   logout: 'border-l-slate-400',
   export: 'border-l-amber-400',
   configure: 'border-l-purple-500',
+  detect: 'border-l-sky-500',
+  ai_analysis: 'border-l-indigo-500',
+  import: 'border-l-cyan-500',
+  reset: 'border-l-orange-500',
+  revoke: 'border-l-red-500',
+  other: 'border-l-gray-400',
 };
 
 const actionBarColors: Record<string, string> = {
@@ -44,6 +56,12 @@ const actionBarColors: Record<string, string> = {
   logout: 'bg-slate-400',
   export: 'bg-amber-400',
   configure: 'bg-purple-500',
+  detect: 'bg-sky-500',
+  ai_analysis: 'bg-indigo-500',
+  import: 'bg-cyan-500',
+  reset: 'bg-orange-500',
+  revoke: 'bg-red-500',
+  other: 'bg-gray-400',
 };
 
 const actionAvatarBg: Record<string, string> = {
@@ -54,6 +72,12 @@ const actionAvatarBg: Record<string, string> = {
   logout: 'bg-slate-500',
   export: 'bg-amber-400',
   configure: 'bg-purple-500',
+  detect: 'bg-sky-500',
+  ai_analysis: 'bg-indigo-500',
+  import: 'bg-cyan-500',
+  reset: 'bg-orange-500',
+  revoke: 'bg-red-500',
+  other: 'bg-gray-400',
 };
 
 const actionIcons: Record<string, React.ElementType> = {
@@ -64,6 +88,12 @@ const actionIcons: Record<string, React.ElementType> = {
   logout: LogOut,
   export: Download,
   configure: Settings,
+  detect: Search,
+  ai_analysis: Brain,
+  import: Upload,
+  reset: Key,
+  revoke: ShieldAlert,
+  other: ClipboardList,
 };
 
 interface AuditLogEntry {
@@ -142,7 +172,7 @@ export function AuditPage() {
             <SelectContent>
               <SelectItem value='all'>All Actions</SelectItem>
               {Object.keys(actionColors).map((a) => (
-                <SelectItem key={a} value={a} className='capitalize'>{a}</SelectItem>
+                <SelectItem key={a} value={a} className='capitalize'>{a.replace(/_/g, ' ')}</SelectItem>
               ))}
             </SelectContent>
           </Select>
