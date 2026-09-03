@@ -85,6 +85,10 @@ const eslintConfig = [
   {
     ignores: [
       "node_modules/**",
+      // Claude Code local helper scripts (CommonJS `require()` hooks) — not
+      // part of the product source tree; keeping them linted would add errors
+      // that have nothing to do with src/ or tests/.
+      ".claude/**",
       ".next/**",
       "out/**",
       // Compiled Electron-agent output (gitignored, never linted — see

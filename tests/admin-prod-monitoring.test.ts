@@ -13,6 +13,7 @@ import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { execSync } from 'node:child_process';
 import { NextRequest } from 'next/server';
+import { req } from './helpers/request';
 
 // ─── Test DB isolation (set BEFORE any app module import) ──────────────────
 const PG_TEST_BASE = process.env.PG_TEST_BASE_URL || 'postgresql://postgres:123456@localhost:5432';
@@ -72,16 +73,6 @@ after(async () => {
   }
 });
 
-function req(token: string | null, opts: { method?: string; body?: unknown; url?: string } = {}): NextRequest {
-  const headers: Record<string, string> = {};
-  if (token) headers['authorization'] = `Bearer ${token}`;
-  if (opts.body !== undefined) headers['content-type'] = 'application/json';
-  return new NextRequest(opts.url || 'http://localhost:3000/api/test', {
-    method: opts.method || 'GET',
-    headers,
-    body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined,
-  });
-}
 
 async function getSetting(api: { GET: (r: NextRequest) => Promise<Response> }, token: string, key: string): Promise<Record<string, unknown> | undefined> {
   const res = await api.GET(req(token, { url: 'http://localhost:3000/api/settings/monitoring' }));
@@ -283,4 +274,105 @@ test('MON-PROD-11: agent config resolves monitoring + timezone from org data (no
   const bodyB = await resB.json();
   assert.equal(bodyB.config.monitoring.screenshotEnabled, true, 'org B must use defaults, not poisoned SystemSetting');
   assert.equal(bodyB.config.monitoring.timezone, 'UTC', 'org B timezone is UTC');
+});
+
+test('MON-PROD-12: GET exposes the Phase 1 server-side keys (activity_dedupe, agent_min_version) with typed metadata', async () => {
+  const api = await import('../src/app/api/settings/monitoring/route');
+  const res = await api.GET(req(adminAToken, { url: 'http://localhost:3000/api/settings/monitoring' }));
+  assert.equal(res.status, 200);
+  const body = await res.json();
+  const byKey = new Map((body.data as Array<Record<string, unknown>>).map((s) => [s.key, s]));
+
+  const dedupe = byKey.get('activity_dedupe');
+  assert.ok(dedupe, 'activity_dedupe must be listed');
+  assert.equal(dedupe?.type, 'boolean');
+  assert.equal(dedupe?.default, false, 'dedupe must default OFF (safe rollout)');
+  assert.equal(dedupe?.value, false, 'no row set yet — default false');
+
+  const minVer = byKey.get('agent_min_version');
+  assert.ok(minVer, 'agent_min_version must be listed');
+  assert.equal(minVer?.type, 'text');
+  assert.equal(minVer?.default, '', 'no floor by default');
+  assert.equal(minVer?.value, '', 'no row set yet — empty floor');
+});
+
+test('MON-PROD-13: activity_dedupe toggle is org-scoped — org A enable does NOT bleed into org B', async () => {
+  const api = await import('../src/app/api/settings/monitoring/route');
+
+  const resA = await api.PUT(req(adminAToken, { method: 'PUT', body: { key: 'activity_dedupe', value: true } }));
+  assert.equal(resA.status, 200, 'admin A must be able to enable dedupe');
+
+  const a = await getSetting(api, adminAToken, 'activity_dedupe');
+  assert.equal(a?.value, true, 'org A must now read true');
+
+  const b = await getSetting(api, adminBToken, 'activity_dedupe');
+  assert.equal(b?.value, false, 'org B must remain at the default false');
+  assert.equal(
+    await db.organizationSetting.count({ where: { organizationId: orgB.id, key: 'activity_dedupe' } }),
+    0,
+    'no activity_dedupe row may exist for org B'
+  );
+
+  // The server-side resolver used by the activity route reflects the org row.
+  const { resolveActivityDedupeEnabled } = await import('../src/lib/jobs/settings');
+  assert.equal(await resolveActivityDedupeEnabled(orgA.id), true);
+  assert.equal(await resolveActivityDedupeEnabled(orgB.id), false);
+});
+
+test('MON-PROD-14: agent_min_version text validation — version accepted, invalid + oversized rejected (422), empty clears', async () => {
+  const api = await import('../src/app/api/settings/monitoring/route');
+
+  // Valid semantic version stored.
+  const ok = await api.PUT(req(adminAToken, { method: 'PUT', body: { key: 'agent_min_version', value: '1.2.0' } }));
+  assert.equal(ok.status, 200, 'plain semantic version must be accepted');
+  assert.equal((await getSetting(api, adminAToken, 'agent_min_version'))?.value, '1.2.0');
+
+  // Whitespace is trimmed.
+  const padded = await api.PUT(req(adminAToken, { method: 'PUT', body: { key: 'agent_min_version', value: '  2.0.1  ' } }));
+  assert.equal(padded.status, 200);
+  assert.equal((await getSetting(api, adminAToken, 'agent_min_version'))?.value, '2.0.1');
+
+  // Injected / malformed values are rejected by the text validator.
+  assert.equal(
+    (await api.PUT(req(adminAToken, { method: 'PUT', body: { key: 'agent_min_version', value: '1.2.0; DROP TABLE' } }))).status,
+    422,
+    'shell/metacharacters must be rejected'
+  );
+  assert.equal(
+    (await api.PUT(req(adminAToken, { method: 'PUT', body: { key: 'agent_min_version', value: 'a'.repeat(65) } }))).status,
+    422,
+    'oversized values must be rejected'
+  );
+
+  // Empty string clears the floor back to the default.
+  const cleared = await api.PUT(req(adminAToken, { method: 'PUT', body: { key: 'agent_min_version', value: '' } }));
+  assert.equal(cleared.status, 200);
+  assert.equal((await getSetting(api, adminAToken, 'agent_min_version'))?.value, '', 'empty value must clear the floor');
+
+  const { resolveAgentMinVersion } = await import('../src/lib/jobs/settings');
+  assert.equal(await resolveAgentMinVersion(orgA.id), null, 'cleared floor resolves to null (no gate)');
+  assert.equal(await resolveAgentMinVersion(orgB.id), null, 'org B never had a floor');
+});
+
+test('MON-PROD-15: server-side keys never leak into the agent config payload', async () => {
+  // Re-enable both server-side toggles so the leak would be observable if it
+  // existed, then fetch the agent config contract and prove they are absent.
+  const api = await import('../src/app/api/settings/monitoring/route');
+  await api.PUT(req(adminAToken, { method: 'PUT', body: { key: 'activity_dedupe', value: true } }));
+  await api.PUT(req(adminAToken, { method: 'PUT', body: { key: 'agent_min_version', value: '9.9.9' } }));
+
+  const configApi = await import('../src/app/api/agent/config/route');
+  const res = await configApi.GET(req('mon-prod-agent-token-0123456789abcdef0123456789abcdef'));
+  assert.equal(res.status, 200);
+  const body = await res.json();
+
+  // Stringify the whole payload: server-only keys must appear nowhere.
+  const serialized = JSON.stringify(body);
+  assert.ok(!serialized.includes('activity_dedupe'), 'activity_dedupe must never reach the agent');
+  assert.ok(!serialized.includes('agent_min_version'), 'agent_min_version must never reach the agent');
+  assert.ok(!serialized.includes('ai_anomaly_detection'), 'ai_anomaly_detection must never reach the agent');
+
+  // The agent-facing monitoring contract stays intact and reflects org A rows.
+  assert.equal(typeof body.config.monitoring.heartbeatInterval, 'number');
+  assert.equal(body.config.monitoring.screenshotEnabled, false, 'org A screenshot_enabled (set in MON-PROD-1) still false');
 });

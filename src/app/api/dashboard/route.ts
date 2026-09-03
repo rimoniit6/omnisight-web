@@ -3,14 +3,13 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { authError, requireSessionOrg } from '@/lib/api';
 import { effectiveDeviceStatus } from '@/lib/device-status';
-import { localDayKey, lastNDayKeys } from '@/lib/timezone';
+import { lastNDayKeys } from '@/lib/timezone';
 import {
   excludeInternalAgentActivities,
   NON_INTERNAL_AGENT_ACTIVITY_FILTER,
 } from '@/lib/agent-process';
+import { readOrgDayTotals } from '@/lib/workday/consume';
 import { log } from '@/lib/logger';
-
-const DAY_MS = 24 * 60 * 60 * 1000;
 
 function emptyDashboard() {
   return NextResponse.json({
@@ -63,11 +62,11 @@ export async function GET(req: NextRequest) {
     log.info('dashboard.organization:success', { durationMs: Date.now() - orgStart, ...ctx });
 
     // ── 7-day trailing window (S-5) for productivity metrics ──────────────
-    // avgProductivity and topEmployees are computed from the LAST 7 DAYS only
-    // — never the unbounded historical total, which would dwarf recent
-    // behavior and grow stale over time.
+    // avgProductivity and topEmployees are computed from the LAST 7 org-local
+    // days only — never the unbounded historical total, which would dwarf
+    // recent behavior and grow stale over time. One pinned clock per request
+    // keeps the day keys, today's raw fallback and the rollup reads in sync.
     const now = new Date();
-    const sevenDaysAgo = new Date(now.getTime() - 7 * DAY_MS);
 
     // ── Effective online devices (S-5) ────────────────────────────────────
     // A stale device (no fresh heartbeat within the centralized presence
@@ -116,75 +115,39 @@ export async function GET(req: NextRequest) {
       ]);
     log.info('dashboard.queries:success', { durationMs: Date.now() - queriesStart, ...ctx });
 
-    // ── Single consolidated activity query (10-day window) ─────────────────
-    // REPLACES the previous two separate queries:
-    //   1. Employee7-day activities (per-employee includes → N+1 overhead)
-    //   2. Recent10-day activities (separate full scan)
+    // ── Daily productivity in ORGANIZATION-local days (S-6) ───────────────
+    // Buckets use the org timezone: 23:30 UTC in Asia/Dhaka (+06) is 05:30 the
+    // NEXT local day and must land in that bucket.
     //
-    // The10-day window is a superset of the7-day window. Both employee
-    // summaries (top 5 employees by productive time) and daily productivity
-    // buckets are derived from this single result set in JS, eliminating one
-    // full table scan and the per-employee include overhead.
-    //
-    // Internal agent process exclusion is applied at the DB layer via
-    // NON_INTERNAL_AGENT_ACTIVITY_FILTER (AND with the OR predicate) so the
-    // rows never leave the database engine.
+    // Phase 4 wiring: per-day per-employee totals are read from the
+    // WorkDaySummary rollup when the aggregation job has covered a day, with
+    // an EXACT raw-row fallback for the current org-local day (its summary is
+    // partial until the day completes) and for any uncovered past day (pre-
+    // backfill installs). The fallback runs the SAME aggregation engine over
+    // the SAME org-local window, so a day served from the rollup and a day
+    // served from raw rows produce byte-identical values — and empty days are
+    // never fabricated. The rolling 7×24 h productive-employee window of the
+    // old implementation is superseded by the SAME 7 org-local day window the
+    // trend/score use, so every productivity KPI on this page shares one
+    // window and can never disagree (DP-7).
     log.info('dashboard.activities:start', { ...ctx });
     const activitiesStart = Date.now();
-    const windowStart = new Date(now.getTime() - 10 * DAY_MS);
-    const allActivities = excludeInternalAgentActivities(
-      await db.activity.findMany({
-        where: {
-          employee: { organizationId: orgId },
-          timestamp: { gte: windowStart },
-          ...NON_INTERNAL_AGENT_ACTIVITY_FILTER,
-        },
-        select: {
-          timestamp: true,
-          duration: true,
-          category: true,
-          applicationName: true,
-          employeeId: true,
-        },
-      })
-    );
-    log.info('dashboard.activities:success', {
-      activityCount: allActivities.length,
-      durationMs: Date.now() - activitiesStart,
-      ...ctx,
+    const dailyKeys = lastNDayKeys(orgTz, 7, now);
+    const dayTotals = await readOrgDayTotals({
+      organizationId: orgId,
+      timezone: orgTz,
+      dayKeys: dailyKeys,
+      now,
     });
 
-    // ── Recent activities (last 10, for the feed) ──────────────────────────
-    // Sliced from the consolidated result — no separate DB query needed.
-    // We need employee+device info for the feed, so do a targeted small query.
-    log.info('dashboard.recent:start', { ...ctx });
-    const recentStart = Date.now();
-    const recentActivities = excludeInternalAgentActivities(
-      await db.activity.findMany({
-        where: {
-          employee: { organizationId: orgId },
-          ...NON_INTERNAL_AGENT_ACTIVITY_FILTER,
-        },
-        take: 10,
-        orderBy: { timestamp: 'desc' },
-        include: {
-          employee: { select: { id: true, firstName: true, lastName: true, avatar: true } },
-          device: { select: { id: true, name: true } },
-        },
-      })
-    );
-    log.info('dashboard.recent:success', { durationMs: Date.now() - recentStart, ...ctx });
-
-    // ── Derive employee summaries from the consolidated result ─────────────
-    // Group activities by employeeId, sum productive duration within the
-    // 7-day window, then rank top 5. This replaces the per-employee include
-    // query that caused N+1 overhead for50 employees.
+    // Per-employee productive seconds over the SAME 7 org-local day window
+    // (each day sourced from rollup or raw — never both).
     const employeeActivityMap = new Map<string, number>();
-    for (const a of allActivities) {
-      if (a.category === 'productive' && a.timestamp >= sevenDaysAgo) {
+    for (const byEmp of dayTotals.rows.values()) {
+      for (const totals of byEmp.values()) {
         employeeActivityMap.set(
-          a.employeeId,
-          (employeeActivityMap.get(a.employeeId) ?? 0) + a.duration
+          totals.employeeId,
+          (employeeActivityMap.get(totals.employeeId) ?? 0) + totals.productiveSeconds
         );
       }
     }
@@ -192,7 +155,7 @@ export async function GET(req: NextRequest) {
     // avgProductivity — productive time per active employee over the trailing
     // 7-day window, in hours (never fabricated; zero when no data).
     let totalProductiveTime = 0;
-    for (const dur of employeeActivityMap.values()) totalProductiveTime += dur;
+    for (const secs of employeeActivityMap.values()) totalProductiveTime += secs;
     const avgProductivity =
       totalEmployees > 0
         ? Math.round((totalProductiveTime / totalEmployees / 3600) * 100) / 100
@@ -231,27 +194,61 @@ export async function GET(req: NextRequest) {
             firstName: row?.firstName ?? '',
             lastName: row?.lastName ?? '',
             department: row?.department?.name || 'Unassigned',
+            // Seconds on the wire (the UI divides by 3600 for hours) — the
+            // rollup stores exact seconds, unchanged units from the raw path.
             productiveTime: employeeActivityMap.get(id) ?? 0,
           };
         })
         .filter((e) => e.firstName); // skip if employee was deleted concurrently
     }
 
-    // ── Daily productivity in ORGANIZATION-local days (S-6) ───────────────
-    // Buckets use the org timezone: 23:30 UTC in Asia/Dhaka (+06) is 05:30 the
-    // NEXT local day and must land in that bucket. Derive from the consolidated
-    // activity result — no separate DB query needed.
-    const dailyKeys = lastNDayKeys(orgTz, 7, now);
+    // Collapse per-employee rows into the org-day totals the trend renders
+    // (rounding happens ONCE per day on the summed seconds — identical to the
+    // pre-rollup behavior, so chart values never shift).
     const byDay = new Map<string, { productive: number; neutral: number; unproductive: number }>();
-    for (const a of allActivities) {
-      const key = localDayKey(a.timestamp, orgTz);
-      const entry = byDay.get(key) ?? { productive: 0, neutral: 0, unproductive: 0 };
-      if (a.category === 'productive') entry.productive += a.duration;
-      else if (a.category === 'neutral') entry.neutral += a.duration;
-      else if (a.category === 'unproductive') entry.unproductive += a.duration;
-      byDay.set(key, entry);
+    for (const key of dailyKeys) {
+      const byEmp = dayTotals.rows.get(key);
+      if (!byEmp) continue;
+      let productive = 0;
+      let neutral = 0;
+      let unproductive = 0;
+      for (const totals of byEmp.values()) {
+        productive += totals.productiveSeconds;
+        neutral += totals.neutralSeconds;
+        unproductive += totals.unproductiveSeconds;
+      }
+      byDay.set(key, { productive, neutral, unproductive });
     }
+    log.info('dashboard.activities:success', {
+      summaryDays: [...dayTotals.source.values()].filter((s) => s === 'summary').length,
+      rawDays: [...dayTotals.source.values()].filter((s) => s === 'raw').length,
+      durationMs: Date.now() - activitiesStart,
+      ...ctx,
+    });
 
+    // ── Recent activities (last 10, for the feed) ──────────────────────────
+    // The feed is deliberately NOT served from the rollup (WorkDaySummary
+    // stores totals, not the individual rows a live feed needs) — a targeted
+    // bounded query, internal-agent rows excluded at the DB layer.
+    log.info('dashboard.recent:start', { ...ctx });
+    const recentStart = Date.now();
+    const recentActivities = excludeInternalAgentActivities(
+      await db.activity.findMany({
+        where: {
+          employee: { organizationId: orgId },
+          ...NON_INTERNAL_AGENT_ACTIVITY_FILTER,
+        },
+        take: 10,
+        orderBy: { timestamp: 'desc' },
+        include: {
+          employee: { select: { id: true, firstName: true, lastName: true, avatar: true } },
+          device: { select: { id: true, name: true } },
+        },
+      })
+    );
+    log.info('dashboard.recent:success', { durationMs: Date.now() - recentStart, ...ctx });
+
+    // ── Daily productivity buckets (minutes) ───────────────────────────────
     const dailyProductivity = dailyKeys.map((key) => {
       const entry = byDay.get(key) ?? { productive: 0, neutral: 0, unproductive: 0 };
       // Label derived from the local date key (formatted via UTC so the label

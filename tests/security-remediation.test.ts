@@ -137,7 +137,8 @@ function req(
   if (opts.ua) headers['user-agent'] = opts.ua;
   if (opts.body !== undefined) headers['content-type'] = 'application/json';
   return new NextRequest(opts.url || 'http://localhost:3000/api/test', {
-    method: opts.method || 'GET',
+    // GET+body is invalid in Next 16 — a body without an explicit method means POST.
+    method: opts.method ?? (opts.body !== undefined ? 'POST' : 'GET'),
     headers,
     body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined,
   });

@@ -26,7 +26,7 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { execSync } from 'node:child_process';
-import { NextRequest } from 'next/server';
+import { req } from './helpers/request';
 
 // ─── Test DB isolation (set BEFORE any app module import) ──────────────────
 const PG_TEST_BASE = process.env.PG_TEST_BASE_URL || 'postgresql://postgres:123456@localhost:5432';
@@ -67,10 +67,12 @@ type DiscoverApi = typeof import('../src/app/api/agent/discover/route');
 type ClaimApproveApi = typeof import('../src/app/api/device-claims/[id]/approve/route');
 type ActivityApi = typeof import('../src/app/api/agent/activity/route');
 type LoginApi = typeof import('../src/app/api/auth/login/route');
+type AgentLoginApi = typeof import('../src/app/api/agent/login/route');
 let discoverApi: DiscoverApi;
 let claimApproveApi: ClaimApproveApi;
 let activityApi: ActivityApi;
 let loginApi: LoginApi;
+let agentLoginApi: AgentLoginApi;
 let hasActiveConsent: (employeeId: string, consentType: string) => Promise<boolean>;
 let signJWT: (payload: { userId: string; email: string; role: string; organizationId?: string }) => Promise<string>;
 
@@ -92,16 +94,18 @@ before(async () => {
   hashPassword = (await import('../src/lib/auth')).hashPassword;
   createAgentAccount = (await import('../src/lib/agent-account')).createAgentAccount;
 
-  const [dApi, caApi, actApi, lApi] = await Promise.all([
+  const [dApi, caApi, actApi, lApi, alApi] = await Promise.all([
     import('../src/app/api/agent/discover/route'),
     import('../src/app/api/device-claims/[id]/approve/route'),
     import('../src/app/api/agent/activity/route'),
     import('../src/app/api/auth/login/route'),
+    import('../src/app/api/agent/login/route'),
   ]);
   discoverApi = dApi;
   claimApproveApi = caApi;
   activityApi = actApi;
   loginApi = lApi;
+  agentLoginApi = alApi;
 
   org = await db.organization.create({ data: { name: 'SA Org', slug: 'sa-org' } });
 });
@@ -118,17 +122,6 @@ after(async () => {
   }
 });
 
-function req(token: string | null, opts: { method?: string; body?: unknown; url?: string; ip?: string } = {}): NextRequest {
-  const headers: Record<string, string> = {};
-  if (token) headers['authorization'] = `Bearer ${token}`;
-  if (opts.ip) headers['x-forwarded-for'] = opts.ip;
-  if (opts.body !== undefined) headers['content-type'] = 'application/json';
-  return new NextRequest(opts.url || 'http://localhost:3000/api/test', {
-    method: opts.method || 'GET',
-    headers,
-    body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined,
-  });
-}
 
 async function seedOrg(slug: string) {
   return db.organization.create({ data: { name: slug, slug } });
@@ -349,7 +342,7 @@ test('SA-15: authenticated discovery still works after production bootstrap', as
   // Create employee + account for authenticated discovery
   const emp = await seedEmployee(org.id, 'SA15-EMP');
   await createAgentAccount({ employeeId: emp.id, agentId: 'SA15-EMP', password: PASSWORD });
-  const loginRes = await loginApi.POST(req(null, { body: { agentId: 'SA15-EMP', password: PASSWORD } }));
+  const loginRes = await agentLoginApi.POST(req(null, { body: { agentId: 'SA15-EMP', password: PASSWORD } }));
   const sessionToken = (await loginRes.json() as { token?: string }).token;
   const res = await discoverApi.POST(
     req(sessionToken, {
@@ -374,7 +367,7 @@ test('SA-15: authenticated discovery still works after production bootstrap', as
 test('SA-16: approval creates NO consent — device approval is not consent', async () => {
   const emp = await seedEmployee(org.id, 'SA16-EMP');
   const empAccount = await createTestEmployeeAndAccount('SA16-ACC');
-  const loginRes = await loginApi.POST(req(null, { body: { agentId: 'SA16-ACC', password: PASSWORD } }));
+  const loginRes = await agentLoginApi.POST(req(null, { body: { agentId: 'SA16-ACC', password: PASSWORD } }));
   const sessionToken = (await loginRes.json() as { token?: string }).token;
   const d = await discoverApi.POST(
     req(sessionToken, {
@@ -399,7 +392,7 @@ test('SA-16: approval creates NO consent — device approval is not consent', as
 test('SA-17: consent fail-closed remains intact — no consent means 403 upload', async () => {
   const emp = await seedEmployee(org.id, 'SA17-EMP');
   const empAccount = await createTestEmployeeAndAccount('SA17-ACC');
-  const loginRes = await loginApi.POST(req(null, { body: { agentId: 'SA17-ACC', password: PASSWORD } }));
+  const loginRes = await agentLoginApi.POST(req(null, { body: { agentId: 'SA17-ACC', password: PASSWORD } }));
   const sessionToken = (await loginRes.json() as { token?: string }).token;
   const d = await discoverApi.POST(
     req(sessionToken, {

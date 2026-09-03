@@ -70,10 +70,16 @@ export async function DELETE(
     // Try to delete the stored object through the active storage driver
     // (local filesystem, or Supabase Storage on Vercel). A missing object or
     // an absent filePath (nothing stored) is treated as already deleted —
-    // the DB row is still removed.
-    if (screenshot.filePath) {
+    // the DB row is still removed. Phase 2: the derived thumbnail object (if
+    // any) is deleted FIRST so a deleted row can never leave an orphaned
+    // thumbnail behind. Original + thumbnail are both removed through the
+    // same storage abstraction.
+    const artifacts = [screenshot.thumbnailPath, screenshot.filePath].filter(
+      (p): p is string => Boolean(p)
+    );
+    for (const artifactPath of artifacts) {
       try {
-        await deleteScreenshot(admin.organizationId, screenshot.filePath);
+        await deleteScreenshot(admin.organizationId, artifactPath);
       } catch (error) {
         if (!isNotFound(error)) {
           throw error;

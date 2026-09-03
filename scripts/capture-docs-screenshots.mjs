@@ -1,5 +1,5 @@
 import { chromium } from 'playwright';
-import { mkdirSync } from 'fs';
+import { mkdirSync, readFileSync } from 'fs';
 import { resolve, dirname } from 'path';
 import { fileURLToPath } from 'url';
 
@@ -8,6 +8,26 @@ const SCREENSHOT_DIR = resolve(__dirname, '..', 'docs', 'screenshots');
 mkdirSync(SCREENSHOT_DIR, { recursive: true });
 
 const BASE_URL = process.env.BASE_URL || 'http://localhost:3000';
+
+// Super-admin credentials come from the environment (never hardcoded). For a
+// plain local run the script falls back to reading the gitignored ../.env file
+// (SUPER_ADMIN_EMAIL / SUPER_ADMIN_PASSWORD), matching scripts/bootstrap-super-admin.ts.
+function readLocalEnv() {
+  try {
+    const raw = readFileSync(resolve(__dirname, '..', '.env'), 'utf8');
+    const out = {};
+    for (const line of raw.split(/\r?\n/)) {
+      const m = line.match(/^([A-Z0-9_]+)\s*=\s*(.*)$/);
+      if (m) out[m[1]] = m[2].replace(/^["']|["']$/g, '');
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+const localEnv = readLocalEnv();
+const SUPER_ADMIN_EMAIL = process.env.SUPER_ADMIN_EMAIL || localEnv.SUPER_ADMIN_EMAIL;
+const SUPER_ADMIN_PASSWORD = process.env.SUPER_ADMIN_PASSWORD || localEnv.SUPER_ADMIN_PASSWORD;
 
 async function sleep(ms) {
   return new Promise(r => setTimeout(r, ms));
@@ -89,9 +109,13 @@ async function main() {
   // Capture login page
   await captureScreenshot(page, '01-login.png');
 
-  // Use super admin credentials
-  const loginEmail = 'rimon@admin.com';
-  const loginPassword = 'Rimon0000000';
+  // Use super admin credentials from env (or the local .env file)
+  if (!SUPER_ADMIN_EMAIL || !SUPER_ADMIN_PASSWORD) {
+    console.error('Set SUPER_ADMIN_EMAIL / SUPER_ADMIN_PASSWORD (or populate .env) to run this capture script.');
+    process.exit(1);
+  }
+  const loginEmail = SUPER_ADMIN_EMAIL;
+  const loginPassword = SUPER_ADMIN_PASSWORD;
   
   console.log(`Attempting login with: ${loginEmail}`);
   const emailInput = page.locator('input[type="email"], input#email');

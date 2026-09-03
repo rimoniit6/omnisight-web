@@ -160,12 +160,22 @@ agentTest('BRAND-6: official brand assets present and referenced (no legacy artw
   for (const path of stale) {
     assert.ok(!existsSync(join(ROOT, path)), `${path} must be removed (legacy/duplicate artwork)`);
   }
-  const legacyRefs = ['/worklens-logo.png', '/logo.svg', '/branding/', 'omnisight-mark.png'];
+  const legacyRefs = ['/worklens-logo.png', '/logo.svg', 'omnisight-mark.png'];
   for (const rel of USER_FACING) {
     const text = readFileSync(resolvePath(rel), 'utf8');
     for (const ref of legacyRefs) {
       assert.ok(!text.includes(ref), `${rel} must not reference stale artwork (${ref})`);
     }
+    // `/branding/` was the legacy artwork URL prefix. The CURRENT branding
+    // feature legitimately contains `@/components/branding/*` module import
+    // paths (which also contain the substring `/branding/`), so a bare
+    // substring check is a false positive. A real stale reference is a URL or
+    // asset reference (`src=`, `href=`, `fetch('.../branding/...')`) — check
+    // for that shape only.
+    assert.ok(
+      !/(?:src|href|fetch\(["'])\/branding\//.test(text),
+      `${rel} must not reference stale /branding/ assets`
+    );
   }
   const renderer = readFileSync(join(AGENT_ROOT, 'src/renderer/index.html'), 'utf8');
   assert.ok(renderer.includes('omnisight-mark.svg'), 'agent renderer must use the presentation derivative');

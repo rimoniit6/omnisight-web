@@ -26,19 +26,24 @@ export interface OrphanSweepResult {
  * Load every file basename referenced by a Screenshot row (chunked so the
  * query stays bounded on large datasets). The returned set is used to decide
  * which on-disk files are orphans.
+ *
+ * Phase 2: thumbnail objects are referenced by the `thumbnailPath` column and
+ * must be kept exactly like originals — a processed screenshot's thumbnail is
+ * never an orphan. Orphaned thumbs (rows deleted without their object, or an
+ * object written before its row update) carry no reference and are swept.
  */
 async function collectReferencedFilenames(chunk = 2000): Promise<Set<string>> {
   const referenced = new Set<string>();
   let skip = 0;
   for (;;) {
     const rows = await db.screenshot.findMany({
-      select: { filePath: true },
+      select: { filePath: true, thumbnailPath: true },
       skip,
       take: chunk,
     });
     for (const row of rows) {
-      if (!row.filePath) continue;
-      referenced.add(basename(row.filePath));
+      if (row.filePath) referenced.add(basename(row.filePath));
+      if (row.thumbnailPath) referenced.add(basename(row.thumbnailPath));
     }
     if (rows.length < chunk) break;
     skip += chunk;

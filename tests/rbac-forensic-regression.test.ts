@@ -84,8 +84,17 @@ async function cleanup() {
 // ─── Setup ─────────────────────────────────────────────────────────────────
 
 before(async () => {
-  // Login as super admin (seed user)
-  const sa = await login('rimon@admin.com', 'Rimon0000000');
+  // Login as super admin. The password MUST come from the environment
+  // (SUPER_ADMIN_PASSWORD — the same value the server was bootstrapped with)
+  // — never hardcode a real-looking administrator credential in tests.
+  const saPassword = process.env.SUPER_ADMIN_PASSWORD;
+  if (!saPassword) {
+    throw new Error(
+      'SUPER_ADMIN_PASSWORD env var is required: this suite logs in as the bootstrapped ' +
+      'super admin against the live server (set it to the value the server was seeded with).'
+    );
+  }
+  const sa = await login(process.env.SUPER_ADMIN_EMAIL || 'rimon@admin.com', saPassword);
   superAdminToken = sa.token;
 
   // Check if super admin is already bound to an organization

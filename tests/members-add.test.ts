@@ -158,7 +158,8 @@ function req(
   if (token) headers['authorization'] = `Bearer ${token}`;
   if (opts.body !== undefined) headers['content-type'] = 'application/json';
   return new NextRequest(opts.url || `http://localhost:3000/api/organizations/${org.id}/members`, {
-    method: opts.method || 'GET',
+    // GET+body is invalid in Next 16 — a body without an explicit method means POST.
+    method: opts.method ?? (opts.body !== undefined ? 'POST' : 'GET'),
     headers,
     body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined,
   });

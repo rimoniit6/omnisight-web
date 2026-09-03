@@ -118,7 +118,7 @@ function agentReq(token: string, opts: { method?: string; body?: unknown; url?: 
   const headers: Record<string, string> = { 'authorization': `Bearer ${token}` };
   if (opts.body !== undefined) headers['content-type'] = 'application/json';
   return new NextRequest(opts.url || 'http://localhost:3000/api/test', {
-    method: opts.method || 'GET',
+    method: opts.method ?? (opts.body !== undefined ? 'POST' : 'GET'),
     headers,
     body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined,
   });

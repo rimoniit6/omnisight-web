@@ -66,7 +66,14 @@ const MONITORING_LABELS: Record<string, { label: string; suffix?: string }> = {
   work_start_time: { label: 'Work Start' },
   work_end_time: { label: 'Work End' },
   ai_anomaly_detection: { label: 'AI Anomaly Detection' },
+  activity_dedupe: { label: 'Activity Upload Deduplication' },
+  agent_min_version: { label: 'Minimum Agent Version' },
+  server_classification: { label: 'Server Classification' },
 };
+
+// Server-side-only monitoring keys — displayed for awareness but NOT as
+// agent runtime toggles (mirror of the Settings → Monitoring separation).
+const SERVER_SIDE_MONITORING_KEYS = ['ai_anomaly_detection', 'activity_dedupe', 'agent_min_version', 'server_classification'];
 
 export function OrganizationPage() {
   const queryClient = useQueryClient();
@@ -532,10 +539,17 @@ export function OrganizationPage() {
               const enabled = item.value === true;
               // Capability notes: website tracking is LIVE and collects
               // DOMAIN names only (privacy-first — see src/lib/domain.ts);
-              // AI anomaly detection is server-side only (never an agent
-              // runtime setting — mirror of the Settings page separation).
-              const unsupported = item.key === 'ai_anomaly_detection';
-              const note = unsupported ? 'Server-side only — not used by the Desktop Agent' : null;
+              // server-side keys (anomaly detection, activity dedupe, agent
+              // min version) are never agent runtime settings — mirror of the
+              // Settings page separation.
+              const unsupported = SERVER_SIDE_MONITORING_KEYS.includes(item.key);
+              const serverSideValue =
+                unsupported && item.type === 'text' && item.value
+                  ? ` · floor ${String(item.value)}`
+                  : '';
+              const note = unsupported
+                ? `Server-side only — not used by the Desktop Agent${serverSideValue}`
+                : null;
               return (
                 <div key={item.key} className="flex items-center gap-3 p-3 rounded-lg bg-muted/30">
                   {isBoolean && !unsupported ? (

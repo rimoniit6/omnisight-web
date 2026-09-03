@@ -91,6 +91,12 @@ interface ScreenshotItem {
   flagReason: string | null;
   blurScore: number | null;
   capturedAt: string;
+  // Phase 2: async thumbnail processing fields (additive — null on legacy
+  // rows and on screenshots that have not been processed yet).
+  processingStatus?: string | null;
+  processingError?: string | null;
+  thumbnailPath?: string | null;
+  thumbnailSize?: number | null;
   employee: { id: string; firstName: string; lastName: string; employeeId: string; avatar: string | null };
   device: { id: string; name: string; hostname: string | null; status: string } | null;
 }
@@ -132,6 +138,75 @@ function getGradientForApp(_appWindow: string | null) {
 
 function getInitials(firstName: string, lastName: string) {
   return `${firstName[0]}${lastName[0]}`;
+}
+
+/**
+ * Thumbnail-first screenshot preview (Phase 2). Grid/list cells load the
+ * small generated thumbnail (≤320px) instead of the full-resolution original;
+ * the original is fetched only when the user opens a screenshot. Fallback
+ * chain, in order:
+ *   1. thumbnail endpoint — when the row reports processingStatus
+ *      'processed' + a thumbnailPath;
+ *   2. original `/image` endpoint — when no thumbnail exists yet (uploaded /
+ *      processing_failed / legacy rows) or the thumbnail 404s;
+ *   3. the sibling "Unavailable" placeholder — only when BOTH fail (e.g.
+ *      physical file missing), mirroring the pre-Phase-2 behavior.
+ * Never triggers server-side thumbnail generation from the browser.
+ */
+type PreviewStage = 'thumb' | 'original' | 'unavailable';
+
+function ScreenshotPreview({
+  screenshot,
+  className,
+  alt,
+  fallbackIconClass = 'w-6 h-6 mx-auto mb-1 text-muted-foreground/50',
+}: {
+  screenshot: ScreenshotItem;
+  className: string;
+  alt: string;
+  fallbackIconClass?: string;
+}) {
+  const thumbReady = screenshot.processingStatus === 'processed' && Boolean(screenshot.thumbnailPath);
+  const [stage, setStage] = useState<PreviewStage>(thumbReady ? 'thumb' : 'original');
+  const [failed, setFailed] = useState(false);
+
+  const src =
+    stage === 'thumb'
+      ? `/api/screenshots/${screenshot.id}/thumbnail`
+      : `/api/screenshots/${screenshot.id}/image`;
+
+  return (
+    <>
+      {!failed && (
+        <img
+          src={src}
+          alt={alt}
+          loading='lazy'
+          className={className}
+          draggable={false}
+          onError={() => {
+            if (stage === 'thumb') {
+              // Thumbnail unavailable — fall back to the authorized original.
+              setStage('original');
+            } else {
+              // Original also failed — show the placeholder, stop retrying.
+              setFailed(true);
+            }
+          }}
+        />
+      )}
+      {/* Unavailable placeholder — visible only when both stages failed */}
+      <div
+        className={`absolute inset-0 items-center justify-center bg-muted/80 ${failed ? 'flex' : 'hidden'}`}
+        aria-label='Screenshot unavailable'
+      >
+        <div className='text-center px-3'>
+          <Camera className={fallbackIconClass} />
+          <p className='text-[10px] text-muted-foreground'>Unavailable</p>
+        </div>
+      </div>
+    </>
+  );
 }
 
 export function ScreenshotsPage() {
@@ -1110,29 +1185,14 @@ function ScreenshotGridCard({
       className="falcon-card overflow-hidden cursor-pointer hover:shadow-md transition-shadow group"
       onClick={onClick}
     >
-      {/* Thumbnail — real image served via the authenticated image API */}
+      {/* Thumbnail-first preview — small generated thumbnail when processed,
+          authorized original as fallback, placeholder only when both fail */}
       <div className={`relative h-40 bg-gradient-to-br ${gradient} flex items-center justify-center`}>
-        <img
-          src={`/api/screenshots/${screenshot.id}/image`}
+        <ScreenshotPreview
+          screenshot={screenshot}
           alt={`Screenshot — ${screenshot.appWindow || 'Unknown Application'}`}
-          loading="lazy"
           className="absolute inset-0 w-full h-full object-cover"
-          onError={(e) => {
-            e.currentTarget.style.display = 'none';
-            const fallback = e.currentTarget.nextElementSibling as HTMLElement | null;
-            if (fallback) fallback.style.display = 'flex';
-          }}
         />
-        {/* Unavailable fallback — only visible when the image fails to load */}
-        <div
-          className="absolute inset-0 items-center justify-center bg-muted/80 hidden"
-          aria-label="Screenshot unavailable"
-        >
-          <div className="text-center px-3">
-            <Camera className="w-6 h-6 mx-auto mb-1 text-muted-foreground/50" />
-            <p className="text-[10px] text-muted-foreground">Unavailable</p>
-          </div>
-        </div>
         {/* Batch select checkbox (mutations only — hidden for read-only roles) */}
         {onToggleSelect && (
           <button
@@ -1238,24 +1298,12 @@ function ScreenshotListView({
                 >
                   <td className="px-4 py-2.5">
                     <div className="relative w-16 h-10 rounded overflow-hidden bg-muted">
-                      <img
-                        src={`/api/screenshots/${s.id}/image`}
+                      <ScreenshotPreview
+                        screenshot={s}
                         alt=""
-                        loading="lazy"
                         className="w-full h-full object-cover"
-                        onError={(e) => {
-                          e.currentTarget.style.display = 'none';
-                          const fallback = e.currentTarget.nextElementSibling as HTMLElement | null;
-                          if (fallback) fallback.style.display = 'flex';
-                        }}
+                        fallbackIconClass="w-4 h-4 text-muted-foreground/50"
                       />
-                      {/* Unavailable fallback — only visible when the image fails to load */}
-                      <div
-                        className="absolute inset-0 items-center justify-center bg-muted/80 hidden"
-                        aria-label="Screenshot unavailable"
-                      >
-                        <Camera className="w-4 h-4 text-muted-foreground/50" />
-                      </div>
                     </div>
                   </td>
                   <td className="px-4 py-2.5">

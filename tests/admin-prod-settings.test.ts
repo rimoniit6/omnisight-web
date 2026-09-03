@@ -81,7 +81,8 @@ function req(opts: { method?: string; body?: unknown; token?: string } = {}): Ne
   const headers: Record<string, string> = { authorization: `Bearer ${token}` };
   if (opts.body !== undefined) headers['content-type'] = 'application/json';
   return new NextRequest('http://localhost:3000/api/settings', {
-    method: opts.method || 'GET',
+    // GET+body is invalid in Next 16 — a body without an explicit method means POST.
+    method: opts.method ?? (opts.body !== undefined ? 'POST' : 'GET'),
     headers,
     body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined,
   });

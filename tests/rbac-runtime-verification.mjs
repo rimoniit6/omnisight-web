@@ -8,11 +8,27 @@
 
 const BASE = 'http://localhost:3000';
 
+// Credentials are read from the environment — never hardcode real-looking
+// passwords in committed files. The fallbacks below are clearly fake and only
+// work against a throwaway local DB; point the ORG_*_ variables at your demo
+// seed and set SUPER_ADMIN_EMAIL/SUPER_ADMIN_PASSWORD for the platform admin.
 const ACCOUNTS = {
-  superAdmin:  { email: 'rimon@admin.com',            password: 'Rimon2714' },
-  orgAdmin:    { email: 'org.admin@acmetech.com',     password: 'demo1234' },
-  manager:     { email: 'manager@acmetech.com',       password: 'demo1234' },
-  viewer:      { email: 'viewer@acmetech.com',        password: 'demo1234' },
+  superAdmin: {
+    email: process.env.SUPER_ADMIN_EMAIL || 'superadmin@local.test',
+    password: process.env.SUPER_ADMIN_PASSWORD || 'superadmin-test-only',
+  },
+  orgAdmin: {
+    email: process.env.ORG_ADMIN_EMAIL || 'orgadmin@local.test',
+    password: process.env.ORG_ADMIN_PASSWORD || 'orgadmin-test-only',
+  },
+  manager: {
+    email: process.env.ORG_MANAGER_EMAIL || 'manager@local.test',
+    password: process.env.ORG_MANAGER_PASSWORD || 'manager-test-only',
+  },
+  viewer: {
+    email: process.env.ORG_VIEWER_EMAIL || 'viewer@local.test',
+    password: process.env.ORG_VIEWER_PASSWORD || 'viewer-test-only',
+  },
 };
 
 const EXPECTED = {

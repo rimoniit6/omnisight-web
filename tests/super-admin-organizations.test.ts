@@ -16,7 +16,7 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { execSync } from 'node:child_process';
-import { NextRequest } from 'next/server';
+import { req } from './helpers/request';
 
 // ─── Test DB isolation ──────────────────────────────────────────────────
 const PG_TEST_BASE = process.env.PG_TEST_BASE_URL || 'postgresql://postgres:123456@localhost:5432';
@@ -107,16 +107,6 @@ after(async () => {
   }
 });
 
-function req(token: string | null, opts: { method?: string; body?: unknown; url?: string } = {}): NextRequest {
-  const headers: Record<string, string> = {};
-  if (token) headers['authorization'] = `Bearer ${token}`;
-  if (opts.body !== undefined) headers['content-type'] = 'application/json';
-  return new NextRequest(opts.url || 'http://localhost:3000/api/test', {
-    method: opts.method || 'GET',
-    headers,
-    body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined,
-  });
-}
 
 // ─── SA-ORG-01: API response uses `data` key ────────────────────────────
 
@@ -215,10 +205,16 @@ test('SA-ORG-06: Empty database returns empty array with count 0', async () => {
   assert.equal(body.data.length, 0, 'Empty DB returns empty array');
   assert.equal(body.pagination.total, 0, 'Empty DB returns total 0');
 
-  // Restore organizations
+  // Restore organizations. Two fixes vs the original restore:
+  //   1. Collision-safe slug — the FULL cuid is used, because the first 8 chars
+  //      of two cuids can collide and hit the unique slug constraint.
+  //   2. Idempotent — upsert so a re-run on the same DB never fails.
   for (const org of allOrgs) {
-    // Re-create with original data using upsert-like approach
-    await db.organization.create({ data: { name: org.id, slug: `sa-orgs-${org.id.slice(0, 8)}` } });
+    await db.organization.upsert({
+      where: { slug: `sa-orgs-${org.id}` },
+      create: { name: org.id, slug: `sa-orgs-${org.id}` },
+      update: {},
+    });
   }
   // Note: this is a simplified restore — the original orgA/orgB/orgC variables still hold the original IDs
   // The important thing is that the empty-state test passed

@@ -10,7 +10,9 @@
  *   - Rule D: an unassigned device in the session's org is bound to the
  *     session employee transactionally inside the device row lock.
  *   - Revoked devices fail closed and are NEVER rebound.
- *   - Anonymous zero-touch behavior is preserved byte-for-byte.
+ *   - Anonymous device CREATION was removed (enrollment-code removal): a new
+ *     device without a session gets 422 AUTHENTICATION_REQUIRED (AUTH-EXIST-09).
+ *     The device-KEY identity fallback for EXISTING devices is preserved.
  *   - Concurrency: two simultaneous rediscoveries cannot create conflicting
  *     ownership or duplicate pending claims.
  *
@@ -21,6 +23,7 @@ import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { execSync } from 'node:child_process';
 import { NextRequest } from 'next/server';
+import { req } from './helpers/request';
 
 // ─── Test DB isolation (must be set BEFORE any app module import) ──────────
 const PG_TEST_BASE = process.env.PG_TEST_BASE_URL || 'postgresql://postgres:123456@localhost:5432';
@@ -99,17 +102,6 @@ after(async () => {
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
-function req(token: string | null, opts: { method?: string; body?: unknown; url?: string; ip?: string } = {}): NextRequest {
-  const headers: Record<string, string> = {};
-  if (token) headers['authorization'] = `Bearer ${token}`;
-  if (opts.ip) headers['x-forwarded-for'] = opts.ip;
-  if (opts.body !== undefined) headers['content-type'] = 'application/json';
-  return new NextRequest(opts.url || 'http://localhost:3000/api/test', {
-    method: opts.method || 'GET',
-    headers,
-    body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined,
-  });
-}
 
 function adminToken(orgId: string, id: string) {
   return signJWT({ userId: id, email: `${id}@${orgId.slice(-6)}.local`, role: 'admin', organizationId: orgId });
@@ -540,11 +532,18 @@ test('AUTH-EXIST-17a: concurrent rediscovery by the same employee → single pen
 test('AUTH-EXIST-17b: concurrent rediscovery by two employees → one owner, one 404, no conflict', async () => {
   const a = await seedAccount(orgA.id, 'EX-17B1');
   const b = await seedAccount(orgA.id, 'EX-17B2');
-  const anon = await discoverAnon('key-ex-17b-concurrent-device-abcdef', '198.51.100.93');
-  assert.equal(anon.status, 201, JSON.stringify(anon.body));
-
   const tA = await login('EX-17B1', '203.0.113.93');
   const tB = await login('EX-17B2', '203.0.113.94');
+
+  // Owner (A) creates the shared device via AUTHENTICATED discovery —
+  // anonymous device creation was removed (see route header), so the old
+  // `discoverAnon(...) → 201` setup no longer exists.
+  const created = await discoverWithSession(tA, 'key-ex-17b-concurrent-device-abcdef', '198.51.100.93');
+  assert.equal(created.status, 201, JSON.stringify(created.body));
+
+  // Concurrent rediscovery: A (owner) idempotently succeeds; B (other
+  // employee, same org) is uniformly concealed with 404 — no conflict, no
+  // rebind, no duplicate claim.
   const [r1, r2] = await Promise.all([
     discoverWithSession(tA, 'key-ex-17b-concurrent-device-abcdef', '198.51.100.93'),
     discoverWithSession(tB, 'key-ex-17b-concurrent-device-abcdef', '198.51.100.93'),
@@ -553,11 +552,8 @@ test('AUTH-EXIST-17b: concurrent rediscovery by two employees → one owner, one
   assert.deepEqual(statuses, [200, 404], `expected exactly one success + one denial, got r1=${r1.status} r2=${r2.status}`);
 
   const device = await getDevice('key-ex-17b-concurrent-device-abcdef');
-  assert.ok(device!.employeeId === a.id || device!.employeeId === b.id, 'device bound to exactly one racing employee');
+  assert.equal(device!.employeeId, a.id, 'device stays bound to the owner');
   assert.equal(await claimCount(device!.id), 1, 'exactly one claim — no duplicate pending');
-  // The loser never rebound the device.
-  const winner = r1.status === 200 ? a.id : b.id;
-  assert.equal(device!.employeeId, winner);
 });
 
 // ─── AUTH-EXIST-18..23: concealment of denied responses ─────────────────────
@@ -601,16 +597,25 @@ test('AUTH-EXIST-18/19/20/21/22/23: denied responses are uniform 404 with zero d
 
 test('AUTH-EXIST-25: invalid/expired AgentSession cannot authorize an existing device', async () => {
   const a = await seedAccount(orgA.id, 'EX-25');
-  const anon = await discoverAnon('key-ex-25-stale-session-device-abcdef', '198.51.100.98');
-  assert.equal(anon.status, 201, JSON.stringify(anon.body));
+  const tA = await login('EX-25', '203.0.113.98');
+  const created = await discoverWithSession(tA, 'key-ex-25-stale-session-device-abcdef', '198.51.100.98');
+  assert.equal(created.status, 201, JSON.stringify(created.body));
 
+  // A separate, now-EXPIRED session token cannot drive authenticated behavior
+  // (anonymous device creation was removed, so the device is created above via
+  // the owner's valid session).
   const { token } = await createAgentSession({ employeeId: a.id, organizationId: orgA.id, ipAddress: '203.0.113.98' });
   await db.agentSession.update({ where: { token }, data: { expiresAt: new Date(Date.now() - 60_000) } });
   assert.equal((await validateAgentSession(req(token, { ip: '203.0.113.98' }))).valid, false, 'session is expired');
 
+  // The expired session falls back to the device-key identity path: the claim
+  // is returned (200 pending), but the invalid session must NOT mutate the
+  // device — ownership stays with the creator, no duplicate claim appears.
   const rediscover = await discoverWithSession(token, 'key-ex-25-stale-session-device-abcdef', '198.51.100.98');
   assert.equal(rediscover.status, 200, JSON.stringify(rediscover.body));
+  assert.equal(rediscover.body.status, 'pending');
   const device = await getDevice('key-ex-25-stale-session-device-abcdef');
-  assert.equal(device!.employeeId, null, 'expired session must not bind the unassigned device to employee A');
+  assert.equal(device!.employeeId, a.id, 'expired session must not change device ownership');
   assert.equal(device!.organizationId, orgA.id);
+  assert.equal(await claimCount(device!.id), 1, 'no duplicate claim from an expired session');
 });

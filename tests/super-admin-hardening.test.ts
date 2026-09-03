@@ -22,7 +22,7 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { execSync } from 'node:child_process';
-import { NextRequest } from 'next/server';
+import { req } from './helpers/request';
 
 // ─── Test DB isolation ──────────────────────────────────────────────────
 const PG_TEST_BASE = process.env.PG_TEST_BASE_URL || 'postgresql://postgres:123456@localhost:5432';
@@ -150,16 +150,6 @@ after(async () => {
   }
 });
 
-function req(token: string | null, opts: { method?: string; body?: unknown; url?: string } = {}): NextRequest {
-  const headers: Record<string, string> = {};
-  if (token) headers['authorization'] = `Bearer ${token}`;
-  if (opts.body !== undefined) headers['content-type'] = 'application/json';
-  return new NextRequest(opts.url || 'http://localhost:3000/api/test', {
-    method: opts.method || 'GET',
-    headers,
-    body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined,
-  });
-}
 
 // ─── SA-01: Super Admin can list all organizations ──────────────────────
 

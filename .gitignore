@@ -86,3 +86,13 @@ uploads/
 # Generated e2e + AI analysis outputs
 .portal-e2e-results.json
 falcon-*.json
+
+# graft's local graph cache — regenerable, not committed (run `graft build`).
+/graft/
+
+# ── Dependency lockfiles (canonical manager: bun) ───────────────────────────
+# omnisight-web is bun-canonical: bun.lock is the committed, authoritative lock
+# and matches the installed node_modules. npm-generated package-lock.json files
+# are NOT authoritative here — committing one would create a second, possibly
+# conflicting lock authority (the 88-byte stub was removed in Phase 0).
+package-lock.json

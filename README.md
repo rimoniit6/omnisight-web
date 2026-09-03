@@ -179,8 +179,16 @@ omnisight-web/
 ```bash
 git clone <repository-url> omnisight-web
 cd omnisight-web
-npm install
+bun install
 ```
+
+> **Canonical package manager: bun.** `bun.lock` is the committed,
+> authoritative lockfile and matches the installed `node_modules`. npm-based
+> `package-lock.json` files are ignored in this repo (see `.gitignore`) so a
+> second, conflicting lock authority cannot appear. `bun run <script>`
+> executes the same npm-compatible scripts used throughout this document.
+> `npm install` still works locally, but it will create an untracked
+> `package-lock.json` — do not commit it.
 
 ### 2. Configure environment
 

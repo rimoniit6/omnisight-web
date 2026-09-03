@@ -12,6 +12,8 @@ import { toast } from 'sonner';
 import { useTheme } from 'next-themes';
 import { Save, Shield, Cpu, Bell, Settings, ToggleLeft, Wrench, Sun, Moon, Monitor, Trash2, ShieldCheck, Sparkles, AlertTriangle } from 'lucide-react';
 import { ChangePasswordDialog } from '@/components/auth/change-password-dialog';
+import { CategoryRulesCard } from '@/components/settings/category-rules-card';
+import { AlertRulesCard } from '@/components/settings/alert-rules-card';
 
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
 import { cn } from '@/lib/utils';
@@ -204,11 +206,32 @@ function DataRetentionCard() {
 interface MonitoringSetting {
   key: string;
   value: boolean | number | string;
-  type: 'boolean' | 'number' | 'time';
+  type: 'boolean' | 'number' | 'time' | 'text';
   default: boolean | number | string;
   min?: number;
   max?: number;
 }
+
+// Server-side-only monitoring keys: processed by the OmniSight server (jobs /
+// routes), never shipped in the Desktop Agent runtime contract. Kept in sync
+// with src/lib/jobs/settings.ts MONITORING_KEYS comments — the registry is
+// authoritative; this list only drives WHERE each row renders.
+const SERVER_SIDE_KEYS = ['ai_anomaly_detection', 'activity_dedupe', 'agent_min_version', 'server_classification', 'alert_rules_enabled'];
+
+// Per-key explanation for the server-side card (labels live in
+// MONITORING_LABELS above; copy must not imply Desktop Agent behavior).
+const SERVER_SIDE_HELPERS: Record<string, string> = {
+  ai_anomaly_detection:
+    'Rule-based statistical detection that runs automatically on a server-side schedule and on demand from the Anomalies page. Disabling stops detection for this organization (fails closed) and does not change Desktop Agent behavior.',
+  activity_dedupe:
+    'When enabled, activity uploads that carry a batch ID are deduplicated server-side: a batch replayed after a lost response, crash or concurrent retry is stored exactly once (receipt per employee + batch). Old agents that send no batch ID, and organizations with this disabled, keep the existing behavior unchanged.',
+  agent_min_version:
+    'Optional version floor (e.g. 1.2.0) reserved for future capability gating. Informational today — no agent is blocked or forced to upgrade. Agents report their version at device discovery; leave empty for no floor.',
+  server_classification:
+    'When enabled, the server re-classifies every ingested application/website activity using this organization\'s category rules (Settings → Category Rules), then the built-in default heuristic for unmatched apps. Rules are evaluated in priority order; enabling with no rules keeps the agent\'s current categories unchanged. Disabled (default) stores the agent\'s category as-is.',
+  alert_rules_enabled:
+    'Master switch for server-side alert rules (Settings → Alert Rules). When enabled, the organization\'s enabled rules are evaluated on the server schedule against real telemetry (device heartbeats, activity) and firings create alerts + notifications. Disabled (default) — rules are never evaluated.',
+};
 
 const MONITORING_LABELS: Record<string, string> = {
   heartbeat_interval: 'Heartbeat Interval (seconds)',
@@ -230,6 +253,10 @@ const MONITORING_LABELS: Record<string, string> = {
   keystroke_logging_enabled: 'Keystroke Logging',
   webcam_capture_enabled: 'Webcam Capture',
   website_native_tracking: 'Website Tracking (Native)',
+  activity_dedupe: 'Activity Upload Deduplication',
+  agent_min_version: 'Minimum Agent Version (optional)',
+  server_classification: 'Server Classification',
+  alert_rules_enabled: 'Alert Rules',
 };
 
 interface MonitoringRowProps {
@@ -336,6 +363,15 @@ function MonitoringRow({ s, onSaved, badge, helper, disabled = false, confirmEna
             onChange={(e) => setValue(e.target.value)}
             className='w-32 h-8'
           />
+        ) : s.type === 'text' ? (
+          <Input
+            type='text'
+            value={String(value)}
+            placeholder='e.g. 1.2.0'
+            disabled={disabled}
+            onChange={(e) => setValue(e.target.value)}
+            className='w-40 h-8'
+          />
         ) : (
           <Input
             type='number'
@@ -425,7 +461,7 @@ function AgentMonitoringCard() {
       </CardHeader>
       <CardContent className='space-y-3'>
         {monitoring
-          .filter((s) => s.key !== 'ai_anomaly_detection') // server-side only — rendered below
+          .filter((s) => !SERVER_SIDE_KEYS.includes(s.key)) // server-side only — rendered in the card below
           .map((s) => (
             <MonitoringRow
               key={`${s.key}:${String(s.value)}`}
@@ -499,8 +535,8 @@ function ServerSideIntelligenceCard() {
     },
   });
 
-  const serverSettings = ((data?.data || []) as MonitoringSetting[]).filter(
-    (s) => s.key === 'ai_anomaly_detection'
+  const serverSettings = ((data?.data || []) as MonitoringSetting[]).filter((s) =>
+    SERVER_SIDE_KEYS.includes(s.key)
   );
   if (serverSettings.length === 0) return null;
 
@@ -527,7 +563,7 @@ function ServerSideIntelligenceCard() {
             s={s}
             onSaved={() => queryClient.invalidateQueries({ queryKey: ['monitoring-settings'] })}
             badge='Server-side only'
-            helper='Rule-based statistical detection that runs automatically on a server-side schedule and on demand from the Anomalies page. Disabling stops detection for this organization (fails closed) and does not change Desktop Agent behavior.'
+            helper={SERVER_SIDE_HELPERS[s.key]}
           />
         ))}
       </CardContent>
@@ -686,6 +722,8 @@ export function SettingsPage() {
 
         {/* Server-side monitoring & intelligence (not an agent runtime feature) */}
         {activeSection === 'monitoring' && <ServerSideIntelligenceCard />}
+        {activeSection === 'monitoring' && <CategoryRulesCard />}
+        {activeSection === 'monitoring' && <AlertRulesCard />}
 
         {/* Configuration Group */}
         {configSettings.length > 0 && (

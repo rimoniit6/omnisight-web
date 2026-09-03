@@ -68,6 +68,9 @@ test('H-1: /api/health returns ok with uptime + version and NO secrets', async (
   assert.equal(body.status, 'ok');
   assert.equal(typeof body.uptime, 'number');
   assert.equal(typeof body.version, 'string');
+  // Phase 6 — the public probe distinguishes DB + storage availability.
+  assert.equal(body.database, 'ok', 'reachable DB must report ok');
+  assert.equal(body.storage, 'ok', 'configured storage driver must report ok');
   const text = JSON.stringify(body).toLowerCase();
   assert.ok(!text.includes('jwt'), 'no JWT material');
   assert.ok(!text.includes('password') && !text.includes('secret'), 'no credentials');

@@ -117,7 +117,11 @@ export async function POST(req: NextRequest) {
 
     try {
       await db.$transaction(async (tx) => {
-        // Create screenshot record in database
+        // Create screenshot record in database. processingStatus defaults to
+        // 'uploaded' — that state IS the background thumbnail-processing queue:
+        // the row is picked up by the bounded 'screenshot_processing' job and
+        // transitioned to 'processed' or 'processing_failed' WITHOUT any image
+        // work happening in this request lifecycle.
         await tx.screenshot.create({
           data: {
             employeeId: authResult.employee!.id,
@@ -134,6 +138,7 @@ export async function POST(req: NextRequest) {
             organizationId: orgId,
             width: dimensions?.width ?? null,
             height: dimensions?.height ?? null,
+            processingStatus: 'uploaded',
           },
         });
 

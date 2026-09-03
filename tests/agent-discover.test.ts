@@ -132,10 +132,10 @@ async function loginAndGetSession(agentId: string) {
 }
 
 /** Authenticated discover — uses a session token for organization resolution. */
-async function discoverAuthenticated(deviceKey: string, sessionToken: string, opts: { reRegister?: boolean } = {}) {
+async function discoverAuthenticated(deviceKey: string, sessionToken: string, opts: { reRegister?: boolean } = {}, ip?: string) {
   const body: Record<string, unknown> = { deviceKey, hostname: 'PC-TEST', os: 'Windows 11', osVersion: '23H2', processor: 'x64', memory: '16GB', agentVersion: '1.2.0', arch: 'x64' };
   if (opts.reRegister) body.reRegister = true;
-  const res = await discoverApi.POST(makeReq(sessionToken, { body }));
+  const res = await discoverApi.POST(makeReq(sessionToken, { body, ip }));
   return { status: res.status, body: await res.json().catch(() => ({})) as Record<string, unknown> };
 }
 
@@ -329,30 +329,30 @@ test('EXIST-7: rejected + explicit reRegister → fresh claim', async () => {
 // ═══════════════════════════════════════════════════════════════════════════
 
 test('SEC-1: cross-org authenticated device → 404 (concealed)', async () => {
-  // Create device in test org
-  const { body } = await discover('key-sec-0001-crossorg-abcdef');
+  // Owner (test org) creates the device via authenticated discovery.
+  const owner = await createTestEmployeeAndAccount('SEC1-OWNER');
+  const tokenA = await loginAndGetSession('SEC1-OWNER');
+  assert.ok(tokenA, 'owner login must succeed');
+  const created = await discoverAuthenticated('key-sec-0001-crossorg-abcdef', tokenA);
+  assert.equal(created.status, 201, JSON.stringify(created.body));
+  const device = await db.device.findUnique({ where: { id: created.body.deviceId as string } });
+  assert.equal(device!.organizationId, org.id, 'device belongs to test org');
 
-  // Create a different org + employee
+  // A different employee in a DIFFERENT organization cannot reach it.
   const otherOrg = await db.organization.create({ data: { name: 'Other Org', slug: 'sec-other-org' } });
   const otherEmp = await db.employee.create({
     data: { employeeId: 'SEC1-OTHER', firstName: 'O', lastName: 'Ther', email: 'sec1other@test.local', organizationId: otherOrg.id, status: 'active' },
   });
-
-  // Create AgentAccount for the other employee
+  const { hashPassword } = await import('../src/lib/auth');
   await db.agentAccount.create({
-    data: { employeeId: otherEmp.id, agentId: 'SEC1-OTHER', passwordHash: '$2b$10$abcdefghijklmnopqrstuuDKpMFJQy0pJGzJz1z' },
+    data: { employeeId: otherEmp.id, agentId: 'SEC1-OTHER', passwordHash: await hashPassword('test-password-123') },
   });
+  const tokenC = await loginAndGetSession('SEC1-OTHER');
+  assert.ok(tokenC, 'other-org login must succeed');
 
-  // Login as other org employee
-  const loginRes = await authLoginApi.POST(makeReq(null, {
-    body: { agentId: 'SEC1-OTHER', password: 'test123' },
-  }));
-  // Login will fail without proper password — that's expected. We need to set up properly.
-  // Instead, let's test the CONCEPT: org mismatch → 404
-  // The authenticated flow needs a valid session, which requires a valid agent account.
-  // For this test, we'll verify the device is properly org-scoped.
-  const device = await db.device.findUnique({ where: { id: body.deviceId as string } });
-  assert.equal(device!.organizationId, org.id, 'device belongs to test org');
+  const denied = await discoverAuthenticated('key-sec-0001-crossorg-abcdef', tokenC);
+  assert.equal(denied.status, 404, JSON.stringify(denied.body));
+  assert.deepEqual(denied.body, { error: 'Device not found' });
 });
 
 test('SEC-2: anonymous request cannot specify organizationId', async () => {
@@ -364,17 +364,25 @@ test('SEC-2: anonymous request cannot specify organizationId', async () => {
 });
 
 test('SEC-3: claim secret is returned only once (on 201)', async () => {
-  const first = await discover('key-sec-0003-secret-once-abcdef');
-  assert.equal(first.status, 201);
+  const emp = await createTestEmployeeAndAccount('SEC3-EMP');
+  const token = await loginAndGetSession('SEC3-EMP');
+  assert.ok(token, 'login must succeed');
+  const first = await discoverAuthenticated('key-sec-0003-secret-once-abcdef', token);
+  assert.equal(first.status, 201, JSON.stringify(first.body));
   assert.ok(first.body.secret, 'secret returned on first discover');
 
+  // Re-poll (anonymous device-key identity path — the device already exists)
+  // never re-issues the one-time secret.
   const second = await discover('key-sec-0003-secret-once-abcdef');
   assert.equal(second.status, 200);
   assert.equal(second.body.secret, undefined, 'secret is NOT returned on re-discover');
 });
 
 test('SEC-4: existing claim secret is never stored in plaintext', async () => {
-  const { body } = await discover('key-sec-0004-hash-only-abcdef');
+  const emp = await createTestEmployeeAndAccount('SEC4-EMP');
+  const token = await loginAndGetSession('SEC4-EMP');
+  assert.ok(token, 'login must succeed');
+  const { body } = await discoverAuthenticated('key-sec-0004-hash-only-abcdef', token);
   const claim = await db.deviceClaim.findUnique({ where: { id: body.claimId as string } });
   assert.ok(claim);
   assert.notEqual(claim.claimSecretHash, body.secret, 'stored hash ≠ raw secret');
@@ -387,14 +395,18 @@ test('SEC-4: existing claim secret is never stored in plaintext', async () => {
 
 test('CONC-1: concurrent discover for same device → exactly one active pending claim', async () => {
   const deviceKey = 'key-conc-0001-race-abcdef';
+  const emp = await createTestEmployeeAndAccount('CONC1-EMP');
+  const token = await loginAndGetSession('CONC1-EMP');
+  assert.ok(token, 'login must succeed');
 
-  // Fire 5 concurrent discoveries for the same device
+  // Fire 5 concurrent AUTHENTICATED discoveries for the same new device
+  // (anonymous discovery is removed — the first sighting requires a session).
   const results = await Promise.allSettled([
-    discover(deviceKey, '203.0.113.101'),
-    discover(deviceKey, '203.0.113.102'),
-    discover(deviceKey, '203.0.113.103'),
-    discover(deviceKey, '203.0.113.104'),
-    discover(deviceKey, '203.0.113.105'),
+    discoverAuthenticated(deviceKey, token, {}, '203.0.113.101'),
+    discoverAuthenticated(deviceKey, token, {}, '203.0.113.102'),
+    discoverAuthenticated(deviceKey, token, {}, '203.0.113.103'),
+    discoverAuthenticated(deviceKey, token, {}, '203.0.113.104'),
+    discoverAuthenticated(deviceKey, token, {}, '203.0.113.105'),
   ]);
 
   // At least one must succeed

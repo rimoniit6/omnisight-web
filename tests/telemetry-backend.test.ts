@@ -16,6 +16,7 @@ import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { execSync } from 'node:child_process';
 import { NextRequest } from 'next/server';
+import { req } from './helpers/request';
 
 const PG_TEST_BASE = process.env.PG_TEST_BASE_URL || 'postgresql://postgres:123456@localhost:5432';
 const TEST_DB_NAME = 'workai_test_telemetry';
@@ -125,17 +126,6 @@ function getApis() {
   return (globalThis as Record<string, unknown>).__telemetryApis as Record<string, { POST?: (req: NextRequest, ctx?: { params: Promise<Record<string, string>> }) => Promise<Response>; GET?: (req: NextRequest) => Promise<Response> }>;
 }
 
-function req(token: string | null, opts: { method?: string; body?: unknown; url?: string; ip?: string } = {}): NextRequest {
-  const headers: Record<string, string> = {};
-  if (token) headers['authorization'] = `Bearer ${token}`;
-  if (opts.ip) headers['x-forwarded-for'] = opts.ip;
-  if (opts.body !== undefined) headers['content-type'] = 'application/json';
-  return new NextRequest(opts.url || 'http://localhost:3000/api/test', {
-    method: opts.method || 'GET',
-    headers,
-    body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined,
-  });
-}
 
 function tokenFor(role: string, userId: string, orgId: string = orgA.id) {
   return signJWT({ userId, email: `${role}-${userId}@${orgId.slice(-6)}.local`, role, organizationId: orgId });

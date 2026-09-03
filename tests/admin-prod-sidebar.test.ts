@@ -33,7 +33,12 @@ test('NAV-1: every page has an explicit minimum role mapping', () => {
   // compile-time coverage of every PageType in src/lib/store.ts.
   assert.ok(ALL_PAGES.length >= 20, 'navigation mapping covers the full page set');
   for (const p of ALL_PAGES) {
-    assert.ok(['viewer', 'manager', 'admin', 'org_admin'].includes(PAGE_MIN_ROLE[p]), `${p} has valid min role`);
+    // 'super_admin' is a valid NavMinRole (navigation.ts NavMinRole union) used
+    // by the super-admin pages — a page pinned to super_admin is intentional.
+    assert.ok(
+      ['viewer', 'manager', 'admin', 'org_admin', 'super_admin'].includes(PAGE_MIN_ROLE[p]),
+      `${p} has valid min role`
+    );
   }
 });
 

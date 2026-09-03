@@ -77,7 +77,8 @@ let devA: { id: string };
 function req(token: string | null, opts: { url?: string; body?: unknown; method?: string } = {}): NextRequest {
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
   if (token) headers.Authorization = `Bearer ${token}`;
-  const init: RequestInit = { method: opts.method || 'GET', headers };
+  // GET+body is invalid in Next 16 — a body without an explicit method means POST.
+  const init: RequestInit = { method: opts.method ?? (opts.body !== undefined ? 'POST' : 'GET'), headers };
   if (opts.body !== undefined) init.body = JSON.stringify(opts.body);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   return new (NextRequest as any)(opts.url || 'http://localhost:3000', init);

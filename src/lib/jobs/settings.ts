@@ -42,7 +42,7 @@ export type RetentionKey = keyof typeof RETENTION_KEYS;
 // in the global SystemSetting). getOrgSetting() has no SystemSetting fallback
 // for monitoring keys, so Org A's configuration can never bleed into Org B.
 
-export type MonitoringValueType = 'boolean' | 'number' | 'time';
+export type MonitoringValueType = 'boolean' | 'number' | 'time' | 'text';
 
 export interface MonitoringKeyDef {
   type: MonitoringValueType;
@@ -109,6 +109,44 @@ export const MONITORING_KEYS = {
   // (false, default). Termination is destructive — it requires the explicit
   // org opt-in on top of app_policy_enforcement.
   app_policy_terminate: { type: 'boolean', default: false },
+  // ── Server-side reliability & capability settings (Phase 1) ──────────────
+  // The two keys below are SERVER-ONLY org settings: they never reach the
+  // Desktop Agent runtime contract (GET /api/agent/config selects explicit
+  // fields from resolveOrgMonitoring, so additions here are automatically
+  // excluded from agent payloads) and the admin UI renders them apart from
+  // the agent-facing list. They live in this registry so they share the
+  // typed validation, the GET/PUT /api/settings/monitoring surface, the
+  // OrganizationSetting storage and the org-isolation guarantees of every
+  // other key — no separate flag system is invented.
+  //
+  // activity_dedupe (default OFF — safe rollout): when enabled, activity
+  // uploads that carry a batchId are deduplicated through
+  // ActivityBatchReceipt (one receipt per organization+employee+batchId,
+  // written in the same transaction as the rows). When disabled, ingestion
+  // keeps today's exact behavior and receipts are never consulted.
+  activity_dedupe: { type: 'boolean', default: false },
+  // agent_min_version (optional, INFORMATIONAL): an org-declared semantic
+  // version floor (e.g. "1.2.0") for FUTURE capability gating. Nothing
+  // enforces it in Phase 1 — older agents are never rejected. Empty/unset =
+  // no floor. Stored as free text via the registry's 'text' type.
+  agent_min_version: { type: 'text', default: '' },
+  // ── Phase 3: server-authoritative classification (default OFF) ───────────
+  // When enabled, the server re-classifies every ingested application/website
+  // activity row: org CategoryRules first (ordered precedence), then the
+  // default heuristic mirror of the agent's local categorizers for unmatched
+  // rows. The agent's category becomes a hint. When disabled (default),
+  // ingestion keeps today's exact behavior (agent category allowlisted and
+  // stored as-is). SERVER-SIDE ONLY — never sent to the Desktop Agent (the
+  // agent config route selects explicit fields, so registry additions here
+  // are automatically excluded from agent payloads).
+  server_classification: { type: 'boolean', default: false },
+  // ── Phase 5: server-side alert rules (default OFF — fail closed) ─────────
+  // Master switch for the alert-rule engine: when enabled, the org's ENABLED
+  // AlertRules are evaluated by the lease-guarded alert_rule_evaluation job
+  // over real telemetry and firings create Alerts (+ Notifications via the
+  // existing service). When disabled (default) rules are NEVER evaluated.
+  // SERVER-SIDE ONLY — never sent to the Desktop Agent.
+  alert_rules_enabled: { type: 'boolean', default: false },
 } as const satisfies Record<string, MonitoringKeyDef>;
 
 export type MonitoringKey = keyof typeof MONITORING_KEYS;
@@ -173,6 +211,23 @@ export function validateMonitoringValue(
       }
       return { ok: true, value: t };
     }
+    case 'text': {
+      if (typeof raw !== 'string') {
+        return { ok: false, error: `${key} must be a string` };
+      }
+      const t = raw.trim();
+      if (t.length > 64) {
+        return { ok: false, error: `${key} must be 64 characters or fewer` };
+      }
+      // Empty string is allowed (means "unset" for optional text settings).
+      if (t !== '' && !/^[0-9A-Za-z][0-9A-Za-z._+-]*$/.test(t)) {
+        return {
+          ok: false,
+          error: `${key} must be a plain version or identifier (letters, digits, . _ + -), e.g. 1.2.0`,
+        };
+      }
+      return { ok: true, value: t };
+    }
   }
 }
 
@@ -199,7 +254,7 @@ export function coerceMonitoringValue<K extends MonitoringKey>(
     const n = parseWholeNumber(value);
     return (n !== null ? n : def.default) as ResolvedMonitoring[K];
   }
-  return value as ResolvedMonitoring[K]; // time
+  return value as ResolvedMonitoring[K]; // time / text
 }
 
 /**
@@ -266,6 +321,71 @@ export async function resolveRetentionDays(orgId: string, key: RetentionKey): Pr
   const n = parseInt(raw, 10);
   if (Number.isNaN(n) || n < 0) return RETENTION_KEYS[key];
   return n;
+}
+
+// ─── Server-side reliability flags (Phase 1) ───────────────────────────────
+// ACTIVITY_DEDUPE is a SERVER-ONLY reliability feature. The key is defined in
+// MONITORING_KEYS above (so it shares the typed registry, the
+// /api/settings/monitoring surface and the org-isolation guarantees), but it
+// is never shipped to agents (the agent config route selects explicit fields)
+// and the admin UI renders it in the server-side section.
+//
+// Safe-rollout semantics: default FALSE. When disabled, the activity route
+// keeps today's exact ingestion behavior and never consults receipts (a
+// batchId sent by a new agent is ignored). When enabled for an org, uploads
+// carrying a batchId are deduplicated through ActivityBatchReceipt — one
+// receipt per (organization, employee, batchId), written in the SAME
+// transaction as the activity rows.
+export const SERVER_CLASSIFICATION_SETTING_KEY = 'server_classification' as const;
+
+export const ACTIVITY_DEDUPE_SETTING_KEY = 'activity_dedupe' as const;
+
+// ─── Phase 5: alert-rule engine master switch (default OFF — fail closed) ──
+// The evaluation job refuses to run for an org unless this is explicitly
+// 'true'; a corrupt/missing stored value resolves to the safe default.
+export const ALERT_RULES_ENABLED_SETTING_KEY = 'alert_rules_enabled' as const;
+
+export async function resolveAlertRulesEnabled(orgId: string): Promise<boolean> {
+  return (await getOrgSetting(orgId, ALERT_RULES_ENABLED_SETTING_KEY, 'false')) === 'true';
+}
+
+// Cheap single-row read that mirrors the registry default (false) exactly;
+// resolveOrgMonitoring() offers the fully-typed alternative when a caller
+// already needs the whole org configuration.
+export async function resolveActivityDedupeEnabled(orgId: string): Promise<boolean> {
+  return (await getOrgSetting(orgId, ACTIVITY_DEDUPE_SETTING_KEY, 'false')) === 'true';
+}
+
+// ─── Phase 3: server-authoritative classification flag ─────────────────────
+// Default OFF — enabling is a deliberate, per-org opt-in. When ON, the
+// activity route loads the org's enabled CategoryRules and re-classifies
+// application/website rows before insert (rules → default heuristic). When
+// OFF (or corrupt stored value → default), ingestion is byte-for-byte today's
+// behavior and CategoryRule rows are never consulted.
+export async function resolveServerClassificationEnabled(orgId: string): Promise<boolean> {
+  return (await getOrgSetting(orgId, SERVER_CLASSIFICATION_SETTING_KEY, 'false')) === 'true';
+}
+
+// ─── Optional agent capability floor (Phase 1 — informational) ─────────────
+// agent_min_version is an OPTIONAL org-scoped marker for FUTURE capability
+// gating (also defined in MONITORING_KEYS as a 'text' key; admin-settable via
+// the monitoring settings UI/API). It is deliberately NOT enforced anywhere
+// in Phase 1: no endpoint rejects an older agent, and nothing compares
+// versions yet. Adding a gate before a feature actually needs a newer
+// collector would break the "no forced upgrade" guarantee, so the value
+// exists for future additive negotiation only.
+//
+// Where the agent version is obtained: the agent reports `agentVersion` on
+// POST /api/agent/discover and it is stored on Device.agentVersion (the
+// per-device record). Where it will be compared (future): any phase that
+// needs a newer collector compares the device's stored agentVersion against
+// this floor at ingestion/config time. Unset or blank = no floor (every
+// agent passes). Older agents keep working unchanged.
+export const AGENT_MIN_VERSION_SETTING_KEY = 'agent_min_version' as const;
+
+export async function resolveAgentMinVersion(orgId: string): Promise<string | null> {
+  const raw = (await getOrgSetting(orgId, AGENT_MIN_VERSION_SETTING_KEY, '')).trim();
+  return raw.length > 0 ? raw : null;
 }
 
 export function retentionCutoff(days: number, now = new Date()): Date {

@@ -22,9 +22,21 @@ const BASE = process.env.API_BASE || 'http://localhost:3000';
 const prisma = new PrismaClient();
 
 // ─── Test Data ─────────────────────────────────────────────────────────────
+// The suite is SELF-SUFFICIENT: it creates its own super admin + org-scoped
+// users (AppUser + OrganizationMembership) in `before`, so it never depends on
+// a particular seeded dev database or on hardcoded real-looking credentials.
+// Passwords below are clearly test-only values, never real administrator
+// credentials.
 
 const TEST_ORG_A = { name: `RBAC Test Org A ${Date.now()}`, slug: `rbac-test-a-${Date.now()}` };
 const TEST_ORG_B = { name: `RBAC Test Org B ${Date.now()}`, slug: `rbac-test-b-${Date.now()}` };
+
+// Test-only credentials (fabricated for this suite — never real).
+const TEST_PASSWORD = 'RbacTest-Pass-1234!';
+const SUPER_ADMIN = { email: 'rbac-super-admin@test.local', role: 'super_admin' };
+const ORG_A_ADMIN = { email: 'rbac-orga-admin@test.local', role: 'org_admin' };
+const ORG_A_MANAGER = { email: 'rbac-orga-manager@test.local', role: 'manager' };
+const ORG_A_VIEWER = { email: 'rbac-orga-viewer@test.local', role: 'viewer' };
 
 let orgAId = '';
 let orgBId = '';
@@ -33,6 +45,41 @@ let superAdminToken = '';
 let orgAAdminToken = '';
 let orgAManagerToken = '';
 let orgAViewerToken = '';
+
+/** Create (idempotently) an AppUser with an org membership, or a platform super admin. */
+async function seedUser(email: string, role: string, orgId?: string) {
+  const { hashPassword } = await import('../src/lib/auth');
+  const pwHash = await hashPassword(TEST_PASSWORD);
+  const appRole = role === 'super_admin' ? 'super_admin' : 'user';
+  const user = await prisma.appUser.upsert({
+    where: { email },
+    create: { email, name: email.split('@')[0], password: pwHash, role: appRole, isActive: true },
+    update: { password: pwHash, role: appRole, isActive: true },
+  });
+  if (orgId) {
+    await prisma.organizationMembership.upsert({
+      where: { userId_organizationId: { userId: user.id, organizationId: orgId } },
+      create: { userId: user.id, organizationId: orgId, role, status: 'ACTIVE' },
+      update: { role, status: 'ACTIVE' },
+    });
+  }
+  return user;
+}
+
+async function removeSeedData() {
+  const emails = [SUPER_ADMIN.email, ORG_A_ADMIN.email, ORG_A_MANAGER.email, ORG_A_VIEWER.email];
+  const users = await prisma.appUser.findMany({ where: { email: { in: emails } }, select: { id: true } });
+  await prisma.organizationMembership.deleteMany({ where: { userId: { in: users.map((u) => u.id) } } }).catch(() => {});
+  await prisma.appUser.deleteMany({ where: { email: { in: emails } } }).catch(() => {});
+  if (orgAId) {
+    await prisma.organizationMembership.deleteMany({ where: { organizationId: orgAId } }).catch(() => {});
+    await prisma.organization.delete({ where: { id: orgAId } }).catch(() => {});
+  }
+  if (orgBId) {
+    await prisma.organizationMembership.deleteMany({ where: { organizationId: orgBId } }).catch(() => {});
+    await prisma.organization.delete({ where: { id: orgBId } }).catch(() => {});
+  }
+}
 
 // ─── Helpers ───────────────────────────────────────────────────────────────
 
@@ -66,28 +113,24 @@ async function apiPost(path: string, token: string, data?: any): Promise<{ statu
 }
 
 async function cleanup() {
-  // Clean up test organizations and their memberships
-  if (orgAId) {
-    await prisma.organizationMembership.deleteMany({ where: { organizationId: orgAId } }).catch(() => {});
-    await prisma.organization.delete({ where: { id: orgAId } }).catch(() => {});
-  }
-  if (orgBId) {
-    await prisma.organizationMembership.deleteMany({ where: { organizationId: orgBId } }).catch(() => {});
-    await prisma.organization.delete({ where: { id: orgBId } }).catch(() => {});
-  }
+  await removeSeedData();
 }
 
 // ─── RBAC Tests ────────────────────────────────────────────────────────────
 
 describe('RBAC — Role Resolution & Authorization', () => {
   before(async () => {
-    // Create two test organizations
+    // Create two test organizations + the four users the suite logs in as.
     const [orgA, orgB] = await Promise.all([
       prisma.organization.create({ data: TEST_ORG_A }),
       prisma.organization.create({ data: TEST_ORG_B }),
     ]);
     orgAId = orgA.id;
     orgBId = orgB.id;
+    await seedUser(SUPER_ADMIN.email, 'super_admin');
+    await seedUser(ORG_A_ADMIN.email, 'org_admin', orgA.id);
+    await seedUser(ORG_A_MANAGER.email, 'manager', orgA.id);
+    await seedUser(ORG_A_VIEWER.email, 'viewer', orgA.id);
   });
 
   after(async () => {
@@ -99,28 +142,28 @@ describe('RBAC — Role Resolution & Authorization', () => {
 
   describe('RBAC-01 to RBAC-04: Login role resolution', () => {
     it('RBAC-01: Super Admin resolves correctly', async () => {
-      const loginResult = await login('rimon@admin.com', 'Rimon2714');
+      const loginResult = await login(SUPER_ADMIN.email, TEST_PASSWORD);
       superAdminToken = loginResult.token;
       assert.equal(loginResult.user.role, 'super_admin');
       assert.equal(loginResult.user.roleLabel, 'Super Admin');
     });
 
     it('RBAC-02: Org Admin resolves correctly', async () => {
-      const loginResult = await login('org.admin@acmetech.com', 'demo1234');
+      const loginResult = await login(ORG_A_ADMIN.email, TEST_PASSWORD);
       orgAAdminToken = loginResult.token;
       assert.equal(loginResult.user.role, 'org_admin');
       assert.equal(loginResult.user.roleLabel, 'Organization Admin');
     });
 
     it('RBAC-03: Manager resolves correctly', async () => {
-      const loginResult = await login('manager@acmetech.com', 'demo1234');
+      const loginResult = await login(ORG_A_MANAGER.email, TEST_PASSWORD);
       orgAManagerToken = loginResult.token;
       assert.equal(loginResult.user.role, 'manager');
       assert.equal(loginResult.user.roleLabel, 'Manager');
     });
 
     it('RBAC-04: Viewer resolves correctly', async () => {
-      const loginResult = await login('viewer@acmetech.com', 'demo1234');
+      const loginResult = await login(ORG_A_VIEWER.email, TEST_PASSWORD);
       orgAViewerToken = loginResult.token;
       assert.equal(loginResult.user.role, 'viewer');
       assert.equal(loginResult.user.roleLabel, 'Viewer');
@@ -202,7 +245,7 @@ describe('RBAC — Role Resolution & Authorization', () => {
 
     it('RBAC-15: Org switching updates effective role', async () => {
       // Create memberships for the test user in both orgs
-      const testUser = await prisma.appUser.findFirst({ where: { email: 'org.admin@acmetech.com' } });
+      const testUser = await prisma.appUser.findFirst({ where: { email: ORG_A_ADMIN.email } });
       if (testUser) {
         // Ensure membership in Org A
         await prisma.organizationMembership.upsert({
@@ -214,7 +257,7 @@ describe('RBAC — Role Resolution & Authorization', () => {
         // Use a FRESH login so the shared orgAAdminToken session is not
         // mutated (switching updates the session's activeOrganizationId,
         // which invalidates the original token for subsequent tests).
-        const freshLogin = await login('org.admin@acmetech.com', 'demo1234');
+        const freshLogin = await login(ORG_A_ADMIN.email, TEST_PASSWORD);
         const switchA = await apiPost('/api/me/organization/switch', freshLogin.token, { organizationId: orgAId });
         if (switchA.status === 200) {
           assert.equal(switchA.body.role, 'admin');

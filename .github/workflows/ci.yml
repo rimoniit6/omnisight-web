@@ -13,7 +13,16 @@ concurrency:
 env:
   NODE_ENV: test
   PG_TEST_BASE_URL: postgresql://postgres:postgres@localhost:5432
+  # CI-only values — the server is booted fresh in the test job and the
+  # bootstrap-super-admin script creates this user. Never real credentials.
+  SUPER_ADMIN_EMAIL: ci@omnisight.test
+  SUPER_ADMIN_PASSWORD: CiSuperAdmin-Test-1234
+  JWT_SECRET: ci-jwt-secret-0123456789abcdef-0123456789abcdef
+  ENCRYPTION_KEY: 0000000000000000000000000000000000000000000000000000000000000000
 
+# omnisight-web is bun-canonical (bun.lock is the authoritative lock — see
+# .gitignore). All jobs install with bun and run the repo's own npm-compatible
+# scripts via `bun run`.
 jobs:
   lint:
     name: Lint
@@ -21,14 +30,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-node@v4
+      - uses: oven-sh/setup-bun@v2
         with:
-          node-version: 22
-          cache: npm
+          bun-version: latest
 
-      - run: npm ci
+      - run: bun install --frozen-lockfile
 
-      - run: npm run lint
+      - name: Lint (0 errors required in product source)
+        run: bun run lint
 
   typecheck:
     name: Typecheck
@@ -36,14 +45,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-node@v4
+      - uses: oven-sh/setup-bun@v2
         with:
-          node-version: 22
-          cache: npm
+          bun-version: latest
 
-      - run: npm ci
+      - run: bun install --frozen-lockfile
 
-      - run: npx tsc --noEmit
+      # clean:types removes stale generated .next/dev/types that a crashed dev
+      # server can leave truncated (TS1128) — see scripts/clean-next-types.mjs.
+      - name: Typecheck (with generated-types clean)
+        run: bun run typecheck
 
   test:
     name: Test
@@ -64,35 +75,49 @@ jobs:
           --health-timeout 5s
           --health-retries 5
 
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/postgres?schema=public
+      DIRECT_URL: postgresql://postgres:postgres@localhost:5432/postgres?schema=public
+
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-node@v4
+      - uses: oven-sh/setup-bun@v2
         with:
-          node-version: 22
-          cache: npm
+          bun-version: latest
 
-      - run: npm ci
+      - run: bun install --frozen-lockfile
 
       - name: Install PostgreSQL client
         run: sudo apt-get update && sudo apt-get install -y postgresql-client
 
       - name: Generate Prisma client
-        run: npx prisma generate
+        run: bun run db:generate
+
+      - name: Apply migrations
+        run: bun run db:deploy
+
+      - name: Bootstrap Super Admin
+        run: bunx tsx scripts/bootstrap-super-admin.ts
+
+      - name: Seed demo data (10 orgs, demo users)
+        run: bun run db:seed:demo
+
+      - name: Start Next.js dev server
+        run: |
+          nohup bun run dev:app > /tmp/next.log 2>&1 &
+          for i in $(seq 1 60); do
+            if curl -sf http://localhost:3000/api/health > /dev/null 2>&1; then
+              echo "Server is up after ${i}x2s"
+              break
+            fi
+            sleep 2
+          done
+          curl -sf http://localhost:3000/api/health > /dev/null \
+            || { echo "Server failed to start"; tail -80 /tmp/next.log; exit 1; }
 
       - name: Run all test suites
-        run: |
-          FAIL=0
-          for suite in tests/*.test.ts; do
-            echo "--- $suite ---"
-            if npx tsx --test "$suite"; then
-              echo "  PASS"
-            else
-              echo "  FAIL"
-              FAIL=1
-            fi
-          done
-          exit $FAIL
+        run: bun run test
 
   build:
     name: Build
@@ -101,19 +126,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-node@v4
+      - uses: oven-sh/setup-bun@v2
         with:
-          node-version: 22
-          cache: npm
+          bun-version: latest
 
-      - run: npm ci
+      - run: bun install --frozen-lockfile
 
       - name: Generate Prisma client
-        run: npx prisma generate
+        run: bun run db:generate
 
-      - name: Next.js build
-        run: npm run build
-        env:
-          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/test?schema=public
-          JWT_SECRET: ci-test-secret-at-least-16-chars-long-for-build
-          ENCRYPTION_KEY: 0000000000000000000000000000000000000000000000000000000000000000
+      - name: Next.js production build (with generated-types clean)
+        run: bun run build

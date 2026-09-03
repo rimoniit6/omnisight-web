@@ -9,12 +9,16 @@ import { sweepStaleRateLimitCounters, type RateLimitSweepResult } from './sweep-
 import { runDeviceIntegrityJob, type DeviceIntegrityResult } from './detect-device-integrity';
 import { sweepExpiredUserSessions, type UserSessionSweepResult } from './sweep-user-sessions';
 import { processPendingTranscriptions } from '@/lib/audio/transcribe-job';
+import { processPendingScreenshots } from '@/lib/screenshots/processing';
+import { runWorkDaySummaryJob, type WorkDaySummaryJobResult } from './workday-summary';
+import { runAlertRulesJob, type AlertRuleJobResult } from './alert-rules';
 
 const JOB_LEASE_MS = 5 * 60 * 1000;
 
 export interface JobsResult {
   expiredConsents: number;
   audioTranscriptions?: { processed: number; submitted: number; failed: number; errors: string[] };
+  screenshotProcessing?: { processed: number; failed: number; errors: string[] };
   retention: RetentionResult;
   projectTimeSync: SyncRunResult | null;
   anomalyDetection: AnomalyDetectionJobResult | null;
@@ -22,6 +26,8 @@ export interface JobsResult {
   rateLimitSweep: RateLimitSweepResult | null;
   deviceIntegrity: DeviceIntegrityResult | null;
   userSessionSweep: UserSessionSweepResult | null;
+  workDaySummary: WorkDaySummaryJobResult | null;
+  alertRuleEvaluation: AlertRuleJobResult | null;
   errors: string[];
 }
 
@@ -112,11 +118,13 @@ const EMPTY_RETENTION: RetentionResult = {
   alerts: 0,
   breakSessions: 0,
   breakActivityRows: 0,
+  activityBatchReceipts: 0,
   orphanScreenshotsRemoved: 0,
   fileErrors: [],
   audioRecordings: 0,
   audioTranscriptions: 0,
   audioFileErrors: [],
+  workDaySummaries: 0,
   errors: [],
 };
 
@@ -154,8 +162,32 @@ export async function runProjectTimeSyncJob(): Promise<SyncRunResult> {
   return emptySyncResult(); // lease held elsewhere — no-op this round
 }
 
+/**
+ * Lease-guarded screenshot thumbnail processing. Safe to call from the
+ * periodic scheduler, instrumentation's faster loop, and `npm run jobs`: a
+ * running lease is never double-executed. Returns undefined when another
+ * worker owns the lease (no-op this round).
+ *
+ * Bounded per run (see SCREENSHOT_PROCESSING_DEFAULT_LIMIT in
+ * src/lib/screenshots/processing.ts) so sharp CPU work never blocks the event
+ * loop for long, and rows that fail decode are retired after 3 attempts.
+ */
+export async function runScreenshotProcessingJob(limit?: number): Promise<JobsResult['screenshotProcessing']> {
+  if (await claimJob('screenshot_processing')) {
+    try {
+      const result = await processPendingScreenshots(limit);
+      await finishJob('screenshot_processing', undefined, { ...result });
+      return result;
+    } catch (error) {
+      await finishJob('screenshot_processing', String(error));
+      throw error;
+    }
+  }
+  return { processed: 0, failed: 0, errors: ['lease held elsewhere'] };
+}
+
 export async function runScheduledJobs(): Promise<JobsResult> {
-  const result: JobsResult = { expiredConsents: 0, retention: { ...EMPTY_RETENTION }, projectTimeSync: null, anomalyDetection: null, agentTokenSweep: null, rateLimitSweep: null, deviceIntegrity: null, userSessionSweep: null, errors: [] };
+  const result: JobsResult = { expiredConsents: 0, retention: { ...EMPTY_RETENTION }, projectTimeSync: null, anomalyDetection: null, agentTokenSweep: null, rateLimitSweep: null, deviceIntegrity: null, userSessionSweep: null, workDaySummary: null, alertRuleEvaluation: null, errors: [] };
 
   const started = Date.now();
 
@@ -271,9 +303,40 @@ export async function runScheduledJobs(): Promise<JobsResult> {
     }
   }
 
+  // Screenshot thumbnail processing — bounded drain of 'uploaded' rows.
+  // Runs here (hourly / `npm run jobs`) AND on instrumentation's faster loop;
+  // the JobRun lease makes overlapping invocations a safe no-op.
+  try {
+    result.screenshotProcessing = await runScreenshotProcessingJob();
+  } catch (error) {
+    result.errors.push(`screenshot_processing: ${String(error)}`);
+    await finishJob('screenshot_processing', String(error)).catch(() => {});
+  }
+
+  // Daily WorkDaySummary aggregation (Phase 4) — deterministic whole-day
+  // rebuild + upsert over each org's trailing window. Self-claiming lease;
+  // also reachable from `npm run jobs` and the admin rebuild route.
+  try {
+    result.workDaySummary = await runWorkDaySummaryJob();
+  } catch (error) {
+    result.errors.push(`workday_summary: ${String(error)}`);
+    await finishJob('workday_summary', String(error)).catch(() => {});
+  }
+
+  // AlertRule evaluation (Phase 5) — org-scoped structured rules over real
+  // telemetry; cooldown/dedupe state is persisted per (rule, entity) so
+  // replayed runs cannot double-fire. Fail-closed master flag per org.
+  try {
+    result.alertRuleEvaluation = await runAlertRulesJob();
+  } catch (error) {
+    result.errors.push(`alert_rule_evaluation: ${String(error)}`);
+    await finishJob('alert_rule_evaluation', String(error)).catch(() => {});
+  }
+
+
   const durationMs = Date.now() - started;
   await db.jobRun.updateMany({
-    where: { job: { in: ['expire_consents', 'retention_cleanup', 'project_time_sync', 'anomaly_detection', 'agent_token_sweep', 'rate_limit_sweep', 'device_integrity', 'user_session_sweep', 'audio_transcription'] } },
+    where: { job: { in: ['expire_consents', 'retention_cleanup', 'project_time_sync', 'anomaly_detection', 'agent_token_sweep', 'rate_limit_sweep', 'device_integrity', 'user_session_sweep', 'audio_transcription', 'screenshot_processing', 'workday_summary', 'alert_rule_evaluation'] } },
     data: { lastDurationMs: durationMs },
   });
 

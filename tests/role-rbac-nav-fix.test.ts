@@ -222,14 +222,24 @@ test('ROLE-19: PUT /api/auth/users/[id] validRoles excludes super_admin', async 
   assert.ok(routeSrc.includes("const validRoles = ['org_admin', 'manager', 'viewer']"), 'validRoles must be correct');
 });
 
-// ─── Test 20: Navigation has correct comment for super-admin pages ────────
+// ─── Test 20: Navigation pins super-admin pages to exactly super_admin ─────
+// Behavioral assertion (stable symbols, not prose comments): the two
+// super-admin pages must require exactly `super_admin` in PAGE_MIN_ROLE and
+// must be unreachable for every org-scoped role — org_admin+ hierarchy never
+// implies platform access.
 
-test('ROLE-20: PAGE_MIN_ROLE has clarifying comment for super-admin pages', async () => {
-  const { readFileSync } = await import('fs');
-  const { resolve } = await import('path');
-  const navSrc = readFileSync(resolve(__dirname, '../src/lib/navigation.ts'), 'utf8');
-  assert.ok(
-    navSrc.includes('canAccessPage()') && navSrc.includes('special case'),
-    'Navigation must document the super-admin special case'
-  );
+test('ROLE-20: super-admin pages require exactly super_admin (org_admin+ denied)', async () => {
+  const { PAGE_MIN_ROLE, canAccessPage } = await import('../src/lib/navigation');
+  const superAdminPages = ['super-admin-organizations', 'super-admin-organization-detail'] as const;
+  for (const page of superAdminPages) {
+    assert.equal(
+      PAGE_MIN_ROLE[page],
+      'super_admin',
+      `${page} must be pinned to super_admin in PAGE_MIN_ROLE`
+    );
+    assert.equal(canAccessPage('super_admin', page), true, `super_admin can access ${page}`);
+    for (const role of ['org_admin', 'admin', 'manager', 'viewer'] as const) {
+      assert.equal(canAccessPage(role, page), false, `${role} must NOT access ${page}`);
+    }
+  }
 });

@@ -22,6 +22,7 @@ import { execSync } from 'node:child_process';
 import { join, resolve, sep } from 'node:path';
 import { rmSync, mkdirSync, readdirSync, writeFileSync, existsSync } from 'node:fs';
 import { NextRequest } from 'next/server';
+import { req } from './helpers/request';
 
 // ─── Test DB isolation (must be set BEFORE any app module import) ──────────
 const PG_TEST_BASE = process.env.PG_TEST_BASE_URL || 'postgresql://postgres:123456@localhost:5432';
@@ -144,17 +145,6 @@ after(async () => {
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
-function req(token: string | null, opts: { method?: string; body?: unknown; url?: string; ip?: string } = {}): NextRequest {
-  const headers: Record<string, string> = {};
-  if (token) headers['authorization'] = `Bearer ${token}`;
-  if (opts.ip) headers['x-forwarded-for'] = opts.ip;
-  if (opts.body !== undefined) headers['content-type'] = 'application/json';
-  return new NextRequest(opts.url || 'http://localhost:3000/api/test', {
-    method: opts.method || 'GET',
-    headers,
-    body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined,
-  });
-}
 
 function tokenFor(role: string, userId: string, orgId: string = orgA.id) {
   return signJWT({ userId, email: `${role}-${userId}@${orgId.slice(-6)}.local`, role, organizationId: orgId });
@@ -240,7 +230,10 @@ async function setupActiveDevice(label: string, ip: string, orgId: string = orgA
   const res = await authApi.POST(req(null, { method: 'POST', body: { deviceId: body.deviceId, deviceSecret: body.secret, agentVersion: '1.2.0' }, ip }));
   const parsed = (await res.json().catch(() => ({}))) as Record<string, unknown>;
   assert.equal(res.status, 200, JSON.stringify(parsed));
-  return { emp, claim: body as Record<string, string>, token: parsed.token as string };
+  // The device token is bound to the claim's target employee (-EMP), NOT the
+  // agent-account employee (-ACC). Consent and screenshot rows hang off the
+  // device-bound employee, so that is the one returned as `emp`.
+  return { emp: targetEmp, claim: body as Record<string, string>, token: parsed.token as string };
 }
 
 /** Setup an active device with the requested screenshot-consent state. */
@@ -774,7 +767,13 @@ test('SH-32: crafted employeeId cannot escape the screenshots storage dir (filen
   await setConsent(emp.id, orgA.id, 'screenshot', 'granted');
 
   // Create an active device bound to this employee and upload a screenshot.
-  const { body: claim } = await discover('key-shot-traversal-abcdef', '203.0.113.88');
+  // Anonymous discovery was removed — the discover must be session-authenticated.
+  const pwHash = await hashPassword(PASSWORD);
+  await createAgentAccount({ employeeId: emp.id, agentId: 'SH32-ACC', password: PASSWORD });
+  const loginRes = await loginApi.POST(req(null, { body: { agentId: 'SH32-ACC', password: PASSWORD } }));
+  const sessionToken = ((await loginRes.json()) as { token?: string }).token ?? null;
+  const { body: claim } = await discover('key-shot-traversal-abcdef', '203.0.113.88', sessionToken);
+  assert.equal(claim.claimId ? 'ok' : 'no-claim', 'ok', JSON.stringify(claim));
   const admin = await tokenFor('admin', 'u-sh32-admin');
   assert.equal((await approve(admin, claim.claimId as string, emp.id)).status, 200);
   const auth = await authApi.POST(req(null, { method: 'POST', body: { deviceId: claim.deviceId, deviceSecret: claim.secret, agentVersion: '1.2.0' }, ip: '203.0.113.88' }));

@@ -3,6 +3,7 @@ import { resolveRetentionDays, retentionCutoff } from './settings';
 import { sweepOrphanScreenshotFiles } from '@/lib/screenshots/sweep';
 import { removeArtifactByPath } from '@/lib/storage';
 import { BREAK_TITLES } from '@/lib/breaks/service';
+import { localDayKey } from '@/lib/timezone';
 
 export interface RetentionResult {
   screenshots: number;
@@ -24,6 +25,10 @@ export interface RetentionResult {
   breakSessions: number;
   /** Legacy "Break Mode …" Activity mirror rows purged with their sessions. */
   breakActivityRows: number;
+  /** ActivityBatchReceipt idempotency rows purged past the activity window. */
+  activityBatchReceipts: number;
+  /** WorkDaySummary daily rollups purged past the activity window (their raw rows are gone too). */
+  workDaySummaries: number;
   /** Physical screenshot files with no matching DB row, removed this run. */
   orphanScreenshotsRemoved: number;
   /** Paths whose physical artifact could NOT be deleted this run — the DB row
@@ -51,6 +56,8 @@ const EMPTY: RetentionResult = {
   alerts: 0,
   breakSessions: 0,
   breakActivityRows: 0,
+  activityBatchReceipts: 0,
+  workDaySummaries: 0,
   audioRecordings: 0,
   audioTranscriptions: 0,
   audioFileErrors: [],
@@ -87,10 +94,16 @@ async function removeFile(orgId: string, filePath: string, kind: 'screenshot' | 
  * and only delete the DB row for artifacts that are confirmed gone. A file
  * that cannot be deleted keeps its row (retryable next run) and is reported
  * in result.fileErrors — we never report a purge while the artifact remains.
+ *
+ * Screenshot rows may carry a derived thumbnail object (Phase 2): when a
+ * `thumbnailPath` is present it is unlinked BEFORE the original, and a failure
+ * to remove EITHER artifact keeps the DB row so a later run can retry — we
+ * never delete a row while one of its physical artifacts may still exist
+ * (that would orphan the other object).
  */
 async function purgeFileRows(
   orgId: string,
-  rows: { id: string; filePath: string | null }[],
+  rows: { id: string; filePath: string | null; thumbnailPath?: string | null }[],
   result: RetentionResult,
   label: string,
   kind: 'screenshot' | 'legacy',
@@ -98,8 +111,21 @@ async function purgeFileRows(
 ): Promise<number> {
   const removableIds: string[] = [];
   for (const row of rows) {
-    if (!row.filePath) {
+    if (!row.filePath && !row.thumbnailPath) {
       removableIds.push(row.id); // no physical artifact to manage
+      continue;
+    }
+    // Derived thumbnail first (screenshots only — other kinds never have one).
+    if (row.thumbnailPath) {
+      if (await removeFile(orgId, row.thumbnailPath, kind)) {
+        // thumbnail gone — fall through to the original below
+      } else {
+        result.fileErrors.push(`${label} ${row.id} (thumb ${row.thumbnailPath})`);
+        continue; // keep the row: thumbnail artifact remains, retry next run
+      }
+    }
+    if (!row.filePath) {
+      removableIds.push(row.id);
       continue;
     }
     if (await removeFile(orgId, row.filePath, kind)) {
@@ -135,7 +161,7 @@ export async function runRetentionForOrg(
     const stale = await db.screenshot.findMany({
       where: { organizationId: orgId, capturedAt: { lt: retentionCutoff(shotDays, now) } },
       take: limit,
-      select: { id: true, filePath: true },
+      select: { id: true, filePath: true, thumbnailPath: true },
     });
     if (stale.length > 0) {
       result.screenshots = await purgeFileRows(orgId, stale, result, 'screenshot', 'screenshot', (ids) => db.screenshot.deleteMany({ where: { id: { in: ids } } }));
@@ -161,6 +187,30 @@ export async function runRetentionForOrg(
       },
     });
     result.activities = del.count;
+
+    // ActivityBatchReceipt idempotency rows follow the SAME activity window:
+    // once a receipt is older than the activity retention cutoff, any
+    // legitimate retry/replay window has long passed, so it can be dropped.
+    // Scoped by organizationId directly (receipts carry their own org FK).
+    const receiptDel = await db.activityBatchReceipt.deleteMany({
+      where: { organizationId: orgId, receivedAt: { lt: retentionCutoff(actDays, now) } },
+    });
+    result.activityBatchReceipts = receiptDel.count;
+
+    // WorkDaySummary daily rollups follow the SAME activity window: once the
+    // raw rows a summary was derived from are past the cutoff, the summary is
+    // stale and would only mislead — delete it with the data it summarizes.
+    // workDate is the ORGANIZATION-local day (never UTC), so a summary is only
+    // obsolete once its entire local day ended before the cutoff instant:
+    // purge workDate < the org-local day of the cutoff. Keeps the summary of
+    // the local day the cutoff lands on (its later rows survive retention).
+    const cutoff = retentionCutoff(actDays, now);
+    const orgTz = await db.organization.findUnique({ where: { id: orgId }, select: { timezone: true } });
+    const cutoffKey = localDayKey(cutoff, orgTz?.timezone ?? 'UTC');
+    const summaryDel = await db.workDaySummary.deleteMany({
+      where: { organizationId: orgId, workDate: { lt: cutoffKey } },
+    });
+    result.workDaySummaries = summaryDel.count;
   }
 
   // Break/privacy history: only ENDED sessions older than the cutoff are

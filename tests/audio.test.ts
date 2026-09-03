@@ -97,8 +97,6 @@ test('B. Validation — audio types are correctly defined', async () => {
   
   // Max file size: 100MB
   assert.equal(MAX_AUDIO_FILE_SIZE, 100 * 1024 * 1024, 'Max file size should be 100MB');
-  
-  console.log('  ✓ MIME type validation works correctly');
 });
 
 test('C. Recording status — progress mapping is correct', async () => {
@@ -109,8 +107,6 @@ test('C. Recording status — progress mapping is correct', async () => {
   assert.equal(recordingProgress('transcribing'), 50);
   assert.equal(recordingProgress('completed'), 100);
   assert.equal(recordingProgress('failed'), 0);
-  
-  console.log('  ✓ Status progress mapping is correct');
 });
 
 test('D. Storage — audio key generation is server-side only', async () => {
@@ -125,23 +121,16 @@ test('D. Storage — audio key generation is server-side only', async () => {
   const key = audioKey(orgId, filename);
   assert.ok(key.startsWith(`audio/${orgId}/`), 'Key should be org-scoped');
   assert.ok(!key.includes('..'), 'Key should not contain path traversal');
-  
-  console.log('  ✓ Storage key generation is secure');
 });
 
 test('E. Retention — audio retention fields exist in result type', async () => {
   const { runRetention } = await import('../src/lib/jobs/retention');
   assert.ok(typeof runRetention === 'function', 'runRetention should be exported');
-  
-  // The retention function should accept our new fields
-  console.log('  ✓ Retention function is properly integrated');
 });
 
 test('F. Job runner — audio_transcription job is registered', async () => {
   const { processPendingTranscriptions } = await import('../src/lib/audio/transcribe-job');
   assert.ok(typeof processPendingTranscriptions === 'function', 'processPendingTranscriptions should be exported');
-  
-  console.log('  ✓ Job integration is properly set up');
 });
 
 test('G. Database models — AudioRecording and AudioTranscription exist', async () => {
@@ -151,8 +140,6 @@ test('G. Database models — AudioRecording and AudioTranscription exist', async
   
   const transcriptionCount = await prisma.audioTranscription.count({ where: { organizationId: orgId } });
   assert.ok(typeof transcriptionCount === 'number', 'AudioTranscription model should be queryable');
-  
-  console.log('  ✓ Database models exist and are queryable');
 });
 
 test('H. State machine — valid state transitions', async () => {
@@ -213,8 +200,6 @@ test('H. State machine — valid state transitions', async () => {
   
   // Clean up
   await prisma.audioRecording.deleteMany({ where: { organizationId: orgId } });
-  
-  console.log('  ✓ State machine transitions work correctly');
 });
 
 test('I. Tenant isolation — cross-org queries return empty', async () => {
@@ -245,8 +230,6 @@ test('I. Tenant isolation — cross-org queries return empty', async () => {
   
   // Clean up
   await prisma.audioRecording.deleteMany({ where: { organizationId: orgId } });
-  
-  console.log('  ✓ Tenant isolation is enforced');
 });
 
 test('J. Max retries — bounded retry count', async () => {
@@ -271,8 +254,6 @@ test('J. Max retries — bounded retry count', async () => {
   
   // Clean up
   await prisma.audioRecording.deleteMany({ where: { organizationId: orgId } });
-  
-  console.log('  ✓ Retry limit is enforced');
 });
 
 test('K. API routes — all required routes are defined', async () => {
@@ -293,8 +274,6 @@ test('K. API routes — all required routes are defined', async () => {
     const exists = await fs.access(path.resolve(route)).then(() => true).catch(() => false);
     assert.ok(exists, `Route ${route} should exist`);
   }
-  
-  console.log('  ✓ All API routes are defined');
 });
 
 test('L. UI components — audio page and viewer exist', async () => {
@@ -310,16 +289,12 @@ test('L. UI components — audio page and viewer exist', async () => {
     const exists = await fs.access(path.resolve(comp)).then(() => true).catch(() => false);
     assert.ok(exists, `Component ${comp} should exist`);
   }
-  
-  console.log('  ✓ UI components exist');
 });
 
 test('M. Navigation — audio page is registered', async () => {
   const { PAGE_MIN_ROLE } = await import('../src/lib/navigation');
   assert.ok('audio' in PAGE_MIN_ROLE, 'audio should be in PAGE_MIN_ROLE');
   assert.equal(PAGE_MIN_ROLE.audio, 'admin', 'audio should require admin role');
-  
-  console.log('  ✓ Navigation registration is correct');
 });
 
 test('N. Microservice — Python service files exist', async () => {
@@ -338,8 +313,4 @@ test('N. Microservice — Python service files exist', async () => {
     const exists = await fs.access(path.resolve(file)).then(() => true).catch(() => false);
     assert.ok(exists, `File ${file} should exist`);
   }
-  
-  console.log('  ✓ Python microservice files exist');
 });
-
-console.log('\n=== Audio Transcription Tests Complete ===');
