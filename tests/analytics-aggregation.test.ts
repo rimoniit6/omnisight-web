@@ -75,12 +75,14 @@ before(async () => {
 
   // Explicit, strictly-increasing createdAt so the SQL "first row"
   // (ORDER BY createdAt, id) is deterministic AND equals insertion order.
-  const mk = (
+  const mk = async (
     employeeId: string,
     fields: { type: string; applicationName?: string | null; url?: string | null; title?: string | null; category?: string | null; duration: number },
     timestamp: string
   ) => {
     seedSeq += 1;
+    // Phase 1: Activity requires direct organizationId — resolve from the employee (same rule as the DB backfill).
+    const emp = await db.employee.findUniqueOrThrow({ where: { id: employeeId }, select: { organizationId: true } });
     return db.activity.create({
       data: {
         type: fields.type,
@@ -90,6 +92,7 @@ before(async () => {
         category: fields.category ?? null,
         duration: fields.duration,
         employeeId,
+        organizationId: emp.organizationId,
         timestamp: new Date(timestamp),
         createdAt: new Date(`2026-08-11T00:00:${String(seedSeq).padStart(2, '0')}.000Z`),
       },

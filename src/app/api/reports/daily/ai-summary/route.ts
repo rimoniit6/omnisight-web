@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { callAIProvider } from '@/lib/ai-provider-helper';
+import { meterAiCall } from '@/lib/ai-metering';
 import { authError, getSessionOrg, requireManagerOrg, parseJsonBody, BodyParseError, isValidDate } from '@/lib/api';
 import { log, requestContext } from '@/lib/logger';
 import { excludeInternalAgentActivities } from '@/lib/agent-process';
@@ -254,10 +255,12 @@ Respond in valid JSON format with these exact fields:
 - Unproductive: ${breakdown.unproductive.minutes}m (${breakdown.unproductive.percent}%)
 - Idle: ${breakdown.idle.minutes}m (${breakdown.idle.percent}%)`;
 
-    const aiResult = await callAIProvider(systemPrompt, userPrompt, {
-      maxTokens: 800,
-      temperature: 0.3,
-    });
+    const aiResult = await meterAiCall({ organizationId: org.id, operation: 'daily_summary' }, () =>
+      callAIProvider(systemPrompt, userPrompt, {
+        maxTokens: 800,
+        temperature: 0.3,
+      })
+    );
 
     // Safe structured diagnostics — the code never contains the API key or
     // any secret. Log the real failure reason so operators can see whether it

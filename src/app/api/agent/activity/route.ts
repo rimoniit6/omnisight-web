@@ -284,6 +284,8 @@ export async function POST(req: NextRequest) {
       duration: v.duration,
       employeeId,
       deviceId: authResult.deviceId || null,
+      // Phase 1 Step 10: direct tenant ownership (server-derived, never client input).
+      organizationId,
       timestamp: v.timestamp ?? new Date(),
       createdAt: new Date(),
     }));

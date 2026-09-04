@@ -362,6 +362,31 @@ Employees can grant/revoke consent through the Agent interface. Admins can see t
 
 ---
 
+## 21. License Keys (Self-Hosted)
+
+> Only visible/used when the deployment runs in **self-hosted** mode
+> (`SELF_HOSTED=true`). In cloud mode license checks are bypassed entirely.
+
+**Super Admins** manage license keys from **Admin → Licenses**:
+
+- **Generate a key**: select an organization and a self-hosted plan
+  (e.g. `Enterprise_SelfHosted`), choose an expiry (default 1 year), and the
+  system creates an `OMNISIGHT-XXXX-XXXX-XXXX` key. The key is shown once to
+  the Super Admin — store it safely.
+- **Revoke a key**: this immediately invalidates the key. If it was the
+  organization's current key, their license pointer is cleared so validation
+  fails until a new key is issued.
+
+**Users / org admins** can view their organization's licensing status at
+**Settings → License Status** (`/self-hosted/license-status`), which shows
+whether the deployment is cloud, active, or unlicensed.
+
+> **Security:** license keys are treated as secrets. They are never shown to
+> normal users, never echoed by the validation endpoint, and never written to
+> logs or error messages.
+
+---
+
 ## Tips
 
 - **Regularly check** the Dashboard for real-time insights

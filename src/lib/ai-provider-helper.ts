@@ -306,12 +306,70 @@ function isOpenAICompatible(provider: string): boolean {
 //  callAIProvider — Text-only generation (no images)
 // ═══════════════════════════════════════════════════════════════════════════════
 
+export interface ProviderTokenUsage {
+  inputTokens: number | null;
+  outputTokens: number | null;
+  totalTokens: number | null;
+}
+
 export interface AIProviderResult {
   text: string | null;
   provider: string;
   model: string;
   /** SAFE diagnostic code — never includes the API key or any secret. */
   error?: string;
+  /** Provider-reported token usage (Phase 5 metering). Absent when the provider reports none. */
+  usage?: ProviderTokenUsage | null;
+}
+
+/**
+ * Extract provider-reported token counts from a raw provider response.
+ * Returns null when the provider did not report usage for this call.
+ * Never fabricates counts: totals are summed only from reported parts.
+ */
+function parseProviderUsage(provider: string, data: unknown): ProviderTokenUsage | null {
+  if (!data || typeof data !== 'object') return null;
+  const d = data as Record<string, unknown>;
+
+  if (isOpenAICompatible(provider)) {
+    const u = d.usage as Record<string, unknown> | undefined;
+    if (!u || typeof u !== 'object') return null;
+    const input = typeof u.prompt_tokens === 'number' ? u.prompt_tokens : null;
+    const output = typeof u.completion_tokens === 'number' ? u.completion_tokens : null;
+    const total = typeof u.total_tokens === 'number' ? u.total_tokens : input !== null && output !== null ? input + output : null;
+    if (input === null && output === null && total === null) return null;
+    return { inputTokens: input, outputTokens: output, totalTokens: total };
+  }
+
+  if (provider === 'anthropic') {
+    const u = d.usage as Record<string, unknown> | undefined;
+    if (!u || typeof u !== 'object') return null;
+    const input = typeof u.input_tokens === 'number' ? u.input_tokens : null;
+    const output = typeof u.output_tokens === 'number' ? u.output_tokens : null;
+    const total = input !== null && output !== null ? input + output : null;
+    if (input === null && output === null) return null;
+    return { inputTokens: input, outputTokens: output, totalTokens: total };
+  }
+
+  if (provider === 'google') {
+    const u = d.usageMetadata as Record<string, unknown> | undefined;
+    if (!u || typeof u !== 'object') return null;
+    const input = typeof u.promptTokenCount === 'number' ? u.promptTokenCount : null;
+    const output = typeof u.candidatesTokenCount === 'number' ? u.candidatesTokenCount : null;
+    const total = typeof u.totalTokenCount === 'number' ? u.totalTokenCount : input !== null && output !== null ? input + output : null;
+    if (input === null && output === null && total === null) return null;
+    return { inputTokens: input, outputTokens: output, totalTokens: total };
+  }
+
+  if (provider === 'ollama') {
+    const input = typeof d.prompt_eval_count === 'number' ? d.prompt_eval_count : null;
+    const output = typeof d.eval_count === 'number' ? d.eval_count : null;
+    const total = input !== null && output !== null ? input + output : null;
+    if (input === null && output === null) return null;
+    return { inputTokens: input, outputTokens: output, totalTokens: total };
+  }
+
+  return null;
 }
 
 export async function callAIProvider(
@@ -331,6 +389,7 @@ export async function callAIProvider(
     const temperature = options?.temperature ?? 0.3;
 
     const fail = (error: string) => ({ text: null as string | null, provider, model, error });
+    let usage: ProviderTokenUsage | null = null;
 
     if (isOpenAICompatible(provider)) {
       const res = await providerFetch(apiEndpoint(baseUrl, '/v1/chat/completions'), {
@@ -359,6 +418,7 @@ export async function callAIProvider(
       }
       const data = await res.json();
       responseText = extractOpenAIResponse(data);
+      usage = parseProviderUsage(provider, data);
     } else if (provider === 'anthropic') {
       const res = await providerFetch(apiEndpoint(baseUrl, '/v1/messages'), {
         method: 'POST',
@@ -384,6 +444,7 @@ export async function callAIProvider(
       }
       const data = await res.json();
       responseText = extractAnthropicResponse(data);
+      usage = parseProviderUsage(provider, data);
     } else if (provider === 'google') {
       // Key travels in the x-goog-api-key header — never in the URL.
       const res = await providerFetch(
@@ -411,6 +472,7 @@ export async function callAIProvider(
       }
       const data = await res.json();
       responseText = extractGoogleResponse(data);
+      usage = parseProviderUsage(provider, data);
     } else if (provider === 'ollama') {
       const res = await providerFetch(
         `${baseUrl}/api/chat`,
@@ -438,10 +500,11 @@ export async function callAIProvider(
       }
       const data = await res.json();
       responseText = extractOllamaResponse(data);
+      usage = parseProviderUsage(provider, data);
     }
 
     return responseText
-      ? { text: responseText, provider, model }
+      ? { text: responseText, provider, model, ...(usage ? { usage } : {}) }
       : fail('AI_RESPONSE_INVALID');
   } catch (error) {
     console.error('callAIProvider error:', error);
@@ -471,6 +534,7 @@ export async function callAIProviderVision(
     const temperature = options?.temperature ?? 0.3;
 
     const fail = (error: string) => ({ text: null as string | null, provider, model, error });
+    let usage: ProviderTokenUsage | null = null;
 
     // Build image reference for OpenAI-compatible providers
     function openAIImageUrl(): string {
@@ -517,6 +581,7 @@ export async function callAIProviderVision(
       }
       const data = await res.json();
       responseText = extractOpenAIResponse(data);
+      usage = parseProviderUsage(provider, data);
     } else if (provider === 'anthropic') {
       // Anthropic requires base64
       let base64Data = image.base64;
@@ -581,6 +646,7 @@ export async function callAIProviderVision(
       }
       const data = await res.json();
       responseText = extractAnthropicResponse(data);
+      usage = parseProviderUsage(provider, data);
     } else if (provider === 'google') {
       // Google requires inlineData (base64)
       let base64Data = image.base64;
@@ -630,6 +696,7 @@ export async function callAIProviderVision(
       }
       const data = await res.json();
       responseText = extractGoogleResponse(data);
+      usage = parseProviderUsage(provider, data);
     } else if (provider === 'ollama') {
       // Ollama: images array (base64)
       let base64Data = image.base64;
@@ -677,10 +744,11 @@ export async function callAIProviderVision(
       }
       const data = await res.json();
       responseText = extractOllamaResponse(data);
+      usage = parseProviderUsage(provider, data);
     }
 
     return responseText
-      ? { text: responseText, provider, model }
+      ? { text: responseText, provider, model, ...(usage ? { usage } : {}) }
       : fail('AI_RESPONSE_INVALID');
   } catch (error) {
     console.error('callAIProviderVision error:', error);

@@ -28,8 +28,8 @@ import { resolve } from 'node:path';
 
 const ROOT = resolve(__dirname, '..');
 const DETAIL_SRC = resolve(ROOT, 'src/components/super-admin/super-admin-organization-detail-page.tsx');
-const MEMBERS_ROUTE = resolve(ROOT, 'src/app/api/organizations/[id]/members/route.ts');
-const MEMBER_ID_ROUTE = resolve(ROOT, 'src/app/api/organizations/[id]/members/[memberId]/route.ts');
+const MEMBERS_ROUTE = resolve(ROOT, 'src/app/api/organizations/[orgId]/members/route.ts');
+const MEMBER_ID_ROUTE = resolve(ROOT, 'src/app/api/organizations/[orgId]/members/[memberId]/route.ts');
 const EMPLOYEES_API = resolve(ROOT, 'src/app/api/super-admin/organizations/[id]/employees/route.ts');
 const DEVICES_API = resolve(ROOT, 'src/app/api/super-admin/organizations/[id]/devices/route.ts');
 const PROJECTS_API = resolve(ROOT, 'src/app/api/super-admin/organizations/[id]/projects/route.ts');

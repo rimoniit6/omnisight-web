@@ -266,10 +266,10 @@ async function seedDhakaScenario() {
   const emp = await freshEmp(orgRow.id);
   await db.activity.createMany({
     data: [
-      { employeeId: emp.id, type: 'application', title: 'Code', applicationName: 'Code.exe', category: 'productive', duration: 60, timestamp: new Date('2026-09-03T03:00:00Z') },
-      { employeeId: emp.id, type: 'website', title: 'github.com', applicationName: null, category: 'neutral', duration: 60, timestamp: new Date('2026-09-03T05:00:00Z') },
-      { employeeId: emp.id, type: 'application', title: 'game', applicationName: 'game.exe', category: 'unproductive', duration: 60, timestamp: new Date('2026-09-02T20:30:00Z') },
-      { employeeId: emp.id, type: 'idle', title: null, applicationName: null, category: 'idle', duration: 120, timestamp: new Date('2026-09-03T07:00:00Z') },
+      { employeeId: emp.id, organizationId: orgRow.id, type: 'application', title: 'Code', applicationName: 'Code.exe', category: 'productive', duration: 60, timestamp: new Date('2026-09-03T03:00:00Z') },
+      { employeeId: emp.id, organizationId: orgRow.id, type: 'website', title: 'github.com', applicationName: null, category: 'neutral', duration: 60, timestamp: new Date('2026-09-03T05:00:00Z') },
+      { employeeId: emp.id, organizationId: orgRow.id, type: 'application', title: 'game', applicationName: 'game.exe', category: 'unproductive', duration: 60, timestamp: new Date('2026-09-02T20:30:00Z') },
+      { employeeId: emp.id, organizationId: orgRow.id, type: 'idle', title: null, applicationName: null, category: 'idle', duration: 120, timestamp: new Date('2026-09-03T07:00:00Z') },
     ],
   });
   await db.breakSession.create({
@@ -350,7 +350,7 @@ test('WD-10: rebuild after data change replaces totals — never accumulates', a
   await rebuildDaysForOrg(orgId, [dayKey]);
   // Add more productive work → rebuild must reflect the NEW total exactly once.
   await db.activity.create({
-    data: { employeeId, type: 'application', title: 'More', applicationName: 'more.exe', category: 'productive', duration: 120, timestamp: new Date('2026-09-03T06:00:00Z') },
+    data: { employeeId, organizationId: orgId, type: 'application', title: 'More', applicationName: 'more.exe', category: 'productive', duration: 120, timestamp: new Date('2026-09-03T06:00:00Z') },
   });
   await rebuildDaysForOrg(orgId, [dayKey]);
   const summary = await summaryRow(orgId, employeeId, dayKey);
@@ -370,7 +370,7 @@ test('WD-11: tenant isolation — same telemetry, different orgs, independent da
   const rows = [
     { type: 'application', title: 'Code', applicationName: 'Code.exe', category: 'productive', duration: 60, timestamp: new Date('2026-09-02T23:30:00Z') },
   ];
-  await db.activity.createMany({ data: [{ ...rows[0], employeeId: dhakaEmp.id }, { ...rows[0], employeeId: utcEmp.id }] });
+  await db.activity.createMany({ data: [{ ...rows[0], employeeId: dhakaEmp.id, organizationId: dhakaOrg.id }, { ...rows[0], employeeId: utcEmp.id, organizationId: utcOrg.id }] });
   await rebuildDaysForOrg(dhakaOrg.id, ['2026-09-03']);
   await rebuildDaysForOrg(utcOrg.id, ['2026-09-02']);
   const dhakaRow = await summaryRow(dhakaOrg.id, dhakaEmp.id, '2026-09-03');
@@ -391,8 +391,8 @@ test('WD-12: employee isolation — same org, same day, separate summaries', asy
   const emp2 = await freshEmp(orgRow.id);
   await db.activity.createMany({
     data: [
-      { employeeId: emp1.id, type: 'application', title: 'A', applicationName: 'a.exe', category: 'productive', duration: 60, timestamp: new Date('2026-09-03T03:00:00Z') },
-      { employeeId: emp2.id, type: 'application', title: 'B', applicationName: 'b.exe', category: 'unproductive', duration: 300, timestamp: new Date('2026-09-03T05:00:00Z') },
+      { employeeId: emp1.id, organizationId: orgRow.id, type: 'application', title: 'A', applicationName: 'a.exe', category: 'productive', duration: 60, timestamp: new Date('2026-09-03T03:00:00Z') },
+      { employeeId: emp2.id, organizationId: orgRow.id, type: 'application', title: 'B', applicationName: 'b.exe', category: 'unproductive', duration: 300, timestamp: new Date('2026-09-03T05:00:00Z') },
     ],
   });
   await rebuildDaysForOrg(orgRow.id, ['2026-09-03']);
@@ -497,7 +497,7 @@ test('WD-17: GET API — org-scoped reads, RBAC, validation, cross-org employee 
   const otherEmp = await freshEmp(otherOrg.id);
   // Seed one summary row for orgRow so reads have content.
   await db.activity.create({
-    data: { employeeId: emp.id, type: 'application', title: 'X', applicationName: 'x.exe', category: 'productive', duration: 60, timestamp: new Date('2026-09-03T03:00:00Z') },
+    data: { employeeId: emp.id, organizationId: orgRow.id, type: 'application', title: 'X', applicationName: 'x.exe', category: 'productive', duration: 60, timestamp: new Date('2026-09-03T03:00:00Z') },
   });
   const { rebuildDaysForOrg } = await import('../src/lib/jobs/workday-summary');
   await rebuildDaysForOrg(orgRow.id, ['2026-09-03']);
@@ -531,7 +531,7 @@ test('WD-18: rebuild API — RBAC, validation, 90-day bound, future-day rejectio
   const orgRow = await freshOrg(DHAKA);
   const emp = await freshEmp(orgRow.id);
   await db.activity.create({
-    data: { employeeId: emp.id, type: 'application', title: 'Y', applicationName: 'y.exe', category: 'productive', duration: 60, timestamp: new Date('2026-09-03T03:00:00Z') },
+    data: { employeeId: emp.id, organizationId: orgRow.id, type: 'application', title: 'Y', applicationName: 'y.exe', category: 'productive', duration: 60, timestamp: new Date('2026-09-03T03:00:00Z') },
   });
   const managerToken = await signJWT({ userId: 'wd-mgr2', email: 'mgr2@wd.test', role: 'manager', organizationId: orgRow.id });
   const viewerToken = await signJWT({ userId: 'wd-viewer2', email: 'viewer2@wd.test', role: 'viewer', organizationId: orgRow.id });

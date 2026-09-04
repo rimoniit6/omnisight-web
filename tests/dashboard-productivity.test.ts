@@ -93,10 +93,13 @@ async function dashboardData(token: string): Promise<{ productivityScore: number
   return (body.data as { productivityScore: number; dailyProductivity: Array<{ productive: number; neutral: number; unproductive: number }> });
 }
 
-const mk = (employeeId: string, category: string, duration: number, timestamp: Date) =>
-  db.activity.create({
-    data: { type: 'application', title: null, applicationName: 'Code', category, duration, employeeId, timestamp, createdAt: timestamp },
+// Phase 1: Activity requires direct organizationId — resolve from the employee (same rule as the DB backfill).
+const mk = async (employeeId: string, category: string, duration: number, timestamp: Date) => {
+  const emp = await db.employee.findUniqueOrThrow({ where: { id: employeeId }, select: { organizationId: true } });
+  return db.activity.create({
+    data: { type: 'application', title: null, applicationName: 'Code', category, duration, employeeId, organizationId: emp.organizationId, timestamp, createdAt: timestamp },
   });
+};
 
 const inWindow = (daysAgo: number, hourUtc = 12) =>
   new Date(Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth(), new Date().getUTCDate() - daysAgo, hourUtc, 0, 0, 0));

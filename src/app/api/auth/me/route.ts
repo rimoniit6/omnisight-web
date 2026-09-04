@@ -107,6 +107,7 @@ export async function GET(req: NextRequest) {
         initials,
         avatar: adminUser.avatar,
         lastLogin: adminUser.lastLogin,
+        mustChangePassword: adminUser.mustChangePassword,
       },
       organization: organization
         ? {

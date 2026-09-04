@@ -36,16 +36,25 @@ export async function POST(req: NextRequest) {
   let orgName: string;
 
   if (auth.role === 'super_admin') {
-    // Super Admin: verify the organization exists and is active.
+    // Phase 1 Step 8: Super Admin may switch ONLY to MANAGED organizations.
+    // CUSTOMER_DB / PRIVATE orgs are rejected server-side (never UI-only):
+    // control-plane metadata for those modes is available via the
+    // super-admin metadata APIs, not via tenant switching.
     const org = await prisma.organization.findUnique({
       where: { id: requestedOrgId },
-      select: { id: true, name: true, status: true },
+      select: { id: true, name: true, status: true, deploymentMode: true },
     });
     if (!org) {
       return apiError('Organization not found', 403);
     }
     if (org.status !== 'active') {
       return apiError('Organization is not active', 403);
+    }
+    if (org.deploymentMode !== 'MANAGED') {
+      return apiError(
+        'Super Admin switching is limited to MANAGED organizations for this deployment mode',
+        403,
+      );
     }
     jwtRole = 'super_admin'; // Super Admin keeps global role, not membership role
     orgName = org.name;

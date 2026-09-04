@@ -84,14 +84,14 @@ before(async () => {
   // Real activity for empA (productive + neutral + unproductive)
   await db.activity.createMany({
     data: [
-      { employeeId: empA.id, type: 'application', applicationName: 'VS Code', category: 'productive', duration: 600, timestamp: new Date(Date.now() - 2 * 86_400_000) },
-      { employeeId: empA.id, type: 'application', applicationName: 'VS Code', category: 'productive', duration: 400, timestamp: new Date(Date.now() - 2 * 86_400_000) },
-      { employeeId: empA.id, type: 'website', url: 'https://docs.example.com', category: 'neutral', duration: 300, timestamp: new Date(Date.now() - 2 * 86_400_000) },
-      { employeeId: empA.id, type: 'application', applicationName: 'Youtube', category: 'unproductive', duration: 100, timestamp: new Date(Date.now() - 2 * 86_400_000) },
+      { employeeId: empA.id, organizationId: orgA.id, type: 'application', applicationName: 'VS Code', category: 'productive', duration: 600, timestamp: new Date(Date.now() - 2 * 86_400_000) },
+      { employeeId: empA.id, organizationId: orgA.id, type: 'application', applicationName: 'VS Code', category: 'productive', duration: 400, timestamp: new Date(Date.now() - 2 * 86_400_000) },
+      { employeeId: empA.id, organizationId: orgA.id, type: 'website', url: 'https://docs.example.com', category: 'neutral', duration: 300, timestamp: new Date(Date.now() - 2 * 86_400_000) },
+      { employeeId: empA.id, organizationId: orgA.id, type: 'application', applicationName: 'Youtube', category: 'unproductive', duration: 100, timestamp: new Date(Date.now() - 2 * 86_400_000) },
       // Outside the default 7d window — must NOT appear
-      { employeeId: empA.id, type: 'application', applicationName: 'Old App', category: 'productive', duration: 99999, timestamp: new Date(Date.now() - 60 * 86_400_000) },
+      { employeeId: empA.id, organizationId: orgA.id, type: 'application', applicationName: 'Old App', category: 'productive', duration: 99999, timestamp: new Date(Date.now() - 60 * 86_400_000) },
       // Cross-org — must never leak
-      { employeeId: empB.id, type: 'application', applicationName: 'OrgB App', category: 'productive', duration: 99999, timestamp: new Date() },
+      { employeeId: empB.id, organizationId: orgB.id, type: 'application', applicationName: 'OrgB App', category: 'productive', duration: 99999, timestamp: new Date() },
     ],
   });
 
@@ -905,7 +905,7 @@ test('DS-07: employee filter → summary contains only that employee\'s data', a
   });
   await db.activity.createMany({
     data: [
-      { employeeId: empC.id, type: 'application', applicationName: 'SecondApp', category: 'productive', duration: 5000, timestamp: new Date(Date.now() - 1 * 86_400_000) },
+      { employeeId: empC.id, organizationId: orgA.id, type: 'application', applicationName: 'SecondApp', category: 'productive', duration: 5000, timestamp: new Date(Date.now() - 1 * 86_400_000) },
     ],
   });
   try {

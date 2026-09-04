@@ -28,17 +28,22 @@ export async function POST(request: NextRequest) {
     if (!hasRole(auth.role, 'manager')) return authError({ ok: false, status: 403 });
 
     // Authentication + tenant isolation: the report is generated from the
-    // caller's org data only (org-less super_admin sees the global view).
+    // caller's org data only. Org-less super_admin has no tenant context and
+    // must switch to a MANAGED organization first — a global cross-customer
+    // report is never generated (Phase 2 privacy).
     const scope = await requireSessionOrg(request, { allowGlobal: true });
     if (!scope.ok) return authError(scope);
+    if (!scope.organizationId) {
+      return NextResponse.json(
+        { error: 'Tenant context required. Switch to a managed organization first.', code: 'TENANT_CONTEXT_REQUIRED' },
+        { status: 403 },
+      );
+    }
 
-    // Models WITH an organizationId column (employee/device/alert/project/
-    // department) are filtered directly; Activity has NO organizationId so it
-    // is scoped through the employee relation (see activityOrgFilter below).
-    const orgFilter = scope.organizationId ? { organizationId: scope.organizationId } : {};
-    const activityOrgFilter = scope.organizationId
-      ? { employee: { organizationId: scope.organizationId } }
-      : {};
+    // Phase 1: every tenant model (including Activity) carries a direct
+    // organizationId — filter directly, never via joins.
+    const orgFilter = { organizationId: scope.organizationId };
+    const activityOrgFilter = { organizationId: scope.organizationId };
 
     // Parse date range — default to current month if not provided
     const startDate = dateFrom ? new Date(dateFrom) : startOfMonth(new Date());

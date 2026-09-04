@@ -6,6 +6,8 @@ import { extractToken, hasRolePermission, SESSION_COOKIE_NAME } from '@/lib/auth
 import { verifySessionToken } from '@/lib/session';
 import { db } from '@/lib/db';
 import { getRolesWithPermission, getRoleLabelFromPermissions } from '@/lib/permissions';
+import { getActiveSubscription, hasValidTrial } from '@/lib/subscription';
+import { isSelfHosted } from '@/lib/config';
 
 // ─── Safe employee projection (approval lists / responses) ─────────────────
 // Employee rows carry credential material (`agentPassword`) that must never be
@@ -56,6 +58,19 @@ export function apiSuccess<T>(data: T, status: number = 200) {
  * middleware's getToken fallback). Returns null if authentication fails
  * (caller should send 401).
  */
+// Phase 2 §19: first-login password enforcement is API-complete, not just
+// UI-complete. Sessions flagged mustChangePassword may ONLY reach the
+// allowlisted self-service auth endpoints below; every other authenticated
+// API returns 401 until the password is changed. The flag is read from the
+// database (PK lookup) so a password change takes effect immediately without
+// waiting for token expiry.
+const PASSWORD_CHANGE_ALLOWED_PATHS = [
+  '/api/auth/change-password',
+  '/api/auth/me',
+  '/api/auth/logout',
+  '/api/auth/refresh-token',
+];
+
 export async function authenticateRequest(req: NextRequest): Promise<AuthContext | null> {
   try {
     const token = extractToken(req) || req.cookies.get(SESSION_COOKIE_NAME)?.value;
@@ -66,6 +81,16 @@ export async function authenticateRequest(req: NextRequest): Promise<AuthContext
     // signature is still valid. Handler-level enforcement — never proxy-only.
     const payload = await verifySessionToken(token);
     if (!payload) return null;
+
+    // Phase 2 §19: enforce mustChangePassword server-side.
+    const pathname = req.nextUrl?.pathname ?? '';
+    if (!PASSWORD_CHANGE_ALLOWED_PATHS.includes(pathname)) {
+      const flagged = await db.appUser.findUnique({
+        where: { id: payload.userId },
+        select: { mustChangePassword: true },
+      });
+      if (flagged?.mustChangePassword) return null;
+    }
 
     return {
       userId: payload.userId,
@@ -324,6 +349,97 @@ export async function requireOrgAdmin(
   return { ok: true, userId: auth.userId, email: auth.email, role: auth.role, isSuperAdmin: false };
 }
 
+// ─── Subscription Helpers ───────────────────────────────────────────────────
+
+export type SubscriptionCheckResult =
+  | { ok: true; organizationId: string; userId: string; email: string; role: string; isTrial: boolean; isSubscribed: boolean }
+  | { ok: false; status: 401 | 403; requiredPermission?: string; userRole?: string };
+
+/**
+ * Authenticate, resolve org, and verify an active subscription (or valid trial).
+ * Super Admin users bypass the subscription check entirely.
+ *
+ * When the org is on a valid trial, the UI should display a trial banner.
+ * The caller can check `result.isTrial` to conditionally add the
+ * `x-trial-active: true` header on the response.
+ */
+export async function requireActiveSubscription(
+  req: NextRequest,
+  opts: { allowGlobal?: boolean } = {},
+): Promise<SubscriptionCheckResult> {
+  // Step 1: standard org-scope + membership check
+  const sessionResult = await requireActiveSessionOrg(req, { allowGlobal: opts.allowGlobal });
+  if (!sessionResult.ok) {
+    return { ok: false, status: sessionResult.status, requiredPermission: sessionResult.requiredPermission, userRole: sessionResult.userRole };
+  }
+
+  // Super Admin bypasses subscription checks
+  if (sessionResult.role === 'super_admin') {
+    return {
+      ok: true,
+      organizationId: sessionResult.organizationId as string,
+      userId: sessionResult.userId,
+      email: sessionResult.email,
+      role: sessionResult.role,
+      isTrial: false,
+      isSubscribed: false,
+    };
+  }
+
+  // No org (global super_admin) — subscription check doesn't apply
+  if (!sessionResult.organizationId) {
+    return {
+      ok: true,
+      organizationId: null as unknown as string,
+      userId: sessionResult.userId,
+      email: sessionResult.email,
+      role: sessionResult.role,
+      isTrial: false,
+      isSubscribed: false,
+    };
+  }
+
+  // Step 2: check trial
+  const org = await db.organization.findUnique({
+    where: { id: sessionResult.organizationId },
+    select: { trialEndsAt: true },
+  });
+
+  if (org && hasValidTrial(org)) {
+    return {
+      ok: true,
+      organizationId: sessionResult.organizationId,
+      userId: sessionResult.userId,
+      email: sessionResult.email,
+      role: sessionResult.role,
+      isTrial: true,
+      isSubscribed: false,
+    };
+  }
+
+  // Step 3: check active subscription
+  const sub = await getActiveSubscription(sessionResult.organizationId);
+  if (sub) {
+    return {
+      ok: true,
+      organizationId: sessionResult.organizationId,
+      userId: sessionResult.userId,
+      email: sessionResult.email,
+      role: sessionResult.role,
+      isTrial: false,
+      isSubscribed: true,
+    };
+  }
+
+  // No subscription and no trial — deny access
+  return {
+    ok: false,
+    status: 403,
+    requiredPermission: 'organization.read',
+    userRole: sessionResult.role,
+  };
+}
+
 /**
  * Turn a scope/auth result into a NextResponse error using the project's
  * error semantics: 401 = no valid session, 403 = insufficient scope/permission.
@@ -468,6 +584,62 @@ export async function requireMembershipAdmin(
   return { ok: true, userId: dbUser.id, email: dbUser.email, role: dbUser.role, organizationId: targetOrgId, isSuperAdmin: false };
 }
 
+// ─── Self-Hosted License Check ─────────────────────────────────────────────
+
+export type LicenseCheckResult =
+  | { ok: true; license: { id: string; key: string; validUntil: string; plan: { name: string; maxDevices: number; retentionDays: number } } }
+  | { ok: false; reason: 'no_license' | 'revoked' | 'inactive' | 'expired' };
+
+/**
+ * Require a valid, current license for an organization in SELF-HOSTED mode.
+ *
+ * Cloud mode (SELF_HOSTED unset/false) ALWAYS passes — this mirrors the
+ * subscription-gate behaviour but for the on-prem license, so self-hosted
+ * installs are locked to their license while cloud tenants are unaffected.
+ *
+ * The license is read from the org's current pointer (Organization.licenseKeyId).
+ * A revoked / deactivated / expired license, or a missing one, fails closed.
+ * Super admins and the public validate endpoint are handled separately and are
+ * not routed through this middleware.
+ */
+export async function requireValidLicense(
+  organizationId: string
+): Promise<LicenseCheckResult> {
+  if (!isSelfHosted) return { ok: true, license: { id: '', key: '[cloud]', validUntil: '', plan: { name: 'Cloud', maxDevices: -1, retentionDays: 0 } } };
+
+  const org = await db.organization.findUnique({
+    where: { id: organizationId },
+    select: {
+      licenseKey: {
+        select: {
+          id: true,
+          key: true,
+          isActive: true,
+          isRevoked: true,
+          validUntil: true,
+          plan: { select: { name: true, maxDevices: true, retentionDays: true } },
+        },
+      },
+    },
+  });
+
+  const license = org?.licenseKey;
+  if (!license) return { ok: false, reason: 'no_license' };
+  if (license.isRevoked) return { ok: false, reason: 'revoked' };
+  if (!license.isActive) return { ok: false, reason: 'inactive' };
+  if (license.validUntil.getTime() <= Date.now()) return { ok: false, reason: 'expired' };
+
+  return {
+    ok: true,
+    license: {
+      id: license.id,
+      key: license.key,
+      validUntil: license.validUntil.toISOString(),
+      plan: license.plan,
+    },
+  };
+}
+
 /**
  * Safely parse a JSON request body. Malformed/empty bodies are a CLIENT
  * error (400), never a 500.
@@ -503,3 +675,9 @@ export function parseOptionalDate(value: string | undefined): Date | 'invalid' |
   const d = new Date(value);
   return isValidDate(d) ? d : 'invalid';
 }
+
+// ─── Runtime analytics-DB switching (per-org OPT-IN) ────────────────────────
+// Re-exported here for convenience. See org-db.ts for the design and for
+// getPrismaForOrg, which returns { mode: 'cloud'|'own', client }.
+export { getPrismaForOrg, invalidateOrgDbCache } from '@/lib/org-db';
+

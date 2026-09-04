@@ -1,10 +1,24 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
-import { callAIProviderVision } from '@/lib/ai-provider-helper';
+import { callAIProviderVision, type AIProviderResult, type ImageInput } from '@/lib/ai-provider-helper';
+import { meterAiCall } from '@/lib/ai-metering';
 import type { Prisma } from '@prisma/client';
 import { authError, requireAdminOrg } from '@/lib/api';
 import { screenshotAiInput } from '@/lib/storage';
 import { log, requestContext } from '@/lib/logger';
+
+/** Org-scoped metered vision call: records one AiUsage row per provider call. */
+async function meterVisionCall(
+  organizationId: string,
+  system: string,
+  user: string,
+  image: ImageInput,
+  options?: { maxTokens?: number; temperature?: number }
+): Promise<AIProviderResult | null> {
+  return meterAiCall({ organizationId, operation: 'screenshot_analysis' }, () =>
+    callAIProviderVision(system, user, image, options)
+  );
+}
 
 // POST /api/screenshots/batch-analyze — Batch OCR + AI analysis (max 10)
 // No mock/fabricated fallbacks: items that cannot be analyzed return an honest
@@ -73,7 +87,7 @@ export async function POST(req: NextRequest) {
         }
 
         // Step 1: OCR
-        const ocrResult = await callAIProviderVision(
+        const ocrResult = await meterVisionCall(orgId,
           'You are an expert OCR system. Extract ALL visible text with high fidelity.',
           `Extract all visible text from this screenshot. Preserve formatting, code, and layout. If no text visible, respond "No readable text detected."`,
           imageInput,
@@ -82,7 +96,7 @@ export async function POST(req: NextRequest) {
         const ocrText = ocrResult?.text || '';
 
         // Step 2: AI Analysis
-        const analysisResult = await callAIProviderVision(
+        const analysisResult = await meterVisionCall(orgId,
           'You are an AI workforce productivity analyst.',
           `Analyze this screenshot.
 

@@ -3,6 +3,7 @@ import { randomUUID } from 'crypto';
 import { db } from '@/lib/db';
 import { validateAgentToken, getClientIp } from '@/lib/agent/auth';
 import { hasActiveConsent } from '@/lib/consent';
+import { resolveOrgMonitoring } from '@/lib/jobs/settings';
 import { validateScreenshotUpload, extensionForMime, sanitizeFilenameSegment, sanitizeDisplayFilename, parsePngDimensions } from '@/lib/screenshots/storage';
 import { putScreenshot, deleteScreenshot, isNotFound } from '@/lib/storage';
 import { log, requestContext } from '@/lib/logger';
@@ -37,13 +38,56 @@ export async function POST(req: NextRequest) {
     // 'screenshot' consent. Revoked or missing consent fails closed — the
     // agent must surface this to the employee and stop capturing.
     const employeeId = authResult.employee!.id;
+    const organizationId = authResult.employee!.organizationId;
     if (!(await hasActiveConsent(employeeId, 'screenshot'))) {
       log.warn('agent.screenshot.consent_denied', {
         employeeId: authResult.employee!.employeeId,
-        orgId: authResult.employee!.organizationId,
+        orgId: organizationId,
       });
       return NextResponse.json(
         { error: 'Screenshot capture requires consent. Consent is not granted or has been revoked.' },
+        { status: 403 }
+      );
+    }
+
+    // Server-authoritative org policy (Phase 3 §31 / Phase 4 §11 parity with
+    // the location and website gates): the org's screenshot_enabled flag AND
+    // the org's screenshotInterval (=0 disables capture) are re-enforced at
+    // the upload boundary INDEPENDENTLY of the agent/config. A stale or rogue
+    // agent can never upload while the organization has disabled screenshots
+    // — resolved from the authenticated token's organization through the same
+    // canonical resolver the agent config endpoint uses, so server and agent
+    // can never disagree.
+    const [monitoring, orgRow] = await Promise.all([
+      resolveOrgMonitoring(organizationId),
+      db.organization.findUnique({
+        where: { id: organizationId },
+        select: { screenshotInterval: true },
+      }),
+    ]);
+    if (monitoring.screenshot_enabled !== true) {
+      log.warn('agent.screenshot.policy_denied', {
+        employeeId: authResult.employee!.employeeId,
+        orgId: organizationId,
+      });
+      return NextResponse.json(
+        { error: 'SCREENSHOT_TRACKING_DISABLED' },
+        { status: 403 }
+      );
+    }
+    // Phase 4 §11: an effective interval of 0 means capture is disabled by the
+    // organization (Super Admin on MANAGED, Org Admin elsewhere). Rejecting
+    // here closes the parity gap where only the agent-side config suppressed
+    // capture — a direct upload is now refused as well. Same server-side
+    // default (5 minutes) as the config endpoint when the row is absent.
+    const effectiveInterval = orgRow?.screenshotInterval ?? 5;
+    if (effectiveInterval <= 0) {
+      log.warn('agent.screenshot.interval_denied', {
+        employeeId: authResult.employee!.employeeId,
+        orgId: organizationId,
+      });
+      return NextResponse.json(
+        { error: 'SCREENSHOT_INTERVAL_DISABLED' },
         { status: 403 }
       );
     }
@@ -111,7 +155,7 @@ export async function POST(req: NextRequest) {
     // filesystem, or Supabase Storage on Vercel).
     const ext = extensionForMime(mimeType);
     const filename = `${sanitizeFilenameSegment(authResult.employee!.employeeId)}_${randomUUID()}.${ext}`;
-    const orgId = authResult.employee!.organizationId;
+    const orgId = organizationId;
 
     await putScreenshot(orgId, filename, bytes, mimeType);
 

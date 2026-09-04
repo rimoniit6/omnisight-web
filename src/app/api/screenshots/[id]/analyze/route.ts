@@ -1,9 +1,23 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
-import { callAIProviderVision } from '@/lib/ai-provider-helper';
+import { callAIProviderVision, type AIProviderResult, type ImageInput } from '@/lib/ai-provider-helper';
+import { meterAiCall } from '@/lib/ai-metering';
 import { authError, requireAdminOrg } from '@/lib/api';
 import { screenshotAiInput } from '@/lib/storage';
 import { log, requestContext } from '@/lib/logger';
+
+/** Org-scoped metered vision call: records one AiUsage row per provider call. */
+async function meterVisionCall(
+  organizationId: string,
+  system: string,
+  user: string,
+  image: ImageInput,
+  options?: { maxTokens?: number; temperature?: number }
+): Promise<AIProviderResult | null> {
+  return meterAiCall({ organizationId, operation: 'screenshot_analysis' }, () =>
+    callAIProviderVision(system, user, image, options)
+  );
+}
 
 // POST /api/screenshots/[id]/analyze — AI-powered OCR + analysis
 // Only real data is ever persisted: if the image file is missing, unreadable,
@@ -60,7 +74,7 @@ export async function POST(
     // Step 1: OCR — Extract text from the real screenshot
     let ocrText = '';
     try {
-      const ocrResult = await callAIProviderVision(
+      const ocrResult = await meterVisionCall(orgId,
         'You are an expert OCR system. Extract ALL visible text with high fidelity.',
         `Extract all visible text from this screenshot. Preserve formatting, code structure, and layout. If no text is clearly visible, respond with "No readable text detected."`,
         imageInput,
@@ -78,7 +92,7 @@ export async function POST(
     // Step 2: AI Analysis — classify productivity from the real screenshot
     const aiAnalysis: Record<string, unknown> = await (async () => {
       try {
-        const analysisResult = await callAIProviderVision(
+        const analysisResult = await meterVisionCall(orgId,
         'You are an AI workforce productivity analyst. Analyze screenshots and classify productivity.',
         `Analyze this screenshot and provide assessment.
 

@@ -163,10 +163,13 @@ async function createRule(orgId: string, overrides: Partial<{ name: string; cond
  *  day (org A timezone = UTC) at a fixed offset so tests are drift-proof. */
 async function seedActivity(empId: string, rows: Array<{ type: string; category?: string | null; applicationName?: string | null; title?: string | null; duration: number; hourOffset: number }>) {
   const dayStart = todayUtcStart();
+  // Phase 1: Activity requires direct organizationId — resolve from the employee (same rule as the DB backfill).
+  const emp = await db.employee.findUniqueOrThrow({ where: { id: empId }, select: { organizationId: true } });
   for (const r of rows) {
     await db.activity.create({
       data: {
         employeeId: empId,
+        organizationId: emp.organizationId,
         type: r.type,
         category: r.category ?? null,
         applicationName: r.applicationName ?? null,

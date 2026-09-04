@@ -5,8 +5,9 @@ import { AppSidebar } from '@/components/layout/app-sidebar';
 import { AppHeader } from '@/components/layout/app-header';
 import { CommandPalette } from '@/components/layout/command-palette';
 import { MobileSidebarContent } from '@/components/layout/mobile-sidebar';
-import { LoginPage } from '@/components/auth/login-page';
 import { CreateOrganizationScreen } from '@/components/auth/create-organization-screen';
+import { ForcePasswordChangeScreen } from '@/components/auth/ForcePasswordChangeScreen';
+import { MarketingPage } from '@/components/marketing/MarketingPage';
 import { useAppStore, useAuthStore } from '@/lib/store';
 import { useIsMobile } from '@/hooks/use-mobile';
 import { useEffectiveBranding } from '@/hooks/use-effective-branding';
@@ -200,7 +201,7 @@ function AuthGuard() {
     );
   }
 
-  if (!isAuthenticated) return <LoginPage />;
+  if (!isAuthenticated) return <MarketingPage />;
 
   // Fresh-deployment bootstrap: an org-less Super Admin must create the first
   // organization ONLY when zero organizations exist in the database.
@@ -208,6 +209,12 @@ function AuthGuard() {
   // directly and use the Organization Switcher for operational context.
   if (user?.role === 'super_admin' && !organization && organizationCount !== null && organizationCount === 0) {
     return <CreateOrganizationScreen />;
+  }
+
+  // First-login security gate: a provisioned admin with a temporary password
+  // must set a new password before accessing the rest of the application.
+  if (user?.mustChangePassword) {
+    return <ForcePasswordChangeScreen />;
   }
 
   return <AppLayout />;

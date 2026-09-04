@@ -54,10 +54,14 @@ interface Organization {
   name: string;
   slug: string;
   status: string;
+  deploymentMode: 'MANAGED' | 'CUSTOMER_DB' | 'PRIVATE';
+  deploymentModeUnresolved: boolean;
   createdAt: string;
   memberCount: number;
   employeeCount: number;
   deviceCount: number;
+  subscription: { id: string; status: string; plan: { id: string; name: string } } | null;
+  licenseKey: { id: string; isActive: boolean; isRevoked: boolean } | null;
 }
 
 const STATUS_CONFIG: Record<string, { label: string; className: string; icon: React.ElementType }> = {
@@ -65,6 +69,11 @@ const STATUS_CONFIG: Record<string, { label: string; className: string; icon: Re
     label: 'Active',
     className: 'bg-emerald-100 text-emerald-700 border-emerald-200 dark:bg-emerald-900/30 dark:text-emerald-400',
     icon: CheckCircle,
+  },
+  pending: {
+    label: 'Pending',
+    className: 'bg-sky-100 text-sky-700 border-sky-200 dark:bg-sky-900/30 dark:text-sky-400',
+    icon: AlertCircle,
   },
   suspended: {
     label: 'Suspended',
@@ -75,6 +84,22 @@ const STATUS_CONFIG: Record<string, { label: string; className: string; icon: Re
     label: 'Archived',
     className: 'bg-slate-100 text-slate-700 border-slate-200 dark:bg-slate-900/30 dark:text-slate-400',
     icon: Archive,
+  },
+};
+
+// Phase 2 §7: deployment-mode badge config for the control-plane list.
+const MODE_CONFIG: Record<string, { label: string; className: string }> = {
+  MANAGED: {
+    label: 'Managed',
+    className: 'bg-emerald-100 text-emerald-700 border-emerald-200 dark:bg-emerald-900/30 dark:text-emerald-400',
+  },
+  CUSTOMER_DB: {
+    label: 'Customer DB',
+    className: 'bg-blue-100 text-blue-700 border-blue-200 dark:bg-blue-900/30 dark:text-blue-400',
+  },
+  PRIVATE: {
+    label: 'Private',
+    className: 'bg-violet-100 text-violet-700 border-violet-200 dark:bg-violet-900/30 dark:text-violet-400',
   },
 };
 
@@ -98,14 +123,16 @@ export function SuperAdminOrganizationsPage() {
 
   const [page, setPage] = useState(1);
   const [statusFilter, setStatusFilter] = useState('');
+  const [modeFilter, setModeFilter] = useState('');
   const pageSize = 20;
 
   const { data: orgsData, isLoading: loading } = useQuery({
-    queryKey: ['super-admin-organizations', search, statusFilter, page],
+    queryKey: ['super-admin-organizations', search, statusFilter, modeFilter, page],
     queryFn: async () => {
       const params = new URLSearchParams({ page: String(page), pageSize: String(pageSize) });
       if (search) params.set('search', search);
       if (statusFilter) params.set('status', statusFilter);
+      if (modeFilter) params.set('deploymentMode', modeFilter);
       const res = await fetch(`/api/super-admin/organizations?${params}`, { credentials: 'same-origin' });
       if (!res.ok) throw new Error('Failed to load');
       return await res.json();
@@ -114,6 +141,26 @@ export function SuperAdminOrganizationsPage() {
   });
   const organizations = (orgsData?.data || []) as Organization[];
   const pagination = orgsData?.pagination || { page: 1, pageSize: 20, total: 0, pages: 0 };
+
+  // Control-plane metrics (Phase 2 §27): aggregate metadata only, never
+  // cross-customer operational data.
+  const { data: metricsData } = useQuery({
+    queryKey: ['super-admin-metrics'],
+    queryFn: async () => {
+      const res = await fetch('/api/super-admin/metrics', { credentials: 'same-origin' });
+      if (!res.ok) throw new Error('Failed to load metrics');
+      return await res.json();
+    },
+    placeholderData: (prev) => prev,
+  });
+  const metrics = metricsData?.data as
+    | {
+        organizations: { total: number; managed: number; customerDb: number; private: number; unresolvedModes: number; pendingDeployments: number };
+        subscriptions: { active: number; expiringSoon: number };
+        licenses: { active: number };
+        billing: { pendingInvoices: number };
+      }
+    | undefined;
 
   const handleStatusChange = async () => {
     if (!statusDialog.orgId || !statusDialog.newStatus) return;
@@ -197,8 +244,8 @@ export function SuperAdminOrganizationsPage() {
         </Button>
       </div>
 
-      {/* Stats */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+      {/* Stats — control-plane aggregates from /api/super-admin/metrics */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <Card>
           <CardContent className="pt-4">
             <div className="flex items-center gap-3">
@@ -206,7 +253,7 @@ export function SuperAdminOrganizationsPage() {
                 <Building2 className="w-5 h-5 text-primary" />
               </div>
               <div>
-                <p className="text-2xl font-bold">{organizations.length}</p>
+                <p className="text-2xl font-bold">{metrics?.organizations.total ?? '—'}</p>
                 <p className="text-xs text-muted-foreground">Total Organizations</p>
               </div>
             </div>
@@ -219,8 +266,23 @@ export function SuperAdminOrganizationsPage() {
                 <CheckCircle className="w-5 h-5 text-emerald-500" />
               </div>
               <div>
-                <p className="text-2xl font-bold">{organizations.filter((o) => o.status === 'active').length}</p>
-                <p className="text-xs text-muted-foreground">Active</p>
+                <p className="text-2xl font-bold">{metrics?.organizations.managed ?? '—'}</p>
+                <p className="text-xs text-muted-foreground">Managed</p>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="pt-4">
+            <div className="flex items-center gap-3">
+              <div className="h-10 w-10 rounded-lg bg-blue-500/10 flex items-center justify-center">
+                <Monitor className="w-5 h-5 text-blue-500" />
+              </div>
+              <div>
+                <p className="text-2xl font-bold">
+                  {metrics ? metrics.organizations.customerDb + metrics.organizations.private : '—'}
+                </p>
+                <p className="text-xs text-muted-foreground">Customer-Owned</p>
               </div>
             </div>
           </CardContent>
@@ -232,10 +294,8 @@ export function SuperAdminOrganizationsPage() {
                 <AlertCircle className="w-5 h-5 text-amber-500" />
               </div>
               <div>
-                <p className="text-2xl font-bold">
-                  {organizations.filter((o) => o.status !== 'active').length}
-                </p>
-                <p className="text-xs text-muted-foreground">Suspended / Archived</p>
+                <p className="text-2xl font-bold">{metrics?.billing.pendingInvoices ?? '—'}</p>
+                <p className="text-xs text-muted-foreground">Pending Invoices</p>
               </div>
             </div>
           </CardContent>
@@ -264,8 +324,20 @@ export function SuperAdminOrganizationsPage() {
                 <SelectContent>
                   <SelectItem value="all">All Statuses</SelectItem>
                   <SelectItem value="active">Active</SelectItem>
+                  <SelectItem value="pending">Pending</SelectItem>
                   <SelectItem value="suspended">Suspended</SelectItem>
                   <SelectItem value="archived">Archived</SelectItem>
+                </SelectContent>
+              </Select>
+              <Select value={modeFilter || 'all'} onValueChange={(v) => { setModeFilter(v === 'all' ? '' : v); setPage(1); }}>
+                <SelectTrigger className="w-36">
+                  <SelectValue placeholder="All modes" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Modes</SelectItem>
+                  <SelectItem value="MANAGED">Managed</SelectItem>
+                  <SelectItem value="CUSTOMER_DB">Customer DB</SelectItem>
+                  <SelectItem value="PRIVATE">Private</SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -293,10 +365,10 @@ export function SuperAdminOrganizationsPage() {
                 <TableHeader>
                   <TableRow>
                     <TableHead>Organization</TableHead>
+                    <TableHead>Deployment</TableHead>
+                    <TableHead>Package</TableHead>
                     <TableHead>Status</TableHead>
                     <TableHead className="text-center">Users</TableHead>
-                    <TableHead className="text-center">Employees</TableHead>
-                    <TableHead className="text-center">Devices</TableHead>
                     <TableHead>Created</TableHead>
                     <TableHead className="text-right">Actions</TableHead>
                   </TableRow>
@@ -305,6 +377,7 @@ export function SuperAdminOrganizationsPage() {
                   {filtered.map((org) => {
                     const statusConfig = STATUS_CONFIG[org.status] || STATUS_CONFIG.active;
                     const StatusIcon = statusConfig.icon;
+                    const modeConfig = MODE_CONFIG[org.deploymentMode] || MODE_CONFIG.MANAGED;
                     return (
                       <TableRow key={org.id}>
                         <TableCell>
@@ -319,6 +392,24 @@ export function SuperAdminOrganizationsPage() {
                           </div>
                         </TableCell>
                         <TableCell>
+                          <div className="flex flex-col gap-1 items-start">
+                            <Badge variant="outline" className={cn('text-[10px] h-5 px-1.5 border', modeConfig.className)}>
+                              {modeConfig.label}
+                            </Badge>
+                            {org.deploymentModeUnresolved && (
+                              <span className="text-[10px] text-amber-600">needs review</span>
+                            )}
+                          </div>
+                        </TableCell>
+                        <TableCell>
+                          <div className="flex flex-col gap-0.5">
+                            <span className="text-xs font-medium">{org.subscription?.plan.name ?? '—'}</span>
+                            <span className="text-[10px] text-muted-foreground">
+                              {org.subscription ? org.subscription.status : 'no subscription'}
+                            </span>
+                          </div>
+                        </TableCell>
+                        <TableCell>
                           <Badge variant="outline" className={cn('text-[10px] h-5 px-1.5 border', statusConfig.className)}>
                             <StatusIcon className="w-3 h-3 mr-1" />
                             {statusConfig.label}
@@ -329,15 +420,6 @@ export function SuperAdminOrganizationsPage() {
                             <Users className="w-3.5 h-3.5 text-muted-foreground" />
                             <span className="text-sm">{org.memberCount}</span>
                           </div>
-                        </TableCell>
-                        <TableCell className="text-center">
-                          <div className="flex items-center justify-center gap-1.5">
-                            <Monitor className="w-3.5 h-3.5 text-muted-foreground" />
-                            <span className="text-sm">{org.employeeCount}</span>
-                          </div>
-                        </TableCell>
-                        <TableCell className="text-center">
-                          <span className="text-sm">{org.deviceCount}</span>
                         </TableCell>
                         <TableCell>
                           <span className="text-xs text-muted-foreground">

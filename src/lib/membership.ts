@@ -40,3 +40,35 @@ export async function resolveActiveMembership(
   const chosen = active[0];
   return { organizationId: chosen.organizationId, role: chosen.role };
 }
+
+/**
+ * Restore the organization a user last operated in, from their most recent
+ * previous UserSession with an activeOrganizationId.
+ *
+ * Purpose: a membership-less super_admin (global operator with no
+ * OrganizationMembership rows) logs in org-less every time — resolveActiveMembership
+ * returns null for them — so org-scoped surfaces (dashboard, global search,
+ * screenshots, …) come up empty until they manually re-pick an org in the
+ * switcher. Restoring the last-used org (when it still exists and is active)
+ * makes the operator's context survive re-login, matching the org-bound user
+ * experience.
+ *
+ * Security: this is a UX-only fallback for a role that already holds GLOBAL
+ * access (the switch endpoint lets a super_admin operate in ANY org). The org
+ * is derived from the server's own session history — never from client input —
+ * and is re-validated as existing + active before adoption.
+ */
+export async function restoreLastActiveOrg(userId: string): Promise<string | null> {
+  const last = await db.userSession.findFirst({
+    where: { userId, activeOrganizationId: { not: null } },
+    orderBy: { createdAt: 'desc' },
+    select: { activeOrganizationId: true },
+  });
+  const orgId = last?.activeOrganizationId;
+  if (!orgId) return null;
+  const org = await db.organization.findUnique({
+    where: { id: orgId },
+    select: { status: true },
+  });
+  return org && org.status === 'active' ? orgId : null;
+}

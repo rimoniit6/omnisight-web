@@ -44,8 +44,8 @@ let bootstrapSuperAdmin: (env?: Record<string, string | undefined>) => Promise<{
 }>;
 
 type UsersApi = typeof import('../src/app/api/auth/users/route');
-type MembersApi = typeof import('../src/app/api/organizations/[id]/members/route');
-type MemberIdApi = typeof import('../src/app/api/organizations/[id]/members/[memberId]/route');
+type MembersApi = typeof import('../src/app/api/organizations/[orgId]/members/route');
+type MemberIdApi = typeof import('../src/app/api/organizations/[orgId]/members/[memberId]/route');
 let usersApi: UsersApi;
 let membersApi: MembersApi;
 let memberIdApi: MemberIdApi;
@@ -64,8 +64,8 @@ before(async () => {
 
   [usersApi, membersApi, memberIdApi] = await Promise.all([
     import('../src/app/api/auth/users/route'),
-    import('../src/app/api/organizations/[id]/members/route'),
-    import('../src/app/api/organizations/[id]/members/[memberId]/route'),
+    import('../src/app/api/organizations/[orgId]/members/route'),
+    import('../src/app/api/organizations/[orgId]/members/[memberId]/route'),
   ]);
 
   // Bootstrap super admin
@@ -164,10 +164,10 @@ test('SA-CM-04: Membership role matches the selected role (viewer)', async () =>
 
 // ─── SA-CM-05: User appears in members list ─────────────────────────────
 
-test('SA-CM-05: Newly created user appears in GET /api/organizations/[id]/members', async () => {
+test('SA-CM-05: Newly created user appears in GET /api/organizations/[orgId]/members', async () => {
   const res = await membersApi.GET(
     saReq('GET', null, `http://localhost:3000/api/organizations/${testOrg.id}/members`),
-    { params: Promise.resolve({ id: testOrg.id }) }
+    { params: Promise.resolve({ orgId: testOrg.id }) }
   );
   const body = await res.json();
   assert.equal(res.status, 200);
@@ -306,7 +306,7 @@ test('SA-CM-12: Super Admin user record is unchanged after creating a user', asy
 
 // ─── SA-CM-13: Existing-user Add Member flow still works ───────────────
 
-test('SA-CM-13: Adding existing user via POST /api/organizations/[id]/members works', async () => {
+test('SA-CM-13: Adding existing user via POST /api/organizations/[orgId]/members works', async () => {
   // The viewer we created in SA-CM-09 should already be a member. Let's add them
   // to a SECOND org to verify the existing-user flow.
   const org2 = await db.organization.create({ data: { name: 'CU Flow Org 2', slug: 'cu-flow-org-2' } });
@@ -315,7 +315,7 @@ test('SA-CM-13: Adding existing user via POST /api/organizations/[id]/members wo
 
   const res = await membersApi.POST(
     saReq('POST', { userId: existingUser!.id, role: 'manager' }, `http://localhost:3000/api/organizations/${org2.id}/members`),
-    { params: Promise.resolve({ id: org2.id }) }
+    { params: Promise.resolve({ orgId: org2.id }) }
   );
   const body = await res.json();
   assert.equal(res.status, 201, `Expected 201, got ${res.status}: ${JSON.stringify(body)}`);
@@ -366,7 +366,7 @@ test('SA-CM-15: After creating multiple users, all appear in the members list', 
 
   const res = await membersApi.GET(
     saReq('GET', null, `http://localhost:3000/api/organizations/${testOrg.id}/members`),
-    { params: Promise.resolve({ id: testOrg.id }) }
+    { params: Promise.resolve({ orgId: testOrg.id }) }
   );
   const body = await res.json();
   assert.equal(res.status, 200);

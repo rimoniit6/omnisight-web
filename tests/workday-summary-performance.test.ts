@@ -189,6 +189,7 @@ test('WD-PERF-2: DB job path — 2 orgs × 20 employees × 30 days (~48k rows), 
         const dayStart = zonedDayStart(key, orgRow.tz).getTime();
         const rows = buildEmployeeDayPattern().map((r) => ({
           employeeId: emp.id,
+          organizationId: orgRow.id,
           type: r.minutes % 8 === 7 ? 'website' : 'application',
           title: r.minutes % 8 === 7 ? 'site.test' : `App ${r.minutes}`,
           applicationName: r.minutes % 8 === 7 ? null : 'app.exe',

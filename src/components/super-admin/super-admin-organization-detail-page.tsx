@@ -97,8 +97,19 @@ interface OrganizationDetail {
   name: string;
   slug: string;
   status: string;
+  deploymentMode: 'MANAGED' | 'CUSTOMER_DB' | 'PRIVATE';
+  deploymentModeUnresolved: boolean;
+  trialEndsAt: string | null;
   createdAt: string;
   memberCount: number;
+  subscription: {
+    id: string;
+    status: string;
+    startDate: string;
+    endDate: string | null;
+    plan: { id: string; name: string; priceMonthly: number; currency: string };
+  } | null;
+  licenseKey: { id: string; isActive: boolean; isRevoked: boolean; validUntil: string } | null;
 }
 
 export function SuperAdminOrganizationDetailPage() {
@@ -463,6 +474,18 @@ export function SuperAdminOrganizationDetailPage() {
                 Super Admin is managing this organization
               </span>
             </p>
+            {orgData && orgData.deploymentMode !== 'MANAGED' && (
+              <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2.5 text-xs text-amber-800 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-300">
+                <p className="font-semibold">
+                  {orgData.deploymentMode === 'CUSTOMER_DB' ? 'Customer-Owned Environment' : 'Private Deployment'}
+                </p>
+                <p className="mt-0.5">
+                  {orgData.deploymentMode === 'CUSTOMER_DB'
+                    ? 'Operational data is managed in the customer\u2019s infrastructure. Super Admin access is limited to control-plane management.'
+                    : 'This organization\u2019s OmniSight environment is hosted in customer infrastructure. Operational data is not accessible from the central Super Admin console.'}
+                </p>
+              </div>
+            )}
             {(orgData?.slug || orgData?.createdAt) && (
               <p className="text-xs text-muted-foreground mt-1 flex items-center gap-1.5">
                 {orgData?.slug && (
@@ -483,17 +506,62 @@ export function SuperAdminOrganizationDetailPage() {
             )}
           </div>
         </div>
-        <Button
-          variant="default"
-          size="sm"
-          className="shrink-0"
-          disabled={switching || (!orgData && orgLoading)}
-          onClick={handleSwitchToOrganization}
-        >
-          {switching ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <LogIn className="w-4 h-4 mr-2" />}
-          Switch to Organization
-        </Button>
+        {(!orgData || orgData.deploymentMode === 'MANAGED') && (
+          <Button
+            variant="default"
+            size="sm"
+            className="shrink-0"
+            disabled={switching || (!orgData && orgLoading)}
+            onClick={handleSwitchToOrganization}
+          >
+            {switching ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <LogIn className="w-4 h-4 mr-2" />}
+            Switch to Organization
+          </Button>
+        )}
       </div>
+
+      {/* ─── Control-plane overview (Phase 2 §28) ─────────────────────────── */}
+      {orgData && (
+        <Card>
+          <CardHeader className="pb-3">
+            <CardTitle className="text-base flex items-center gap-2">
+              <Shield className="w-4 h-4" />
+              Control Plane
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 text-sm">
+              <div>
+                <p className="text-xs text-muted-foreground">Deployment Mode</p>
+                <p className="font-medium mt-0.5">
+                  {orgData.deploymentMode === 'MANAGED' ? 'Managed' : orgData.deploymentMode === 'CUSTOMER_DB' ? 'Customer DB' : 'Private'}
+                  {orgData.deploymentModeUnresolved && <span className="text-amber-600"> · needs review</span>}
+                </p>
+              </div>
+              <div>
+                <p className="text-xs text-muted-foreground">Package</p>
+                <p className="font-medium mt-0.5">{orgData.subscription?.plan.name ?? '—'}</p>
+              </div>
+              <div>
+                <p className="text-xs text-muted-foreground">Subscription</p>
+                <p className="font-medium mt-0.5">{orgData.subscription?.status ?? 'none'}</p>
+              </div>
+              <div>
+                <p className="text-xs text-muted-foreground">License</p>
+                <p className="font-medium mt-0.5">
+                  {!orgData.licenseKey
+                    ? 'none'
+                    : orgData.licenseKey.isRevoked
+                      ? 'revoked'
+                      : !orgData.licenseKey.isActive
+                        ? 'inactive'
+                        : 'active'}
+                </p>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       {/* ─── Members section ─────────────────────────────────────────────── */}
       <Card>

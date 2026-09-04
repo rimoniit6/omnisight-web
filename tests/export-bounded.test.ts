@@ -59,8 +59,11 @@ before(async () => {
   empA = await mkEmp('EXP-1', orgA.id);
   empB = await mkEmp('EXP-2', orgB.id);
 
-  const mkAct = (employeeId: string, applicationName: string, category: string, duration: number, timestamp: Date) =>
-    db.activity.create({ data: { type: 'application', applicationName, category, duration, employeeId, timestamp, createdAt: timestamp } });
+  // Phase 1: Activity requires direct organizationId — resolve from the employee (same rule as the DB backfill).
+  const mkAct = async (employeeId: string, applicationName: string, category: string, duration: number, timestamp: Date) => {
+    const emp = await db.employee.findUniqueOrThrow({ where: { id: employeeId }, select: { organizationId: true } });
+    return db.activity.create({ data: { type: 'application', applicationName, category, duration, employeeId, organizationId: emp.organizationId, timestamp, createdAt: timestamp } });
+  };
 
   const now = Date.now();
   // Recent (inside the default 90-day window):

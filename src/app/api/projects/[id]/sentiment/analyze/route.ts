@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { callAIProvider } from '@/lib/ai-provider-helper';
+import { meterAiCall } from '@/lib/ai-metering';
 import { requireManagerOrg, authError } from '@/lib/api';
 import { hasActiveConsent } from '@/lib/consent';
 import { checkRateLimit, getClientIpFromHeaders, RATE_LIMITS } from '@/lib/rate-limit';
@@ -20,6 +21,7 @@ type ProjectAIOutcome =
   | { ok: false; error: string };
 
 async function generateProjectAIInsight(
+  orgId: string,
   employeeName: string,
   projectName: string,
   signals: ReturnType<typeof calculateProjectSignals>,
@@ -40,7 +42,9 @@ async function generateProjectAIInsight(
     ...projectSignalsPromptLines(signals),
   ].join('\n');
 
-  const result = await callAIProvider(systemPrompt, userPrompt);
+  const result = await meterAiCall({ organizationId: orgId, operation: 'sentiment_project' }, () =>
+    callAIProvider(systemPrompt, userPrompt)
+  );
   if (!result || !result.text) {
     return { ok: false, error: result?.error || 'AI_UNAVAILABLE' };
   }
@@ -304,6 +308,7 @@ export async function POST(
         const riskFactors = calculateProjectRiskFactors(signals, score);
 
         const aiResult = await generateProjectAIInsight(
+          orgId,
           `${member.firstName} ${member.lastName}`,
           project.name,
           signals,

@@ -78,7 +78,7 @@ export async function POST(req: NextRequest) {
     await db.$transaction(async (tx) => {
       await tx.appUser.update({
         where: { id: user.id },
-        data: { password: hashedNewPassword },
+        data: { password: hashedNewPassword, mustChangePassword: false },
       });
 
       // Audit log (S-08: sanitized User-Agent for incident forensics).

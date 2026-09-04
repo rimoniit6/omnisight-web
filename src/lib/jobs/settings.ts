@@ -316,11 +316,51 @@ export async function resolveHeartbeatInterval(orgId: string): Promise<number> {
   return Math.min(MAX_HEARTBEAT_INTERVAL, Math.max(MIN_HEARTBEAT_INTERVAL, n));
 }
 
+/**
+ * Resolve the org's retention window for a data class.
+ *
+ * Resolution order (highest precedence first):
+ *   1. An explicit OrganizationSetting row for `key` (admin override).
+ *   2. For the SCREENSHOT class, the org's ACTIVE subscription plan
+ *      `retentionDays` (SaaS "1-year data retention": Free=90d, Pro/Business
+ *      =365d, 0 = keep forever). Applies only when the plan defines a value
+ *      (retentionDays > 0) and the org has not set an explicit override.
+ *   3. The static registry default (RETENTION_KEYS[key]).
+ *
+ * A value of 0 means "never purge". This lets the EXISTING retention_cleanup
+ * job enforce plan-based screenshot retention without a parallel scheduler.
+ * All non-screenshot retention classes keep their existing registry defaults.
+ */
 export async function resolveRetentionDays(orgId: string, key: RetentionKey): Promise<number> {
-  const raw = await getOrgSetting(orgId, key, RETENTION_KEYS[key]);
-  const n = parseInt(raw, 10);
-  if (Number.isNaN(n) || n < 0) return RETENTION_KEYS[key];
-  return n;
+  // 1) Explicit org override (check the row directly so we can detect
+  //    "absent" and defer to the plan fallback below).
+  const rawRow = await db.organizationSetting.findUnique({
+    where: { organizationId_key: { organizationId: orgId, key } },
+  });
+  if (rawRow) {
+    const n = parseInt(rawRow.value, 10);
+    return Number.isNaN(n) || n < 0 ? RETENTION_KEYS[key] : n;
+  }
+
+  // 2) Plan-driven fallback — screenshots only, and only when the org holds an
+  //    ACTIVE subscription whose plan declares a retention window.
+  if (key === 'screenshot_retention_days') {
+    const sub = await db.subscription.findFirst({
+      where: {
+        organizationId: orgId,
+        status: 'ACTIVE',
+        OR: [{ endDate: null }, { endDate: { gt: new Date() } }],
+      },
+      include: { plan: { select: { retentionDays: true } } },
+      orderBy: { createdAt: 'desc' },
+    });
+    if (sub && sub.plan && sub.plan.retentionDays > 0) {
+      return sub.plan.retentionDays;
+    }
+  }
+
+  // 3) Registry default.
+  return RETENTION_KEYS[key];
 }
 
 // ─── Server-side reliability flags (Phase 1) ───────────────────────────────

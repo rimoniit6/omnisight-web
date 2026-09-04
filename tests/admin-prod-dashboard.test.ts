@@ -82,13 +82,13 @@ before(async () => {
   // local day in Asia/Dhaka). 1800s → 30 min.
   const lateUtc = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() - 2, 23, 30, 0, 0));
   await db.activity.create({
-    data: { employeeId: emp.id, type: 'application', applicationName: 'Code', category: 'productive', duration: 1800, timestamp: lateUtc, createdAt: lateUtc },
+    data: { employeeId: emp.id, organizationId: org.id, type: 'application', applicationName: 'Code', category: 'productive', duration: 1800, timestamp: lateUtc, createdAt: lateUtc },
   });
 
   // Out-of-window activity (10 days ago) must be excluded from avgProductivity.
   const oldUtc = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() - 10, 12, 0, 0, 0));
   await db.activity.create({
-    data: { employeeId: emp.id, type: 'application', applicationName: 'Legacy', category: 'productive', duration: 3600, timestamp: oldUtc, createdAt: oldUtc },
+    data: { employeeId: emp.id, organizationId: org.id, type: 'application', applicationName: 'Legacy', category: 'productive', duration: 3600, timestamp: oldUtc, createdAt: oldUtc },
   });
 
   adminToken = await signJWT({ userId: 'admin', email: 'admin@dash.test', role: 'admin', organizationId: org.id });

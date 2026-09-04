@@ -4,6 +4,7 @@ import { validateAgentToken } from '@/lib/agent/auth';
 import { resolveOrgMonitoring, resolveRetentionDays } from '@/lib/jobs/settings';
 import { APP_POLICY_VERSION_SETTING_KEY, DEFAULT_POLICY_VERSION, MAX_POLICY_PAYLOAD_ENTRIES } from '@/lib/policies/constants';
 import { log, requestContext } from '@/lib/logger';
+import { getActiveSubscription, parsePlanFeatures } from '@/lib/subscription';
 
 // GET /api/agent/config
 // Agent fetches monitoring configuration (screenshot frequency, idle timeout, etc.)
@@ -29,12 +30,40 @@ export async function GET(req: NextRequest) {
     // global SystemSetting).
     const org = await db.organization.findUnique({
       where: { id: orgId },
-      select: { timezone: true },
+      select: {
+        name: true,
+        timezone: true,
+        screenshotInterval: true,
+        subscriptionId: true,
+        trialEndsAt: true,
+        // Phase 3: authoritative deployment context for the agent's
+        // operational behavior (display + policy expectations). This is
+        // derived server-side from the organization record — NEVER from
+        // agent-supplied values — and is NOT an authorization input: every
+        // endpoint re-derives the mode from the token's org server-side.
+        deploymentMode: true,
+        deploymentModeUnresolved: true,
+      },
     });
 
     // Full typed monitoring configuration from OrganizationSetting, applying
     // deterministic defaults for missing/corrupt stored values.
     const monitoring = await resolveOrgMonitoring(orgId);
+
+    // ── Subscription-aware screenshot frequency override ──────────────────
+    // The org's screenshotInterval is the SUPER ADMIN-controlled value.
+    // The plan's features determine whether screenshots are allowed at all.
+    const sub = await getActiveSubscription(orgId);
+    const planFeatures = sub ? parsePlanFeatures(sub.plan.features) : [];
+    const planName = sub?.plan.name ?? 'Free';
+    const maxDevices = sub?.plan.maxDevices ?? 5;
+    const hasScreenshots = planFeatures.includes('screenshots');
+
+    // If the plan doesn't include screenshots, force-disable regardless of
+    // the org-level setting. If it does include them, use the org's interval.
+    const effectiveScreenshotFrequency = hasScreenshots
+      ? (org?.screenshotInterval ?? 5)
+      : 0;
 
     // Canonical break state for THIS employee (server-authoritative).
     const openBreak = await db.breakSession.findFirst({
@@ -50,7 +79,7 @@ export async function GET(req: NextRequest) {
     const config = {
       monitoring: {
         screenshotEnabled: monitoring.screenshot_enabled,
-        screenshotFrequency: monitoring.screenshot_frequency, // minutes
+        screenshotFrequency: effectiveScreenshotFrequency, // minutes (subscription-aware)
         screenshotRetentionDays: await resolveRetentionDays(orgId, 'screenshot_retention_days'),
         appTrackingEnabled: monitoring.app_tracking,
         websiteTrackingEnabled: monitoring.website_tracking,
@@ -173,7 +202,15 @@ export async function GET(req: NextRequest) {
         .map((p) => ({ id: p.id, name: p.name, status: p.status })),
     };
 
-    return NextResponse.json({ config, assignment, policy });
+    // Phase 3: deployment context block. Operational only (renderer display,
+    // mode-appropriate expectations); authorization never reads this.
+    const deployment = {
+      mode: (org?.deploymentMode ?? 'MANAGED') as 'MANAGED' | 'CUSTOMER_DB' | 'PRIVATE',
+      modeUnresolved: org?.deploymentModeUnresolved ?? false,
+      organizationName: org?.name ?? null,
+    };
+
+    return NextResponse.json({ config, assignment, policy, plan: planName, limits: { maxDevices }, deployment });
   } catch (error) {
     log.error('api.agent.config.', { error: String('Agent config error:') }, requestContext(req));
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });

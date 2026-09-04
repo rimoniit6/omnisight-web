@@ -3,7 +3,7 @@
  *
  * Unlike the model-level multi-org tests, these drive the ACTUAL API route
  * handlers (auth/users, auth/login, me/organization/switch, employees, app-list,
- * super-admin/organizations, organizations/[id]/members) so the full chain
+ * super-admin/organizations, organizations/[orgId]/members) so the full chain
  * USER ACTION → API → AUTHORIZATION → DATABASE → RESPONSE is exercised.
  *
  * Covers spec sections A–I:
@@ -230,13 +230,13 @@ test('C: removing Org A membership denies Org A but Org B still works', async ()
   const { token: tokenA } = await login('removemember@test.local', 'Remove123');
 
   // Remove Org A membership via the management API (as super admin)
-  const membersApi = await import('../src/app/api/organizations/[id]/members/[memberId]/route');
+  const membersApi = await import('../src/app/api/organizations/[orgId]/members/[memberId]/route');
   const delRes = await membersApi.DELETE(
     new NextRequest(`http://localhost:3000/api/organizations/${orgA.id}/members/${user.id}`, {
       method: 'DELETE',
       headers: { authorization: `Bearer ${await signTestJWT(superAdmin.id, superAdmin.email, 'super_admin', orgA.id)}` },
     }),
-    { params: Promise.resolve({ id: orgA.id, memberId: user.id }) }
+    { params: Promise.resolve({ orgId: orgA.id, memberId: user.id }) }
   );
   assert.equal(delRes.status, 200, 'membership removal must succeed');
 
@@ -381,16 +381,16 @@ test('H: organization-specific roles are enforced independently', async () => {
   // Create a token for Org B (admin role) directly
   const tokenB = await signTestJWT(user.id, user.email, 'admin', orgB.id);
 
-  const membersApi = await import('../src/app/api/organizations/[id]/members/route');
+  const membersApi = await import('../src/app/api/organizations/[orgId]/members/route');
   // Org A viewer cannot list members
   const denied = await membersApi.GET(new NextRequest(`http://localhost:3000/api/organizations/${orgA.id}/members`, {
     method: 'GET', headers: { authorization: `Bearer ${tokenA}` },
-  }), { params: Promise.resolve({ id: orgA.id }) });
+  }), { params: Promise.resolve({ orgId: orgA.id }) });
   assert.equal(denied.status, 403, 'Org A viewer cannot manage members');
   // Org B admin can list members
   const allowed = await membersApi.GET(new NextRequest(`http://localhost:3000/api/organizations/${orgB.id}/members`, {
     method: 'GET', headers: { authorization: `Bearer ${tokenB}` },
-  }), { params: Promise.resolve({ id: orgB.id }) });
+  }), { params: Promise.resolve({ orgId: orgB.id }) });
   assert.equal(allowed.status, 200, 'Org B admin can manage members');
 });
 
@@ -400,15 +400,15 @@ test('I: duplicate membership add is idempotent; parallel removal is safe', asyn
   const user = await makeUser('concurrent@test.local', 'viewer', 'Conc123', orgA.id);
   await db.organizationMembership.create({ data: { userId: user.id, organizationId: orgA.id, role: 'viewer', status: 'ACTIVE' } });
 
-  const membersApi = await import('../src/app/api/organizations/[id]/members/route');
+  const membersApi = await import('../src/app/api/organizations/[orgId]/members/route');
   const saTok = await signTestJWT(superAdmin.id, superAdmin.email, 'super_admin', orgA.id);
   const base = { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${saTok}` } } as const;
   const addBody = JSON.stringify({ email: user.email, role: 'viewer' });
 
   // Two parallel adds must not create a duplicate (compound unique).
   const [r1, r2] = await Promise.all([
-    membersApi.POST(new NextRequest(`http://localhost:3000/api/organizations/${orgA.id}/members`, { ...base, body: addBody }), { params: Promise.resolve({ id: orgA.id }) }),
-    membersApi.POST(new NextRequest(`http://localhost:3000/api/organizations/${orgA.id}/members`, { ...base, body: addBody }), { params: Promise.resolve({ id: orgA.id }) }),
+    membersApi.POST(new NextRequest(`http://localhost:3000/api/organizations/${orgA.id}/members`, { ...base, body: addBody }), { params: Promise.resolve({ orgId: orgA.id }) }),
+    membersApi.POST(new NextRequest(`http://localhost:3000/api/organizations/${orgA.id}/members`, { ...base, body: addBody }), { params: Promise.resolve({ orgId: orgA.id }) }),
   ]);
   assert.ok(r1.status === 201 || r1.status === 200);
   assert.ok(r2.status === 201 || r2.status === 200);
@@ -416,10 +416,10 @@ test('I: duplicate membership add is idempotent; parallel removal is safe', asyn
   assert.equal(count, 1, 'duplicate membership add must be idempotent');
 
   // Parallel removals: second must be 404 (already gone).
-  const delApi = await import('../src/app/api/organizations/[id]/members/[memberId]/route');
+  const delApi = await import('../src/app/api/organizations/[orgId]/members/[memberId]/route');
   const [d1, d2] = await Promise.all([
-    delApi.DELETE(new NextRequest(`http://localhost:3000/api/organizations/${orgA.id}/members/${user.id}`, { method: 'DELETE', headers: { authorization: `Bearer ${saTok}` } }), { params: Promise.resolve({ id: orgA.id, memberId: user.id }) }),
-    delApi.DELETE(new NextRequest(`http://localhost:3000/api/organizations/${orgA.id}/members/${user.id}`, { method: 'DELETE', headers: { authorization: `Bearer ${saTok}` } }), { params: Promise.resolve({ id: orgA.id, memberId: user.id }) }),
+    delApi.DELETE(new NextRequest(`http://localhost:3000/api/organizations/${orgA.id}/members/${user.id}`, { method: 'DELETE', headers: { authorization: `Bearer ${saTok}` } }), { params: Promise.resolve({ orgId: orgA.id, memberId: user.id }) }),
+    delApi.DELETE(new NextRequest(`http://localhost:3000/api/organizations/${orgA.id}/members/${user.id}`, { method: 'DELETE', headers: { authorization: `Bearer ${saTok}` } }), { params: Promise.resolve({ orgId: orgA.id, memberId: user.id }) }),
   ]);
   const statuses = [d1.status, d2.status].sort();
   // At least one must succeed; the other may be 404 (race) or also 200 (idempotent)

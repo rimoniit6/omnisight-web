@@ -132,14 +132,23 @@ export async function GET(req: NextRequest) {
       }
       where.organizationId = scope.organizationId;
     } else {
+      // Phase 2 privacy: org-less global super_admins may target an explicit
+      // organization ONLY when it is MANAGED. CUSTOMER_DB / PRIVATE orgs are
+      // rejected — operational data there is never reachable from the console.
       const orgParam = searchParams.get('organizationId');
       if (orgParam) {
         const org = await db.organization.findUnique({
           where: { id: orgParam },
-          select: { id: true },
+          select: { id: true, deploymentMode: true },
         });
         if (!org) {
           return NextResponse.json({ error: 'Organization not found' }, { status: 400 });
+        }
+        if (org.deploymentMode !== 'MANAGED') {
+          return NextResponse.json(
+            { error: 'Operational data for customer-owned organizations is not accessible from the Super Admin console', code: 'TENANT_ACCESS_DENIED_FOR_MODE' },
+            { status: 403 },
+          );
         }
         where.organizationId = orgParam;
       }

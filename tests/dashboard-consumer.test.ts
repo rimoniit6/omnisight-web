@@ -133,11 +133,11 @@ async function seedOrgScenario() {
   const org = await freshOrg('Consume');
   await db.activity.createMany({
     data: [
-      { employeeId: org.empId, type: 'application', title: 'Code', applicationName: 'Code.exe', category: 'productive', duration: 3600, timestamp: dayOffsetUtc(3), createdAt: dayOffsetUtc(3) },
-      { employeeId: org.empId, type: 'application', title: 'Mail', applicationName: 'mail.exe', category: 'neutral', duration: 1800, timestamp: dayOffsetUtc(2), createdAt: dayOffsetUtc(2) },
-      { employeeId: org.empId, type: 'application', title: 'Game', applicationName: 'game.exe', category: 'unproductive', duration: 900, timestamp: dayOffsetUtc(1), createdAt: dayOffsetUtc(1) },
-      { employeeId: org.empId, type: 'application', title: 'Code', applicationName: 'Code.exe', category: 'productive', duration: 5400, timestamp: dayOffsetUtc(1), createdAt: dayOffsetUtc(1) },
-      { employeeId: org.empId, type: 'application', title: 'Code', applicationName: 'Code.exe', category: 'productive', duration: 1800, timestamp: dayOffsetUtc(0), createdAt: dayOffsetUtc(0) },
+      { employeeId: org.empId, organizationId: org.orgId, type: 'application', title: 'Code', applicationName: 'Code.exe', category: 'productive', duration: 3600, timestamp: dayOffsetUtc(3), createdAt: dayOffsetUtc(3) },
+      { employeeId: org.empId, organizationId: org.orgId, type: 'application', title: 'Mail', applicationName: 'mail.exe', category: 'neutral', duration: 1800, timestamp: dayOffsetUtc(2), createdAt: dayOffsetUtc(2) },
+      { employeeId: org.empId, organizationId: org.orgId, type: 'application', title: 'Game', applicationName: 'game.exe', category: 'unproductive', duration: 900, timestamp: dayOffsetUtc(1), createdAt: dayOffsetUtc(1) },
+      { employeeId: org.empId, organizationId: org.orgId, type: 'application', title: 'Code', applicationName: 'Code.exe', category: 'productive', duration: 5400, timestamp: dayOffsetUtc(1), createdAt: dayOffsetUtc(1) },
+      { employeeId: org.empId, organizationId: org.orgId, type: 'application', title: 'Code', applicationName: 'Code.exe', category: 'productive', duration: 1800, timestamp: dayOffsetUtc(0), createdAt: dayOffsetUtc(0) },
     ],
   });
   return org;
@@ -222,7 +222,7 @@ test('DC-3: tenant isolation + zero-data org', async () => {
   await rebuildDaysForOrg(b.orgId, pastKeys, { now });
   // Add an extra unproductive block to B today so A and B genuinely differ.
   await db.activity.create({
-    data: { employeeId: b.empId, type: 'application', title: 'Game', applicationName: 'game.exe', category: 'unproductive', duration: 999999, timestamp: dayOffsetUtc(0), createdAt: dayOffsetUtc(0) },
+    data: { employeeId: b.empId, organizationId: b.orgId, type: 'application', title: 'Game', applicationName: 'game.exe', category: 'unproductive', duration: 999999, timestamp: dayOffsetUtc(0), createdAt: dayOffsetUtc(0) },
   });
 
   const c = await freshOrg('Empty');

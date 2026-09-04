@@ -114,9 +114,11 @@ async function findDuplicateName(organizationId: string, name: string, excludeId
   return existing.find((p) => p.name.toLowerCase() === needle) ?? null;
 }
 
-export async function GET(req: NextRequest) {
+  export async function GET(req: NextRequest) {
   try {
     // Authenticated + org-scoped list, including the aggregate stats.
+    // Org-less super_admin gets EMPTY (never a global cross-customer dump) —
+    // switch to a MANAGED organization for tenant data (Phase 2 privacy).
     const scope = await requireSessionOrg(req, { allowGlobal: true });
     if (!scope.ok) return authError(scope);
 
@@ -136,6 +138,29 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: pagination.error }, { status: pagination.status });
     }
     const { page, pageSize, skip } = pagination;
+
+    // Phase 2 privacy: org-less sessions have no tenant context — return an
+    // empty page rather than a global cross-customer dump.
+    if (!scope.organizationId) {
+      return NextResponse.json({
+        data: [],
+        total: 0,
+        page,
+        pageSize,
+        totalPages: 0,
+        stats: {
+          byStatus: {},
+          byPriority: {},
+          totalProjects: 0,
+          activeProjects: 0,
+          totalMembers: 0,
+          uniqueMembers: 0,
+          totalHours: 0,
+          dailyAverageHours: 0,
+          overdueCount: 0,
+        },
+      });
+    }
 
     const where: Prisma.ProjectWhereInput = {};
     if (scope.organizationId) where.organizationId = scope.organizationId;

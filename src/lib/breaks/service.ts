@@ -190,6 +190,8 @@ export async function startBreak(
           duration: 0,
           employeeId: input.employeeId,
           deviceId: input.deviceId ?? null,
+          // Phase 1 Step 10: direct tenant ownership (server-derived input).
+          organizationId: input.organizationId,
           timestamp: now,
           createdAt: now,
         },
@@ -269,6 +271,8 @@ export async function endBreak(
         duration: 0,
         employeeId: input.employeeId,
         deviceId: input.deviceId ?? null,
+        // Phase 1 Step 10: direct tenant ownership (from the open session row).
+        organizationId: open.organizationId,
         timestamp: now,
         createdAt: now,
       },

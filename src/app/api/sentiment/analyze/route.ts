@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { callAIProvider } from '@/lib/ai-provider-helper';
+import { meterAiCall } from '@/lib/ai-metering';
 import type { Prisma } from '@prisma/client';
 import { requireManagerOrg, authError } from '@/lib/api';
 import { hasActiveConsent } from '@/lib/consent';
@@ -248,6 +249,7 @@ type AIOutcome =
   | { ok: false; error: string };
 
 async function generateAIInsight(
+  orgId: string,
   employeeName: string,
   signals: Signals,
   score: number,
@@ -272,7 +274,9 @@ Activity Signals:
 - Productive hours this week: ${signals.productiveHoursThisWeek.toFixed(1)}h
 - Total hours this week: ${signals.totalHoursThisWeek.toFixed(1)}h`;
 
-  const result = await callAIProvider(systemPrompt, userPrompt);
+  const result = await meterAiCall({ organizationId: orgId, operation: 'sentiment' }, () =>
+    callAIProvider(systemPrompt, userPrompt)
+  );
   if (!result || !result.text) {
     return { ok: false, error: result?.error || 'AI_UNAVAILABLE' };
   }
@@ -537,6 +541,7 @@ export async function POST(req: NextRequest) {
         const riskFactors = calculateRiskFactors(signals, score);
 
         const aiResult = await generateAIInsight(
+          orgId,
           `${employee.firstName} ${employee.lastName}`,
           signals,
           score,

@@ -166,8 +166,11 @@ async function seedProject(orgId: string, name: string, extra: Record<string, un
 
 /** One real application-activity row with agent-reported duration (seconds). */
 async function seedActivity(employeeId: string, duration: number, createdAt: Date, type = 'application') {
+  // Phase 1: Activity requires direct organizationId — resolve from the employee (same rule as the DB backfill).
+  const emp = await db.employee.findUniqueOrThrow({ where: { id: employeeId }, select: { organizationId: true } });
   return db.activity.create({
     data: {
+      organizationId: emp.organizationId,
       type,
       duration,
       employeeId,

@@ -1,0 +1,55 @@
+# OmniSight — self-hosted stack: PostgreSQL + application.
+#
+# Usage:
+#   cp .env.production.example .env   # then fill in SELF_HOSTED + LICENSE_KEY
+#   docker compose up -d --build
+#
+# The app container runs Next.js standalone. It applies Prisma migrations and
+# (optionally, with SEED_ALLOWED=1) bootstraps the Enterprise_SelfHosted plan
+# on entry, then serves on http://localhost:3000.
+
+services:
+  db:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${DB_USER:-omnisight}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-omnisight}
+      POSTGRES_DB: ${DB_NAME:-omnisight}
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-omnisight}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  app:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      # Database
+      DATABASE_URL: postgresql://${DB_USER:-omnisight}:${DB_PASSWORD:-omnisight}@db:5432/${DB_NAME:-omnisight}?schema=public
+      DIRECT_URL: postgresql://${DB_USER:-omnisight}:${DB_PASSWORD:-omnisight}@db:5432/${DB_NAME:-omnisight}?schema=public
+      # App
+      APP_URL: ${APP_URL:-http://localhost:3000}
+      NEXT_PUBLIC_APP_URL: ${NEXT_PUBLIC_APP_URL:-http://localhost:3000}
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required (>=16 chars)}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:?ENCRYPTION_KEY is required (64 hex chars)}
+      # Self-hosted license
+      SELF_HOSTED: ${SELF_HOSTED:-true}
+      LICENSE_KEY: ${LICENSE_KEY:-}
+      SELF_HOSTED_REQUIRE_LICENSE: ${SELF_HOSTED_REQUIRE_LICENSE:-true}
+      # Bootstrap the self-hosted plan on first boot (set to 1 once)
+      SEED_ALLOWED: ${SEED_ALLOWED:-0}
+      METRICS_TOKEN: ${METRICS_TOKEN:-}
+    ports:
+      - "${APP_PORT:-3000}:3000"
+
+volumes:
+  db-data:

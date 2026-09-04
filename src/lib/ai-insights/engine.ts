@@ -19,6 +19,7 @@
 
 import { db } from '@/lib/db';
 import { callAIProvider, type AIProviderResult } from '@/lib/ai-provider-helper';
+import { meterAiCall } from '@/lib/ai-metering';
 import { buildInsightDataset, type InsightDataset, type InsightFilters } from './dataset';
 import { validateAiInsightResponse, type AiInsightResponse } from './contract';
 import { generateDataSummary, type DataSummary, type DataSummaryEvidenceRow } from './data-summary';
@@ -212,7 +213,14 @@ export async function runAiInsightsAnalysis(opts: EngineOptions): Promise<AiInsi
   const systemPrompt = AI_INSIGHTS_SYSTEM_PROMPT;
   const userPrompt = buildAiInsightsUserPrompt(dataset);
 
-  const aiResult = await aiCall(systemPrompt, userPrompt, { maxTokens: 1200, temperature: 0.3 });
+  // Phase 5 metering: record one AiUsage row per REAL provider call. Injected
+  // test stubs (opts.aiCall) are never metered — the engine only meters the
+  // production provider path.
+  const aiResult = opts.aiCall
+    ? await aiCall(systemPrompt, userPrompt, { maxTokens: 1200, temperature: 0.3 })
+    : await meterAiCall({ organizationId, operation: 'ai_insight' }, () =>
+        aiCall(systemPrompt, userPrompt, { maxTokens: 1200, temperature: 0.3 })
+      );
 
   const fallback = (reason: FallbackReason, aiStatus: AiStatus, aiError: string, provider: string | null, model: string | null, aiAvailable: boolean): AiInsightsResult => {
     const dataSummary = generateDataSummary(dataset, reason);

@@ -9,10 +9,14 @@ import { requireSuperAdmin, requireDbVerifiedRole, apiError, apiSuccess, authErr
  * Super Admin only.
  *
  * Query params:
- *   ?search=       — search by name or slug (case-insensitive)
- *   ?status=       — filter by status (active, suspended, archived)
- *   ?page=         — page number (default: 1)
- *   ?pageSize=     — results per page (default: 20, max: 200)
+ *   ?search=         — search by name or slug (case-insensitive)
+ *   ?status=         — filter by status (active, pending, suspended, archived)
+ *   ?deploymentMode= — filter by mode (MANAGED, CUSTOMER_DB, PRIVATE)
+ *   ?page=           — page number (default: 1)
+ *   ?pageSize=       — results per page (default: 20, max: 200)
+ *
+ * Control-plane listing: identity + mode + package/subscription/license
+ * metadata for ALL modes. No operational data is returned here.
  */
 export async function GET(req: NextRequest) {
   const adminResult = await requireSuperAdmin(req);
@@ -21,6 +25,7 @@ export async function GET(req: NextRequest) {
   const url = new URL(req.url);
   const search = url.searchParams.get('search') || '';
   const status = url.searchParams.get('status') || '';
+  const deploymentMode = url.searchParams.get('deploymentMode') || '';
   const page = Math.max(1, parseInt(url.searchParams.get('page') || '1', 10));
   const pageSize = Math.min(200, Math.max(1, parseInt(url.searchParams.get('pageSize') || '20', 10)));
   const skip = (page - 1) * pageSize;
@@ -33,8 +38,11 @@ export async function GET(req: NextRequest) {
       { slug: { contains: search, mode: 'insensitive' } },
     ];
   }
-  if (status && ['active', 'suspended', 'archived'].includes(status)) {
+  if (status && ['active', 'pending', 'suspended', 'archived'].includes(status)) {
     where.status = status;
+  }
+  if (deploymentMode && ['MANAGED', 'CUSTOMER_DB', 'PRIVATE'].includes(deploymentMode)) {
+    where.deploymentMode = deploymentMode;
   }
 
   const [organizations, total] = await Promise.all([
@@ -45,8 +53,23 @@ export async function GET(req: NextRequest) {
         name: true,
         slug: true,
         status: true,
+        deploymentMode: true,
+        deploymentModeUnresolved: true,
+        trialEndsAt: true,
         createdAt: true,
         updatedAt: true,
+        subscription: {
+          select: {
+            id: true,
+            status: true,
+            startDate: true,
+            endDate: true,
+            plan: { select: { id: true, name: true, priceMonthly: true, currency: true } },
+          },
+        },
+        licenseKey: {
+          select: { id: true, isActive: true, isRevoked: true, validUntil: true },
+        },
         _count: {
           select: {
             employees: true,

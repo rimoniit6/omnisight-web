@@ -101,8 +101,8 @@ before(async () => {
   // unproductive block — any cross-org leak collapses Org A's score.
   await db.activity.createMany({
     data: [
-      { employeeId: empA.id, type: 'application', applicationName: 'PROBE-A-APP', category: 'productive', duration: 3600, timestamp: new Date() },
-      { employeeId: empB.id, type: 'application', applicationName: 'PROBE-B-APP', category: 'unproductive', duration: 50000, timestamp: new Date() },
+      { employeeId: empA.id, organizationId: orgA.id, type: 'application', applicationName: 'PROBE-A-APP', category: 'productive', duration: 3600, timestamp: new Date() },
+      { employeeId: empB.id, organizationId: orgB.id, type: 'application', applicationName: 'PROBE-B-APP', category: 'unproductive', duration: 50000, timestamp: new Date() },
     ],
   });
 

@@ -16,8 +16,19 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "OmniSight - AI-Powered Workforce Intelligence",
-  description: "Monitor, analyze, and optimize your workforce productivity with AI-driven insights.",
+  title: {
+    default: "OmniSight - AI-Powered Workforce Intelligence",
+    template: "%s · OmniSight",
+  },
+  description: "Monitor, analyze, and optimize your workforce productivity with AI-driven insights. Real-time activity monitoring, screenshots & OCR, and a self-hosted option for full data control.",
+  keywords: [
+    "workforce intelligence",
+    "employee monitoring",
+    "productivity analytics",
+    "AI insights",
+    "self-hosted monitoring",
+    "screenshot OCR",
+  ],
   icons: {
     // Single canonical favicon configuration:
     //  - /favicon.svg — tight-crop SVG derivative of the canonical mark
@@ -31,6 +42,23 @@ export const metadata: Metadata = {
       { url: "/favicon.ico", sizes: "any" },
     ],
     apple: "/apple-touch-icon.png",
+  },
+  openGraph: {
+    type: "website",
+    locale: "en_US",
+    url: "/",
+    siteName: "OmniSight",
+    title: "OmniSight - AI-Powered Workforce Intelligence",
+    description:
+      "Real-time workforce monitoring with AI insights, screenshot & OCR, and a self-hosted option for full data control.",
+    images: [{ url: "/logos/omnisight.svg", width: 512, height: 512, alt: "OmniSight" }],
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "OmniSight - AI-Powered Workforce Intelligence",
+    description:
+      "Workforce intelligence, built for privacy. Real-time monitoring + self-hosted option.",
+    images: ["/logos/omnisight.svg"],
   },
 };
 

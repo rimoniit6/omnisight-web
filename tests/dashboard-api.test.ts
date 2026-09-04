@@ -153,6 +153,7 @@ test('TENANT-1: org A cannot see org B data', async () => {
   await db.activity.create({
     data: {
       employeeId: b.empId,
+      organizationId: b.orgId,
       type: 'application',
       applicationName: 'Code',
       category: 'productive',
@@ -234,10 +235,11 @@ test('DATA-2: device count and status breakdown', async () => {
 });
 
 test('DATA-3: activities feed is populated', async () => {
-  const { empId, token } = await freshOrg();
+  const { orgId: feedOrgId, empId, token } = await freshOrg();
   await db.activity.create({
     data: {
       employeeId: empId,
+      organizationId: feedOrgId,
       type: 'application',
       applicationName: 'VSCode',
       category: 'productive',
@@ -328,6 +330,7 @@ test('NPLUS-1: dashboard does not generate N+1 queries for employees', async () 
     await db.activity.create({
       data: {
         employeeId: emp.id,
+        organizationId: orgId,
         type: 'application',
         applicationName: 'Code',
         category: 'productive',

@@ -6,9 +6,11 @@ import { log, requestContext } from '@/lib/logger';
 
 export async function GET(req: NextRequest) {
   try {
-    // Tenant isolation: list only the caller's organization.
+    // Tenant isolation: list only the caller's organization. Org-less
+    // sessions get EMPTY — never a global cross-customer dump (Phase 2).
     const scope = await requireSessionOrg(req, { allowGlobal: true });
     if (!scope.ok) return authError(scope);
+    if (!scope.organizationId) return NextResponse.json({ data: [] });
 
     const where: Record<string, unknown> = {};
     if (scope.organizationId) where.organizationId = scope.organizationId;

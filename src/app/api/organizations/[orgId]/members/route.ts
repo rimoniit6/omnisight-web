@@ -6,14 +6,14 @@ import { isOrgRole, canAssignRole, resolveActorDbRole } from '@/lib/org-members'
 import { normalizeEmail } from '@/lib/email';
 import { log, requestContext } from '@/lib/logger';
 
-// ─── GET /api/organizations/[id]/members ────────────────────────────────────
+// ─── GET /api/organizations/[orgId]/members ────────────────────────────────────
 // List members of an organization. Admin+ within the org, or super_admin.
 export async function GET(
   req: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
+  { params }: { params: Promise<{ orgId: string }> }
 ) {
   try {
-    const { id: orgId } = await params;
+    const { orgId } = await params;
     const auth = await requireOrgAdmin(req, orgId);
     if (!auth.ok) return apiError('Insufficient permissions', auth.status);
 
@@ -52,16 +52,16 @@ export async function GET(
   }
 }
 
-// ─── POST /api/organizations/[id]/members ───────────────────────────────────
+// ─── POST /api/organizations/[orgId]/members ───────────────────────────────────
 // Add/invite an existing user to this organization with an org-specific role.
 // The user is identified by email. A membership (ACTIVE) is created; the user
 // may already belong to other organizations (genuine multi-org).
 export async function POST(
   req: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
+  { params }: { params: Promise<{ orgId: string }> }
 ) {
   try {
-    const { id: orgId } = await params;
+    const { orgId } = await params;
     const auth = await requireOrgAdmin(req, orgId);
     if (!auth.ok) return apiError('Insufficient permissions', auth.status);
 

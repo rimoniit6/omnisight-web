@@ -58,6 +58,10 @@ export const PAGE_MIN_ROLE: Record<PageType, NavMinRole> = {
   'super-admin-organization-detail': 'super_admin',
   // Branding: admin+ for org branding, super_admin for platform branding
   branding: 'admin',
+  // URL-routed external pages (rendered outside the SPA shell)
+  billing: 'org_admin',
+  payments: 'super_admin',
+  leads: 'super_admin',
 };
 
 /**

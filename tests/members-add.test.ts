@@ -44,8 +44,8 @@ process.env.SUPER_ADMIN_PASSWORD = 'Test-Password-123!';
 type DbModule = typeof import('../src/lib/db');
 type AuthModule = typeof import('../src/lib/auth');
 type EmailModule = typeof import('../src/lib/email');
-type MembersRoute = typeof import('../src/app/api/organizations/[id]/members/route');
-type MemberIdRoute = typeof import('../src/app/api/organizations/[id]/members/[memberId]/route');
+type MembersRoute = typeof import('../src/app/api/organizations/[orgId]/members/route');
+type MemberIdRoute = typeof import('../src/app/api/organizations/[orgId]/members/[memberId]/route');
 type UsersRoute = typeof import('../src/app/api/auth/users/route');
 type LoginRoute = typeof import('../src/app/api/auth/login/route');
 
@@ -79,8 +79,8 @@ before(async () => {
   signJWT = authModule.signJWT;
   const emailModule = await import('../src/lib/email');
   normalizeEmail = emailModule.normalizeEmail;
-  membersRoute = await import('../src/app/api/organizations/[id]/members/route');
-  memberIdRoute = await import('../src/app/api/organizations/[id]/members/[memberId]/route');
+  membersRoute = await import('../src/app/api/organizations/[orgId]/members/route');
+  memberIdRoute = await import('../src/app/api/organizations/[orgId]/members/[memberId]/route');
   usersRoute = await import('../src/app/api/auth/users/route');
   loginRoute = await import('../src/app/api/auth/login/route');
 
@@ -187,7 +187,7 @@ test('MA-2: Add Member finds user by case-insensitive email', async () => {
       method: 'POST',
       body: { email: 'john@example.com', role: 'viewer' },
     }),
-    { params: Promise.resolve({ id: org.id }) }
+    { params: Promise.resolve({ orgId: org.id }) }
   );
   assert.equal(response.status, 201);
   const data = await response.json();
@@ -206,7 +206,7 @@ test('MA-3: Super Admin adds member by userId', async () => {
       method: 'POST',
       body: { userId: targetUser.id, role: 'manager' },
     }),
-    { params: Promise.resolve({ id: org.id }) }
+    { params: Promise.resolve({ orgId: org.id }) }
   );
   assert.equal(response.status, 201);
   const data = await response.json();
@@ -225,7 +225,7 @@ test('MA-4: Super Admin adds member by mixed-case email', async () => {
       method: 'POST',
       body: { email: 'JOHN@EXAMPLE.COM', role: 'org_admin' },
     }),
-    { params: Promise.resolve({ id: org.id }) }
+    { params: Promise.resolve({ orgId: org.id }) }
   );
   assert.equal(response.status, 201);
   const data = await response.json();
@@ -242,7 +242,7 @@ test('MA-5: Duplicate membership returns 409', async () => {
       method: 'POST',
       body: { userId: targetUser.id, role: 'viewer' },
     }),
-    { params: Promise.resolve({ id: org.id }) }
+    { params: Promise.resolve({ orgId: org.id }) }
   );
   assert.equal(first.status, 201);
 
@@ -254,7 +254,7 @@ test('MA-5: Duplicate membership returns 409', async () => {
       method: 'POST',
       body: { userId: targetUser.id, role: 'viewer' },
     }),
-    { params: Promise.resolve({ id: org.id }) }
+    { params: Promise.resolve({ orgId: org.id }) }
   );
   // Current implementation uses upsert — returns 201 (idempotent)
   assert.ok([200, 201].includes(second.status), `Expected 200/201 for idempotent upsert, got ${second.status}`);
@@ -268,7 +268,7 @@ test('MA-6: Nonexistent user returns 404', async () => {
       method: 'POST',
       body: { userId: 'nonexistent-user-id', role: 'viewer' },
     }),
-    { params: Promise.resolve({ id: org.id }) }
+    { params: Promise.resolve({ orgId: org.id }) }
   );
   assert.equal(response.status, 404);
   const data = await response.json();
@@ -283,7 +283,7 @@ test('MA-7: Invalid role returns 400', async () => {
       method: 'POST',
       body: { userId: targetUser.id, role: 'super_admin' },
     }),
-    { params: Promise.resolve({ id: org.id }) }
+    { params: Promise.resolve({ orgId: org.id }) }
   );
   assert.equal(response.status, 400);
   const data = await response.json();
@@ -298,7 +298,7 @@ test('MA-8: Missing userId and email returns 400', async () => {
       method: 'POST',
       body: { role: 'viewer' },
     }),
-    { params: Promise.resolve({ id: org.id }) }
+    { params: Promise.resolve({ orgId: org.id }) }
   );
   assert.equal(response.status, 400);
   const data = await response.json();
@@ -353,7 +353,7 @@ test('MA-9: Organization Admin adds member to own org', async () => {
       method: 'POST',
       body: { userId: anotherUser.id, role: 'viewer' },
     }),
-    { params: Promise.resolve({ id: org.id }) }
+    { params: Promise.resolve({ orgId: org.id }) }
   );
   assert.equal(response.status, 201);
 });
@@ -400,7 +400,7 @@ test('MA-10: Org Admin cannot add member to another org', async () => {
       method: 'POST',
       body: { userId: targetUser.id, role: 'viewer' },
     }),
-    { params: Promise.resolve({ id: org.id }) }
+    { params: Promise.resolve({ orgId: org.id }) }
   );
   assert.equal(response.status, 403);
 });
@@ -440,7 +440,7 @@ test('MA-11: Manager cannot add members', async () => {
       method: 'POST',
       body: { userId: targetUser.id, role: 'viewer' },
     }),
-    { params: Promise.resolve({ id: org.id }) }
+    { params: Promise.resolve({ orgId: org.id }) }
   );
   assert.equal(response.status, 403);
 });
@@ -480,7 +480,7 @@ test('MA-12: Viewer cannot add members', async () => {
       method: 'POST',
       body: { userId: targetUser.id, role: 'viewer' },
     }),
-    { params: Promise.resolve({ id: org.id }) }
+    { params: Promise.resolve({ orgId: org.id }) }
   );
   assert.equal(response.status, 403);
 });
@@ -493,7 +493,7 @@ test('MA-13: Unauthenticated request returns 401', async () => {
       method: 'POST',
       body: { userId: targetUser.id, role: 'viewer' },
     }),
-    { params: Promise.resolve({ id: org.id }) }
+    { params: Promise.resolve({ orgId: org.id }) }
   );
   assert.equal(response.status, 401);
 });
@@ -546,7 +546,7 @@ test('MA-15: GET /api/auth/users does not expose password hash', async () => {
 
 // ─── MA-16: GET members list works ─────────────────────────────────────────
 
-test('MA-16: GET /api/organizations/[id]/members lists members', async () => {
+test('MA-16: GET /api/organizations/[orgId]/members lists members', async () => {
   // Ensure at least one membership exists
   await db.organizationMembership.upsert({
     where: {
@@ -565,7 +565,7 @@ test('MA-16: GET /api/organizations/[id]/members lists members', async () => {
     req(superAdminToken, {
       method: 'GET',
     }),
-    { params: Promise.resolve({ id: org.id }) }
+    { params: Promise.resolve({ orgId: org.id }) }
   );
   assert.equal(response.status, 200);
   const data = await response.json();
@@ -603,7 +603,7 @@ test('MA-17: userId takes precedence over email when both provided', async () =>
         role: 'viewer',
       },
     }),
-    { params: Promise.resolve({ id: org.id }) }
+    { params: Promise.resolve({ orgId: org.id }) }
   );
   assert.equal(response.status, 201);
   const data = await response.json();
@@ -772,7 +772,7 @@ test('MA-23: Removing membership preserves AppUser account', async () => {
       method: 'DELETE',
       url: `http://localhost:3000/api/organizations/${org.id}/members/${tempUser.id}`,
     }),
-    { params: Promise.resolve({ id: org.id, memberId: tempUser.id }) }
+    { params: Promise.resolve({ orgId: org.id, memberId: tempUser.id }) }
   );
   assert.equal(response.status, 200);
 

@@ -13,8 +13,10 @@ export async function GET(
     if (!scope.ok) return authError(scope);
 
     const { id } = await params;
+    // Phase 2 privacy: org-less sessions have no tenant context — conceal as not found.
+    if (!scope.organizationId) return NextResponse.json({ error: 'Department not found' }, { status: 404 });
     const dept = await db.department.findFirst({
-      where: { id, ...(scope.organizationId ? { organizationId: scope.organizationId } : {}) },
+      where: { id, organizationId: scope.organizationId },
       include: {
         employees: { where: { status: 'active' }, select: { id: true, firstName: true, lastName: true, email: true } },
         manager: { select: { id: true, firstName: true, lastName: true } },

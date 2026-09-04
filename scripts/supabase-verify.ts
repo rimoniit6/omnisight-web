@@ -54,7 +54,7 @@ async function main(): Promise<void> {
   await db.employee.update({ where: { id: emp.id }, data: { designation: 'Engineer' } });
   ok('update', (await db.employee.findUnique({ where: { id: emp.id } }))?.designation === 'Engineer');
 
-  await db.activity.create({ data: { type: 'application', title: 'probe', duration: 30, employeeId: emp.id } });
+  await db.activity.create({ data: { type: 'application', title: 'probe', duration: 30, employeeId: emp.id, organizationId: org.id } });
   ok('activity insert with FK', (await db.activity.count({ where: { employeeId: emp.id } })) === 1);
 
   try {

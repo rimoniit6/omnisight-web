@@ -1,24 +1,33 @@
 import { NextRequest } from 'next/server';
 import { db as prisma } from '@/lib/db';
-import { requireSuperAdmin, apiError, apiSuccess, authError, validatePagination } from '@/lib/api';
+import { apiError, apiSuccess, validatePagination } from '@/lib/api';
+import { requireManagedTenantAccess } from '@/lib/control-plane';
 
 /**
  * GET /api/super-admin/organizations/[id]/audit-logs
  *
- * View audit logs for any organization. Super Admin only.
- * No membership required — platform-level authority.
+ * View audit logs for a MANAGED organization. Super Admin only.
+ * Phase 2 privacy: CUSTOMER_DB / PRIVATE organizations are rejected with 403.
  */
 export async function GET(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const adminResult = await requireSuperAdmin(req);
-  if (!adminResult.ok) return authError(adminResult);
-
   const { id } = await params;
 
   const org = await prisma.organization.findUnique({ where: { id }, select: { id: true } });
   if (!org) return apiError('Organization not found', 404);
+
+  const access = await requireManagedTenantAccess(req, id);
+  if (!access.ok) {
+    if (access.status === 401) return apiError('Unauthorized. Please sign in.', 401);
+    return apiError(
+      access.code === 'TENANT_ACCESS_DENIED_FOR_MODE'
+        ? 'Operational data for customer-owned organizations is not accessible from the Super Admin console'
+        : 'Tenant access cannot be resolved',
+      access.status,
+    );
+  }
 
   const { searchParams } = new URL(req.url);
   const pagination = validatePagination(searchParams, { defaultPageSize: 15, maxPageSize: 100 });

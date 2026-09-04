@@ -12,6 +12,9 @@ import { processPendingTranscriptions } from '@/lib/audio/transcribe-job';
 import { processPendingScreenshots } from '@/lib/screenshots/processing';
 import { runWorkDaySummaryJob, type WorkDaySummaryJobResult } from './workday-summary';
 import { runAlertRulesJob, type AlertRuleJobResult } from './alert-rules';
+import { runSubscriptionSweep, type SubscriptionSweepResult } from './subscription-sweep';
+import { syncDeviceCounts, type SyncDeviceCountResult } from './sync-device-count';
+import { runDataExpiryReminder, type DataExpiryReminderResult } from './data-expiry-reminder';
 
 const JOB_LEASE_MS = 5 * 60 * 1000;
 
@@ -28,6 +31,9 @@ export interface JobsResult {
   userSessionSweep: UserSessionSweepResult | null;
   workDaySummary: WorkDaySummaryJobResult | null;
   alertRuleEvaluation: AlertRuleJobResult | null;
+  subscriptionSweep: SubscriptionSweepResult | null;
+  syncDeviceCount: SyncDeviceCountResult | null;
+  dataExpiryReminder: DataExpiryReminderResult | null;
   errors: string[];
 }
 
@@ -109,6 +115,7 @@ const EMPTY_RETENTION: RetentionResult = {
   activities: 0,
   reports: 0,
   aiInsights: 0,
+  aiUsage: 0,
   sentimentRecords: 0,
   auditLogsAnonymized: 0,
   consentLogsAnonymized: 0,
@@ -186,8 +193,46 @@ export async function runScreenshotProcessingJob(limit?: number): Promise<JobsRe
   return { processed: 0, failed: 0, errors: ['lease held elsewhere'] };
 }
 
+/**
+ * Lease-guarded device-count sync. Called from instrumentation's ~30-minute
+ * loop AND from the hourly runScheduledJobs pass; the JobRun lease keeps them
+ * exclusive. Returns an empty result when another worker owns the lease.
+ */
+export async function runSyncDeviceCountsJob(): Promise<SyncDeviceCountResult> {
+  if (await claimJob('sync_device_count')) {
+    try {
+      const result = await syncDeviceCounts();
+      await finishJob('sync_device_count', undefined, { ...result });
+      return result;
+    } catch (error) {
+      await finishJob('sync_device_count', String(error));
+      throw error;
+    }
+  }
+  return { organizations: 0, activeDevices: 0, updated: 0, errors: ['lease held elsewhere'] };
+}
+
+/**
+ * Lease-guarded daily data-expiry reminder pass. Runs from the hourly
+ * runScheduledJobs pass AND `npm run jobs`; the lease keeps overlapping
+ * invocations a safe no-op.
+ */
+export async function runDataExpiryReminderJob(): Promise<DataExpiryReminderResult> {
+  if (await claimJob('data_expiry_reminder')) {
+    try {
+      const result = await runDataExpiryReminder();
+      await finishJob('data_expiry_reminder', undefined, { ...result });
+      return result;
+    } catch (error) {
+      await finishJob('data_expiry_reminder', String(error));
+      throw error;
+    }
+  }
+  return { evaluatedOrgs: 0, remindersSent: 0, warningsSent: 0, finalsSent: 0, errors: ['lease held elsewhere'] };
+}
+
 export async function runScheduledJobs(): Promise<JobsResult> {
-  const result: JobsResult = { expiredConsents: 0, retention: { ...EMPTY_RETENTION }, projectTimeSync: null, anomalyDetection: null, agentTokenSweep: null, rateLimitSweep: null, deviceIntegrity: null, userSessionSweep: null, workDaySummary: null, alertRuleEvaluation: null, errors: [] };
+  const result: JobsResult = { expiredConsents: 0, retention: { ...EMPTY_RETENTION }, projectTimeSync: null, anomalyDetection: null, agentTokenSweep: null, rateLimitSweep: null, deviceIntegrity: null, userSessionSweep: null, workDaySummary: null, alertRuleEvaluation: null, subscriptionSweep: null, syncDeviceCount: null, dataExpiryReminder: null, errors: [] };
 
   const started = Date.now();
 
@@ -333,10 +378,45 @@ export async function runScheduledJobs(): Promise<JobsResult> {
     await finishJob('alert_rule_evaluation', String(error)).catch(() => {});
   }
 
+  // SaaS subscription expiry/suspension sweep — marks lapsed ACTIVE
+  // subscriptions EXPIRED and suspends orgs with no remaining subscription or
+  // trial. Plan-driven screenshot retention is enforced by retention_cleanup
+  // via resolveRetentionDays (which consults the active plan).
+  if (await claimJob('subscription_sweep')) {
+    try {
+      result.subscriptionSweep = await runSubscriptionSweep();
+      await finishJob('subscription_sweep', undefined, { ...result.subscriptionSweep });
+    } catch (error) {
+      result.errors.push(`subscription_sweep: ${String(error)}`);
+      await finishJob('subscription_sweep', String(error));
+    }
+  }
+
+  // SaaS device-count sync — recompute Organization.activeDeviceCount from
+  // heartbeat-fresh (non-lifecycle) devices so plan enforcement and the billing
+  // UI stay current. Also triggered on a ~30-minute cadence by instrumentation;
+  // the JobRun lease keeps the two exclusive.
+  try {
+    result.syncDeviceCount = await runSyncDeviceCountsJob();
+  } catch (error) {
+    result.errors.push(`sync_device_count: ${String(error)}`);
+    await finishJob('sync_device_count', String(error)).catch(() => {});
+  }
+
+  // SaaS data-expiry reminders — emails org admins/super admins as each org's
+  // retention window closes (7-day warning + expiry-day final). Never deletes
+  // anything; dedup is guarded by Organization.lastDataExpiryReminderAt.
+  try {
+    result.dataExpiryReminder = await runDataExpiryReminderJob();
+  } catch (error) {
+    result.errors.push(`data_expiry_reminder: ${String(error)}`);
+    await finishJob('data_expiry_reminder', String(error)).catch(() => {});
+  }
+
 
   const durationMs = Date.now() - started;
   await db.jobRun.updateMany({
-    where: { job: { in: ['expire_consents', 'retention_cleanup', 'project_time_sync', 'anomaly_detection', 'agent_token_sweep', 'rate_limit_sweep', 'device_integrity', 'user_session_sweep', 'audio_transcription', 'screenshot_processing', 'workday_summary', 'alert_rule_evaluation'] } },
+    where: { job: { in: ['expire_consents', 'retention_cleanup', 'project_time_sync', 'anomaly_detection', 'agent_token_sweep', 'rate_limit_sweep', 'device_integrity', 'user_session_sweep', 'audio_transcription', 'screenshot_processing', 'workday_summary', 'alert_rule_evaluation', 'subscription_sweep', 'sync_device_count', 'data_expiry_reminder'] } },
     data: { lastDurationMs: durationMs },
   });
 

@@ -58,9 +58,9 @@ before(async () => {
     data: { employeeId: 'WM-1', firstName: 'Wm', lastName: 'User', email: 'wm1@wm.test', organizationId: orgA.id, status: 'active' },
   });
   await db.activity.create({
-    data: { type: 'application', applicationName: '=CMD()', category: 'productive', duration: 60, employeeId: empA.id, timestamp: new Date(Date.now() - 86_400_000) },
+    data: { type: 'application', applicationName: '=CMD()', category: 'productive',
+      duration: 60, employeeId: empA.id, organizationId: orgA.id, timestamp: new Date(Date.now() - 86_400_000) },
   });
-
   adminTokenA = await signJWT({ userId: 'admin-wm', email: 'admin@wm.test', role: 'admin', organizationId: orgA.id });
   managerTokenA = await signJWT({ userId: 'mgr-wm', email: 'mgr@wm.test', role: 'manager', organizationId: orgA.id });
   viewerTokenA = await signJWT({ userId: 'viewer-wm', email: 'viewer@wm.test', role: 'viewer', organizationId: orgA.id });

@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { useQuery } from '@tanstack/react-query';
 import { useAppStore, type PageType, useAuthStore } from '@/lib/store';
 import { useCurrentUser } from '@/hooks/use-current-user';
@@ -35,6 +36,8 @@ import {
   Mic,
   Crown,
   Palette,
+  CreditCard,
+  Inbox,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import {
@@ -52,6 +55,7 @@ interface NavItem {
   label: string;
   icon: React.ElementType;
   showBadge?: boolean;
+  href?: string;
 }
 
 interface NavGroup {
@@ -111,6 +115,7 @@ const navGroups: NavGroup[] = [
       { page: 'users', label: 'Users & Members', icon: Users },
       { page: 'reports', label: 'Reports', icon: FileText },
       { page: 'daily-report', label: 'Daily Report', icon: FileBarChart },
+      { page: 'billing', label: 'Billing & Subscription', icon: CreditCard, href: '/dashboard/billing' },
       { page: 'settings', label: 'Settings', icon: Settings },
       { page: 'branding', label: 'Branding', icon: Palette },
     ],
@@ -119,6 +124,8 @@ const navGroups: NavGroup[] = [
     section: 'Platform',
     items: [
       { page: 'super-admin-organizations', label: 'Super Admin', icon: Crown },
+      { page: 'payments', label: 'Payment Verification', icon: ShieldAlert, href: '/admin/payments' },
+      { page: 'leads', label: 'Sales Leads', icon: Inbox, href: '/admin/leads' },
     ],
   },
 ];
@@ -129,6 +136,7 @@ interface AppSidebarProps {
 
 export function AppSidebar({ onNavigate }: AppSidebarProps) {
   const { currentPage, setCurrentPage, sidebarOpen, setSidebarOpen } = useAppStore();
+  const router = useRouter();
   const { user } = useCurrentUser();
   const authUser = useAuthStore((s) => s.user);
   const displayUser = user || authUser;
@@ -178,7 +186,12 @@ export function AppSidebar({ onNavigate }: AppSidebarProps) {
     fetchCounts();
   }, []);
 
-  const handleNavClick = (page: PageType) => {
+  const handleNavClick = (page: PageType, href?: string) => {
+    if (href) {
+      router.push(href);
+      onNavigate?.();
+      return;
+    }
     setCurrentPage(page);
     onNavigate?.();
   };
@@ -264,7 +277,7 @@ export function AppSidebar({ onNavigate }: AppSidebarProps) {
                   const btn = (
                     <button
                       key={item.page}
-                      onClick={() => handleNavClick(item.page)}
+                      onClick={() => handleNavClick(item.page, item.href)}
                       aria-label={item.label}
                       aria-current={isActive ? 'page' : undefined}
                       className={cn(

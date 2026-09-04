@@ -119,6 +119,12 @@ jobs:
       - name: Run all test suites
         run: bun run test
 
+      - name: Unit tests (licenses, subscription helpers)
+        run: bun run test:unit
+
+      - name: Integration tests (license, subscription, invoices, data-expiry reminders)
+        run: bun run test:integration
+
   build:
     name: Build
     runs-on: ubuntu-latest

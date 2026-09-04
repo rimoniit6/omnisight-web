@@ -466,6 +466,11 @@ npm run test:members-add
 npm run test:consent-seed
 npm run test:consent-summary
 
+# Focused license / self-hosted tests
+npm run test:unit            # pure helpers (licenses, subscription)
+npm run test:integration     # license, subscription, invoices, data-expiry
+npm run test:license
+
 # E2E tests (requires Playwright)
 npx playwright test
 ```
@@ -491,10 +496,19 @@ Quick summary:
 2. Run `npx prisma migrate deploy`
 3. Run `npx prisma generate`
 4. Run `npx tsx scripts/bootstrap-super-admin.ts`
-5. Run `npm run build`
-6. Start the live-updates service: `cd mini-services/live-updates && bun index.ts`
-7. Start the app: `npm start`
-8. Set up Caddy/reverse proxy for port 81 (WebSocket transform for realtime)
+5. If self-hosted, ensure the license plan once:
+   `SEED_ALLOWED=1 npx tsx scripts/ensure-self-hosted-plan.ts`
+6. Run `npm run build`
+7. Start the live-updates service: `cd mini-services/live-updates && bun index.ts`
+8. Start the app: `npm start`
+9. Set up Caddy/reverse proxy for port 81 (WebSocket transform for realtime)
+
+**Docker:** a multi-stage `Dockerfile` + `docker-compose.yml` run PostgreSQL and
+the app (entrypoint applies migrations and bootstraps the self-hosted plan).
+See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) → *Self-Hosted Licensing, Monitoring
+& Metrics*.
+
+**Release process:** see [RELEASE.md](RELEASE.md).
 
 ## Security
 

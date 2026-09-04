@@ -10,6 +10,8 @@ export interface RetentionResult {
   activities: number;
   reports: number;
   aiInsights: number;
+  /** Phase 5 per-call AI metering rows purged past ai_insight_retention_days. */
+  aiUsage: number;
   sentimentRecords: number;
   auditLogsAnonymized: number;
   consentLogsAnonymized: number;
@@ -47,6 +49,7 @@ const EMPTY: RetentionResult = {
   activities: 0,
   reports: 0,
   aiInsights: 0,
+  aiUsage: 0,
   sentimentRecords: 0,
   auditLogsAnonymized: 0,
   consentLogsAnonymized: 0,
@@ -265,6 +268,13 @@ export async function runRetentionForOrg(
       where: { organizationId: orgId, createdAt: { lt: retentionCutoff(aiDays, now) } },
     });
     result.aiInsights = del.count;
+    // Phase 5: per-call AI usage metering rows follow the same window (0 = keep
+    // forever, consistent with the other AI-derived records). Metering rows are
+    // strictly org-scoped and carry no secrets/payloads.
+    const usageDel = await db.aiUsage.deleteMany({
+      where: { organizationId: orgId, createdAt: { lt: retentionCutoff(aiDays, now) } },
+    });
+    result.aiUsage = usageDel.count;
   }
 
   // Sentiment records are AI-derived workforce insights: they follow the same

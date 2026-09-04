@@ -172,10 +172,13 @@ before(async () => {
   });
 
   // 2026-08-10T23:30:00Z = 2026-08-11 05:30 local in Dhaka; 2026-08-10 in UTC.
-  const mk = (employeeId: string, applicationName: string, duration: number, timestamp: Date, category = 'productive') =>
-    db.activity.create({
-      data: { type: 'application', title: null, applicationName, category, duration, employeeId, timestamp },
+  // Phase 1: Activity requires direct organizationId — resolve from the employee (same rule as the DB backfill).
+  const mk = async (employeeId: string, applicationName: string, duration: number, timestamp: Date, category = 'productive') => {
+    const emp = await db.employee.findUniqueOrThrow({ where: { id: employeeId }, select: { organizationId: true } });
+    return db.activity.create({
+      data: { type: 'application', title: null, applicationName, category, duration, employeeId, organizationId: emp.organizationId, timestamp },
     });
+  };
   await mk(empDhaka.id, 'chrome.exe', 3600, new Date('2026-08-10T23:30:00.000Z'));
   await mk(empDhaka.id, 'Code.exe', 1800, new Date('2026-08-11T06:00:00.000Z'));
   await mk(empUtc.id, 'chrome.exe', 3600, new Date('2026-08-10T23:30:00.000Z'));
@@ -300,10 +303,10 @@ test('AN-8: departments mode honors the shared date range (bounded, never all-hi
   // Recent activity inside the window + an OLD activity (6 months back) that
   // must NOT be counted when the shared range is applied.
   await db.activity.create({
-    data: { type: 'application', title: null, applicationName: 'chrome.exe', category: 'productive', duration: 1200, employeeId: emp.id, timestamp: new Date('2026-08-09T12:00:00.000Z') },
+    data: { type: 'application', title: null, applicationName: 'chrome.exe', category: 'productive', duration: 1200, employeeId: emp.id, organizationId: orgDhaka.id, timestamp: new Date('2026-08-09T12:00:00.000Z') },
   });
   await db.activity.create({
-    data: { type: 'application', title: null, applicationName: 'old.exe', category: 'neutral', duration: 9999, employeeId: emp.id, timestamp: new Date('2026-02-09T12:00:00.000Z') },
+    data: { type: 'application', title: null, applicationName: 'old.exe', category: 'neutral', duration: 9999, employeeId: emp.id, organizationId: orgDhaka.id, timestamp: new Date('2026-02-09T12:00:00.000Z') },
   });
 
   const res = await api.GET(
@@ -338,7 +341,7 @@ test('AN-9: departments mode without a range falls back to a bounded 90-day wind
   });
   // An activity 200 days in the past must be outside the 90-day fallback.
   await db.activity.create({
-    data: { type: 'application', title: null, applicationName: 'ancient.exe', category: 'neutral', duration: 9999, employeeId: emp.id, timestamp: new Date(Date.now() - 200 * 24 * 3600 * 1000) },
+    data: { type: 'application', title: null, applicationName: 'ancient.exe', category: 'neutral', duration: 9999, employeeId: emp.id, organizationId: orgDhaka.id, timestamp: new Date(Date.now() - 200 * 24 * 3600 * 1000) },
   });
 
   const res = await api.GET(

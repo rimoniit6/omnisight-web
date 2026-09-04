@@ -149,20 +149,20 @@ test('ACT-00: seed ORG A + ORG B with employees, devices and mixed activities', 
   //     (MUST be included — this was the P1-1 63%-hidden bug)
   await db.activity.createMany({
     data: [
-      { type: 'application', applicationName: 'WorkLensAIAgent.exe', category: 'neutral', duration: 100, employeeId: empAId, deviceId: deviceAId, timestamp: new Date() },
-      { type: 'application', applicationName: 'chrome.exe', category: 'productive', duration: 200, employeeId: empAId, deviceId: deviceAId, timestamp: new Date() },
-      { type: 'website', applicationName: null, url: 'github.com', category: 'productive', duration: 300, employeeId: empAId, deviceId: deviceAId, timestamp: new Date() },
-      { type: 'idle', applicationName: null, category: 'neutral', duration: 400, employeeId: empAId, deviceId: deviceAId, timestamp: new Date() },
-      { type: 'screenshot', applicationName: null, category: 'neutral', duration: 50, employeeId: empAId, deviceId: deviceAId, timestamp: new Date() },
-      { type: 'work_session', applicationName: null, category: 'neutral', duration: 600, employeeId: empAId, deviceId: deviceAId, timestamp: new Date() },
+      { type: 'application', applicationName: 'WorkLensAIAgent.exe', category: 'neutral', duration: 100, employeeId: empAId, organizationId: orgAId, deviceId: deviceAId, timestamp: new Date() },
+      { type: 'application', applicationName: 'chrome.exe', category: 'productive', duration: 200, employeeId: empAId, organizationId: orgAId, deviceId: deviceAId, timestamp: new Date() },
+      { type: 'website', applicationName: null, url: 'github.com', category: 'productive', duration: 300, employeeId: empAId, organizationId: orgAId, deviceId: deviceAId, timestamp: new Date() },
+      { type: 'idle', applicationName: null, category: 'neutral', duration: 400, employeeId: empAId, organizationId: orgAId, deviceId: deviceAId, timestamp: new Date() },
+      { type: 'screenshot', applicationName: null, category: 'neutral', duration: 50, employeeId: empAId, organizationId: orgAId, deviceId: deviceAId, timestamp: new Date() },
+      { type: 'work_session', applicationName: null, category: 'neutral', duration: 600, employeeId: empAId, organizationId: orgAId, deviceId: deviceAId, timestamp: new Date() },
     ],
   });
 
   // ORG B employee — a few rows (used for tenant isolation).
   await db.activity.createMany({
     data: [
-      { type: 'application', applicationName: 'excel.exe', category: 'productive', duration: 111, employeeId: empBId, timestamp: new Date() },
-      { type: 'website', applicationName: null, url: 'b.example', category: 'neutral', duration: 222, employeeId: empBId, timestamp: new Date() },
+      { type: 'application', applicationName: 'excel.exe', category: 'productive', duration: 111, employeeId: empBId, organizationId: orgBId, timestamp: new Date() },
+      { type: 'website', applicationName: null, url: 'b.example', category: 'neutral', duration: 222, employeeId: empBId, organizationId: orgBId, timestamp: new Date() },
     ],
   });
 
@@ -174,6 +174,7 @@ test('ACT-00: seed ORG A + ORG B with employees, devices and mixed activities', 
       category: (i % 2 === 0 ? 'productive' : 'neutral') as 'productive' | 'neutral',
       duration: 60,
       employeeId: empManyId,
+      organizationId: orgAId,
       timestamp: new Date(Date.now() - i * 60000),
     })),
   });
@@ -228,7 +229,7 @@ test('ACT-05: Asia/Dhaka boundary — 00:30 local lands in the new local day, no
   await db.organization.update({ where: { id: orgAId }, data: { timezone: 'Asia/Dhaka' } });
   const boundary = new Date('2026-08-12T18:30:00.000Z');
   await db.activity.create({
-    data: { type: 'application', applicationName: 'boundary.exe', category: 'neutral', duration: 30, employeeId: empAId, timestamp: boundary },
+    data: { type: 'application', applicationName: 'boundary.exe', category: 'neutral', duration: 30, employeeId: empAId, organizationId: orgAId, timestamp: boundary },
   });
   try {
     const inNewDay = await getActivities(tokenA, `?employeeId=${empAId}&from=2026-08-13&to=2026-08-13`);

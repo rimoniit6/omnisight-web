@@ -43,7 +43,7 @@ let bootstrapSuperAdmin: (env?: Record<string, string | undefined>) => Promise<{
 }>;
 
 type UsersApi = typeof import('../src/app/api/auth/users/route');
-type MembersApi = typeof import('../src/app/api/organizations/[id]/members/route');
+type MembersApi = typeof import('../src/app/api/organizations/[orgId]/members/route');
 let usersApi: UsersApi;
 let membersApi: MembersApi;
 
@@ -63,7 +63,7 @@ before(async () => {
 
   [usersApi, membersApi] = await Promise.all([
     import('../src/app/api/auth/users/route'),
-    import('../src/app/api/organizations/[id]/members/route'),
+    import('../src/app/api/organizations/[orgId]/members/route'),
   ]);
 
   // Bootstrap super admin
@@ -282,7 +282,7 @@ test('SA-CM-08: User created for orgA does NOT get membership in orgB', async ()
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
-// SA-CM-09: Existing user can be added via POST /api/organizations/[id]/members
+// SA-CM-09: Existing user can be added via POST /api/organizations/[orgId]/members
 // ═══════════════════════════════════════════════════════════════════════════
 
 test('SA-CM-09: Existing user can be added to another organization', async () => {
@@ -291,7 +291,7 @@ test('SA-CM-09: Existing user can be added to another organization', async () =>
 
   const res = await membersApi.POST(
     saBoundReq('POST', { userId: existingUser!.id, role: 'viewer' }, `http://localhost:3000/api/organizations/${orgB.id}/members`),
-    { params: Promise.resolve({ id: orgB.id }) }
+    { params: Promise.resolve({ orgId: orgB.id }) }
   );
   const body = await res.json();
   assert.equal(res.status, 201, `Expected 201, got ${res.status}: ${JSON.stringify(body)}`);
@@ -332,7 +332,7 @@ test('SA-CM-11: Adding existing user to org they already belong to is idempotent
   // User already has membership in orgA (from SA-CM-01)
   const res = await membersApi.POST(
     saBoundReq('POST', { userId: existingUser!.id, role: 'manager' }, `http://localhost:3000/api/organizations/${orgA.id}/members`),
-    { params: Promise.resolve({ id: orgA.id }) }
+    { params: Promise.resolve({ orgId: orgA.id }) }
   );
   const body = await res.json();
   // Should succeed (upsert is idempotent)
@@ -474,10 +474,10 @@ test('SA-CM-17: Invalid org → transaction rolls back (no orphan user)', async 
 // SA-CM-18: User appears in members list after creation
 // ═══════════════════════════════════════════════════════════════════════════
 
-test('SA-CM-18: Newly created user appears in GET /api/organizations/[id]/members', async () => {
+test('SA-CM-18: Newly created user appears in GET /api/organizations/[orgId]/members', async () => {
   const res = await membersApi.GET(
     saBoundReq('GET', null, `http://localhost:3000/api/organizations/${orgA.id}/members`),
-    { params: Promise.resolve({ id: orgA.id }) }
+    { params: Promise.resolve({ orgId: orgA.id }) }
   );
   const body = await res.json();
   assert.equal(res.status, 200);

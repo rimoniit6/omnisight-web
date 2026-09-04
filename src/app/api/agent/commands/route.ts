@@ -8,8 +8,11 @@ import { log, requestContext } from '@/lib/logger';
 //
 // SECURITY MODEL:
 //   - The authenticated device receives ONLY its OWN commands (deviceId must
-//     equal the token's bound device) — organization/employee isolation is
-//     enforced by the device binding + the org derived from the token.
+//     equal the token's bound device) AND only commands whose
+//     organizationId matches the token's server-derived organization —
+//     organization/employee isolation is enforced by the device binding, the
+//     org derived from the token, AND a row-level org predicate (a command
+//     row mis-targeted under another organization can never be fetched).
 //   - Only ALLOWLISTED command types are ever returned (initially
 //     webcam.start / webcam.stop — nothing else is executable).
 //   - Commands must be unexpired; stale PENDING commands are transitioned to
@@ -29,11 +32,17 @@ export async function GET(req: NextRequest) {
     if (!authResult.valid || !authResult.employee) {
       return NextResponse.json({ error: authResult.error || 'Authentication failed' }, { status: 401 });
     }
-    // Commands are device-bound — an unbound agent has no commands.
+    // Commands are device-bound AND organization-bound — an unbound agent has
+    // no commands. Cross-org integrity (defense in depth): a command row is
+    // only ever returned when its organizationId matches the token's
+    // server-derived organization. A corrupted/mis-targeted command row (e.g.
+    // created against this device id under another organization) can never be
+    // fetched or executed by this agent.
     if (!authResult.deviceId) {
       return NextResponse.json({ data: [] });
     }
     const deviceId = authResult.deviceId;
+    const organizationId = authResult.employee!.organizationId;
 
     // Opportunistic cleanup: expire overdue PENDING commands.
     await db.agentCommand.updateMany({
@@ -45,6 +54,7 @@ export async function GET(req: NextRequest) {
     const candidates = await db.agentCommand.findMany({
       where: {
         deviceId,
+        organizationId,
         status: 'PENDING',
         expiresAt: { gt: new Date() },
         commandType: { in: [...AGENT_COMMAND_ALLOWLIST] },
@@ -63,6 +73,7 @@ export async function GET(req: NextRequest) {
       where: {
         id: { in: candidates.map((c) => c.id) },
         deviceId,
+        organizationId,
         status: 'PENDING',
         expiresAt: { gt: now },
         commandType: { in: [...AGENT_COMMAND_ALLOWLIST] },
@@ -78,6 +89,7 @@ export async function GET(req: NextRequest) {
       where: {
         id: { in: candidates.map((c) => c.id) },
         deviceId,
+        organizationId,
         status: 'DELIVERED',
         deliveredAt: { not: null },
       },

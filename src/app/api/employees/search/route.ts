@@ -1,4 +1,4 @@
-import { NextRequest } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { apiError, apiSuccess, requireSessionOrg, authError } from '@/lib/api';
 import { Prisma } from '@prisma/client';
@@ -48,13 +48,27 @@ export async function GET(req: NextRequest) {
 
   // Tenant isolation: org always derived from the verified session; the
   // organizationId param is honored only for org-less global super_admins
-  // (same convention as GET /api/employees).
+  // targeting MANAGED organizations (same convention as GET /api/employees).
+  // CUSTOMER_DB / PRIVATE targets are rejected (Phase 2 privacy).
   const organizationWhere: Prisma.EmployeeWhereInput = {};
   if (scope.organizationId) {
     organizationWhere.organizationId = scope.organizationId;
   } else {
     const orgParam = url.searchParams.get('organizationId');
-    if (orgParam) organizationWhere.organizationId = orgParam;
+    if (orgParam) {
+      const target = await db.organization.findUnique({
+        where: { id: orgParam },
+        select: { id: true, deploymentMode: true },
+      });
+      if (!target) return apiError('Organization not found', 400);
+      if (target.deploymentMode !== 'MANAGED') {
+        return NextResponse.json(
+          { error: 'Operational data for customer-owned organizations is not accessible from the Super Admin console', code: 'TENANT_ACCESS_DENIED_FOR_MODE' },
+          { status: 403 },
+        );
+      }
+      organizationWhere.organizationId = orgParam;
+    }
   }
 
   // Archived employees are never returned by default (same as /api/employees).

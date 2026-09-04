@@ -127,6 +127,40 @@ Update organization (status, settings). Requires `super_admin`.
 
 ---
 
+## Licensing (Self-Hosted)
+
+Only relevant when `SELF_HOSTED=true`; in cloud mode license checks are
+bypassed entirely.
+
+### GET /api/admin/licenses
+
+List license keys (newest first) with owning org + plan. Requires `super_admin`.
+Query params: `organizationId`, `planId`, `status=active|revoked|all`.
+
+### POST /api/admin/licenses/generate
+
+Body: `{ organizationId, planId, validUntil? }`. Creates a new key
+(`OMNISIGHT-XXXX-XXXX-XXXX`), sets it as the org's current license, and writes
+an audit log. Requires `super_admin`. The key string is returned **only** to
+the authenticated super admin.
+
+### PUT /api/admin/licenses/[licenseId]/revoke
+
+Body: `{ reason? }`. Revokes a key (fails validation, clears the org's
+current license pointer). Requires `super_admin`. 409 if already revoked.
+
+### POST /api/license/validate
+
+Public endpoint used by self-hosted instances at startup. Body: `{ key }`.
+Returns `{ valid, reason?, data? }`. Never echoes the key. Rate-limited per IP.
+
+### GET /api/self-hosted/license-status
+
+Returns the caller's org licensing state. Cloud: `{ mode: 'cloud', licensed:
+true }`; self-hosted: reflects `requireValidLicense`.
+
+---
+
 ## Employee Management
 
 ### GET /api/employees
@@ -696,6 +730,14 @@ Public health check endpoint. Returns server status, uptime, version, and storag
   "storage": "ok"
 }
 ```
+
+### GET /api/metrics
+
+Prometheus-compatible text metrics (process uptime, heap, active
+subscriptions, invoices by status, active/revoked licenses). Exposes **no**
+per-org/per-user data. Requires a `Authorization: Bearer <METRICS_TOKEN>`
+header; returns **404** when `METRICS_TOKEN` is not configured (secure by
+default).
 
 ---
 

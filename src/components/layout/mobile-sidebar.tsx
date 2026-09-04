@@ -4,6 +4,7 @@ import { useAppStore, useAuthStore, type PageType } from '@/lib/store';
 import { useCurrentUser } from '@/hooks/use-current-user';
 import { canAccessPage } from '@/lib/navigation';
 import { useEffectiveBranding } from '@/hooks/use-effective-branding';
+import { useRouter } from 'next/navigation';
 import {
   LayoutDashboard,
   Users,
@@ -30,6 +31,7 @@ import {
   Radio,
   Crown,
   Palette,
+  Inbox,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
@@ -40,6 +42,7 @@ interface NavItem {
   page: PageType;
   label: string;
   icon: React.ElementType;
+  href?: string;
 }
 
 interface NavGroup {
@@ -106,6 +109,8 @@ const navGroups: NavGroup[] = [
     section: 'Platform',
     items: [
       { page: 'super-admin-organizations', label: 'Super Admin', icon: Crown },
+      { page: 'payments', label: 'Payment Verification', icon: ShieldAlert, href: '/admin/payments' },
+      { page: 'leads', label: 'Sales Leads', icon: Inbox, href: '/admin/leads' },
     ],
   },
 ];
@@ -115,6 +120,7 @@ interface MobileSidebarContentProps {
 }
 
 export function MobileSidebarContent({ onNavigate }: MobileSidebarContentProps) {
+  const router = useRouter();
   const { currentPage, setCurrentPage } = useAppStore();
   const { user } = useCurrentUser();
   const authUser = useAuthStore((s) => s.user);
@@ -130,9 +136,13 @@ export function MobileSidebarContent({ onNavigate }: MobileSidebarContentProps) 
     }))
     .filter((group) => group.items.length > 0);
 
-  const handleNavClick = (page: PageType) => {
-    setCurrentPage(page);
-    onNavigate();
+  const handleNavClick = (page: PageType, href?: string) => {
+    if (href) {
+      router.push(href);
+    } else {
+      setCurrentPage(page);
+      onNavigate();
+    }
   };
 
   return (
@@ -173,7 +183,7 @@ export function MobileSidebarContent({ onNavigate }: MobileSidebarContentProps) 
                 return (
                   <button
                     key={item.page}
-                    onClick={() => handleNavClick(item.page)}
+                    onClick={() => handleNavClick(item.page, item.href)}
                     className={cn(
                       'w-full flex items-center gap-3 px-3 py-2 rounded-md text-sm font-medium transition-colors',
                       isActive

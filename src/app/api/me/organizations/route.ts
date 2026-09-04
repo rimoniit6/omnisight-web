@@ -23,20 +23,26 @@ export async function GET(req: NextRequest) {
     slug: string;
     logo: string | null;
     status: string;
+    deploymentMode: string;
     role: string;
     membershipId: string | null;
   }[];
 
   if (auth.role === 'super_admin') {
-    // Super Admin: return ALL organizations (no membership required).
+    // Phase 1 Step 8: Super Admin lists MANAGED organizations ONLY.
+    // CUSTOMER_DB / PRIVATE orgs are invisible here (control-plane metadata
+    // for those modes lives in the super-admin metadata APIs, not the
+    // switcher). Enforced server-side — never UI filtering.
     // The role shown is the Super Admin's global role, not a membership role.
     const allOrgs = await prisma.organization.findMany({
+      where: { deploymentMode: 'MANAGED' },
       select: {
         id: true,
         name: true,
         slug: true,
         logo: true,
         status: true,
+        deploymentMode: true,
       },
       orderBy: { createdAt: 'asc' },
     });
@@ -60,7 +66,8 @@ export async function GET(req: NextRequest) {
       };
     });
   } else {
-    // Normal user: only organizations where the user has ACTIVE membership.
+    // Normal user: only organizations where the user has ACTIVE membership
+    // (any deployment mode — membership is the authority for org users).
     const memberships = await prisma.organizationMembership.findMany({
       where: {
         userId: auth.userId,
@@ -74,6 +81,7 @@ export async function GET(req: NextRequest) {
             slug: true,
             logo: true,
             status: true,
+            deploymentMode: true,
           },
         },
       },
@@ -86,6 +94,7 @@ export async function GET(req: NextRequest) {
       slug: m.organization.slug,
       logo: m.organization.logo,
       status: m.organization.status,
+      deploymentMode: m.organization.deploymentMode,
       role: m.role,
       membershipId: m.id,
     }));

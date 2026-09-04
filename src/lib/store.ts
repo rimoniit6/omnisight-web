@@ -32,7 +32,10 @@ export type PageType =
   | 'users'
   | 'super-admin-organizations'
   | 'super-admin-organization-detail'
-  | 'branding';
+  | 'branding'
+  | 'billing'
+  | 'payments'
+  | 'leads';
 
 function getInitialTourState(): boolean {
   if (typeof window === 'undefined') return false;
@@ -48,6 +51,9 @@ export interface AuthUser {
   initials: string;
   avatar: string | null;
   lastLogin: string;
+  /** First-login gate: when true the user must set a new password before
+   *  accessing the rest of the application. */
+  mustChangePassword?: boolean;
 }
 
 export interface AuthOrg {

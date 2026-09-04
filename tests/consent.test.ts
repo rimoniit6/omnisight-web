@@ -502,8 +502,8 @@ test('retention: operational data purged (incl. physical screenshot file), compl
 
   await db.activity.createMany({
     data: [
-      { type: 'application', title: 'Old activity', duration: 60, employeeId: emp.id, timestamp: old },
-      { type: 'application', title: 'Recent activity', duration: 60, employeeId: emp.id, timestamp: recent },
+      { type: 'application', title: 'Old activity', duration: 60, employeeId: emp.id, organizationId: org.id, timestamp: old },
+      { type: 'application', title: 'Recent activity', duration: 60, employeeId: emp.id, organizationId: org.id, timestamp: recent },
     ],
   });
   const oldReport = await db.report.create({ data: { title: 'Old report', type: 'productivity', organizationId: org.id, createdAt: old } });
@@ -565,7 +565,7 @@ test('retention cleanup is idempotent: a second run purges nothing and anonymize
   await db.screenshot.create({
     data: { employeeId: emp.id, organizationId: org.id, filePath: '/uploads/screenshots/idem-old.png', fileName: 'idem-old.png', fileSize: 5, capturedAt: old },
   });
-  await db.activity.create({ data: { type: 'idle', duration: 10, employeeId: emp.id, timestamp: old } });
+  await db.activity.create({ data: { type: 'idle', duration: 10, employeeId: emp.id, organizationId: org.id, timestamp: old } });
 
   const first = await runRetentionForOrg(org.id, new Date());
   assert.equal(first.screenshots, 1);

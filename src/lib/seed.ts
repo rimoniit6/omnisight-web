@@ -61,6 +61,7 @@ async function seed() {
   console.log(`   Mode: Super Admin${includeDemo ? ' + Demo Data' : ' only'}`);
 
   // Clear existing data (reverse dependency order)
+  await db.invoice.deleteMany();
   await db.sentimentRecord.deleteMany();
   await db.timeEntry.deleteMany();
   await db.projectMember.deleteMany();
@@ -89,6 +90,87 @@ async function seed() {
   await db.userSession.deleteMany();
   await db.appUser.deleteMany();
   await db.organization.deleteMany();
+
+  // ==================== Default Plans ====================
+  // Field names must match prisma/schema.prisma (Plan model): name @unique,
+  // priceMonthly/priceYearly, currency, maxDevices (0 = unlimited),
+  // retentionDays (0 = unlimited), isSelfHosted, features (Json array).
+  const planDefinitions = [
+    {
+      name: 'Free',
+      description: 'Get started with basic workforce tracking',
+      priceMonthly: 0,
+      priceYearly: 0,
+      currency: 'BDT',
+      maxDevices: 5,
+      retentionDays: 90,
+      isSelfHosted: false,
+      features: ['basic_tracking', 'reports'],
+    },
+    {
+      name: 'Pro',
+      description: 'Full-featured monitoring with screenshots and reporting',
+      priceMonthly: 3400, // BDT
+      priceYearly: 34000, // BDT
+      currency: 'BDT',
+      maxDevices: 50,
+      retentionDays: 365,
+      isSelfHosted: false,
+      features: ['basic_tracking', 'screenshots', 'reports', 'export', 'break_detection'],
+    },
+    {
+      name: 'Business',
+      description: 'Advanced monitoring with app blocking and location',
+      priceMonthly: 9900, // BDT
+      priceYearly: 99000, // BDT
+      currency: 'BDT',
+      maxDevices: 500,
+      retentionDays: 365,
+      isSelfHosted: false,
+      features: ['basic_tracking', 'screenshots', 'reports', 'export', 'break_detection', 'app_blocking', 'location_tracking'],
+    },
+    {
+      name: 'Enterprise_SelfHosted',
+      description: 'Unlimited self-hosted deployment',
+      priceMonthly: 0,
+      priceYearly: 0,
+      currency: 'BDT',
+      maxDevices: -1, // unlimited
+      retentionDays: 0, // unlimited
+      isSelfHosted: true,
+      features: ['basic_tracking', 'screenshots', 'reports', 'export', 'break_detection', 'app_blocking', 'location_tracking', 'audit_logs', 'custom_retention'],
+    },
+  ];
+
+  for (const p of planDefinitions) {
+    await db.plan.upsert({
+      where: { name: p.name },
+      update: {
+        description: p.description,
+        priceMonthly: p.priceMonthly,
+        priceYearly: p.priceYearly,
+        currency: p.currency,
+        maxDevices: p.maxDevices,
+        retentionDays: p.retentionDays,
+        isSelfHosted: p.isSelfHosted,
+        features: p.features,
+        isActive: true,
+      },
+      create: {
+        name: p.name,
+        description: p.description,
+        priceMonthly: p.priceMonthly,
+        priceYearly: p.priceYearly,
+        currency: p.currency,
+        maxDevices: p.maxDevices,
+        retentionDays: p.retentionDays,
+        isSelfHosted: p.isSelfHosted,
+        features: p.features,
+        isActive: true,
+      },
+    });
+  }
+  console.log(`  📦 Plans: ${planDefinitions.length} seeded (Free, Pro, Business, Enterprise_SelfHosted)`);
 
   // ==================== Super Admin ====================
   // Use the existing bootstrap mechanism — never create a duplicate.

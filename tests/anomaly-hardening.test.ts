@@ -581,15 +581,15 @@ test('AN-71: concurrent detection cannot create duplicates (P2002 handled as dup
   for (let d = 6; d <= 11; d++) {
     const day = new Date(Date.now() - d * 24 * 3600 * 1000);
     day.setHours(10, 0, 0, 0);
-    await db.activity.create({ data: { type: 'application', category: 'productive', duration: 8 * 3600, employeeId: empA.id, timestamp: day } });
-    await db.activity.create({ data: { type: 'application', category: 'neutral', duration: 2 * 3600, employeeId: empA.id, timestamp: day } });
+    await db.activity.create({ data: { type: 'application', category: 'productive', duration: 8 * 3600, employeeId: empA.id, organizationId: orgA.id, timestamp: day } });
+    await db.activity.create({ data: { type: 'application', category: 'neutral', duration: 2 * 3600, employeeId: empA.id, organizationId: orgA.id, timestamp: day } });
   }
   // Recent (today): only ~10% productive vs baseline 80% → drop triggers.
   const today = new Date();
-  await db.activity.create({ data: { type: 'application', category: 'productive', duration: 900, employeeId: empA.id, timestamp: today } });
-  await db.activity.create({ data: { type: 'application', category: 'neutral', duration: 8 * 3600, employeeId: empA.id, timestamp: today } });
-  // Also 3h of idle today → excessive_idle triggers too.
-  await db.activity.create({ data: { type: 'idle', category: 'unproductive', duration: 3 * 3600, employeeId: empA.id, timestamp: today } });
+  await db.activity.create({ data: { type: 'application', category: 'productive', duration: 900, employeeId: empA.id, organizationId: orgA.id, timestamp: today } });
+  await db.activity.create({ data: { type: 'application', category: 'neutral', duration: 8 * 3600, employeeId: empA.id, organizationId: orgA.id, timestamp: today } });
+  // Also 3h of idle today ― excessive_idle triggers too.
+  await db.activity.create({ data: { type: 'idle', category: 'unproductive', duration: 3 * 3600, employeeId: empA.id, organizationId: orgA.id, timestamp: today } });
 
   const [r1, r2] = await Promise.all([
     anomalyDetectApi.POST(req(managerA, { method: 'POST', body: {} })),
@@ -647,7 +647,7 @@ test('AN-80: detect route with ai_anomaly_detection disabled → 403 (fail close
 });
 
 test('AN-81: detection is org-scoped — org A run never touches org B employees', async () => {
-  await db.activity.create({ data: { type: 'application', category: 'productive', duration: 60, employeeId: empB.id, timestamp: new Date() } });
+  await db.activity.create({ data: { type: 'application', category: 'productive', duration: 60, employeeId: empB.id, organizationId: orgB.id, timestamp: new Date() } });
   const managerA = await tokenFor('manager', 'u-mgr-a');
   const res = await anomalyDetectApi.POST(req(managerA, { method: 'POST', body: {} }));
   const body = (await res.json()) as { detected?: number; scannedEmployees?: number };

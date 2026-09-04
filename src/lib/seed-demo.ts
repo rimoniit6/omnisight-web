@@ -688,7 +688,7 @@ async function seedDemoFull(): Promise<SeedCounts> {
   const activityBatch: {
     type: string; title?: string; url?: string; applicationName?: string;
     category: string; duration: number; employeeId: string; deviceId?: string;
-    timestamp: Date; createdAt: Date;
+    organizationId: string; timestamp: Date; createdAt: Date;
   }[] = [];
 
   const activeEmps = allEmployeeIds.filter((_, i) => i % 20 !== 19); // exclude inactive
@@ -706,6 +706,7 @@ async function seedDemoFull(): Promise<SeedCounts> {
         type: 'application', title: app.name, applicationName: app.exe,
         category: app.cat, duration: rand(60, 3600),
         employeeId: emp.id, deviceId: dev?.id,
+        organizationId: emp.orgId,
         timestamp: ts, createdAt: ts,
       });
     } else {
@@ -714,6 +715,7 @@ async function seedDemoFull(): Promise<SeedCounts> {
         type: 'website', title: site.title, url: site.url,
         category: site.cat, duration: rand(60, 3600),
         employeeId: emp.id, deviceId: dev?.id,
+        organizationId: emp.orgId,
         timestamp: ts, createdAt: ts,
       });
     }

@@ -76,6 +76,7 @@ before(async () => {
         category,
         duration,
         employeeId: employee.id,
+        organizationId: org.id,
         timestamp: now,
       },
     });

@@ -5,7 +5,7 @@ import { checkRateLimit, RATE_LIMITS } from '@/lib/rate-limit';
 import { getClientIpFromHeaders } from '@/lib/client-ip';
 import { log, requestContext } from '@/lib/logger';
 import { createUserSession, getUserAgent } from '@/lib/session';
-import { resolveActiveMembership } from '@/lib/membership';
+import { resolveActiveMembership, restoreLastActiveOrg } from '@/lib/membership';
 
 export async function POST(req: NextRequest) {
   try {
@@ -87,7 +87,17 @@ export async function POST(req: NextRequest) {
     // OrganizationMembership layer (falls back to the deprecated
     // AppUser.organizationId for pre-migration users).
     const resolved = await resolveActiveMembership(user.id, user.organizationId);
-    const activeOrgId = resolved?.organizationId ?? user.organizationId ?? null;
+    let activeOrgId = resolved?.organizationId ?? user.organizationId ?? null;
+
+    // Membership-less super_admin (global operator): resolveActiveMembership
+    // returns null, so without this fallback EVERY login lands org-less and
+    // org-scoped surfaces (dashboard, header search, screenshots, …) come up
+    // empty until the org is re-picked in the switcher. Restore the org the
+    // operator last worked in (server-side session history, re-validated as
+    // existing + active) so login context survives re-login.
+    if (!activeOrgId && user.role === 'super_admin') {
+      activeOrgId = await restoreLastActiveOrg(user.id);
+    }
     // Super Admin keeps their platform-level role in the JWT regardless of
     // any OrganizationMembership role.  This matches /api/auth/me behavior
     // and ensures privileged routes (POST /api/organizations) that read the
@@ -189,6 +199,7 @@ export async function POST(req: NextRequest) {
         initials,
         avatar: user.avatar,
         lastLogin: new Date(),
+        mustChangePassword: user.mustChangePassword,
       },
       organization: organization
         ? {

@@ -8,7 +8,7 @@ import { log, requestContext } from '@/lib/logger';
 
 const MEMBERSHIP_STATUSES = ['ACTIVE', 'SUSPENDED'];
 
-// ─── PATCH /api/organizations/[id]/members/[memberId] ───────────────────────
+// ─── PATCH /api/organizations/[orgId]/members/[memberId] ───────────────────────
 // Change an organization-specific role, or suspend/reactivate a membership.
 // Uses DB-verified role (P2/P3 #11) for sensitive mutations.
 //
@@ -22,10 +22,10 @@ const MEMBERSHIP_STATUSES = ['ACTIVE', 'SUSPENDED'];
 //     closing the audit's stale-role window (no reliance on browser refresh).
 export async function PATCH(
   req: NextRequest,
-  { params }: { params: Promise<{ id: string; memberId: string }> }
+  { params }: { params: Promise<{ orgId: string; memberId: string }> }
 ) {
   try {
-    const { id: orgId, memberId } = await params;
+    const { orgId, memberId } = await params;
     const auth = await requireMembershipAdmin(req, orgId);
     if (!auth.ok) return apiError('Insufficient permissions', auth.status);
 
@@ -113,15 +113,15 @@ export async function PATCH(
   }
 }
 
-// ─── DELETE /api/organizations/[id]/members/[memberId] ──────────────────────
+// ─── DELETE /api/organizations/[orgId]/members/[memberId] ──────────────────────
 // Remove a user's membership from this organization. Removing Org A does not
 // affect their membership in any other organization.
 export async function DELETE(
   req: NextRequest,
-  { params }: { params: Promise<{ id: string; memberId: string }> }
+  { params }: { params: Promise<{ orgId: string; memberId: string }> }
 ) {
   try {
-    const { id: orgId, memberId } = await params;
+    const { orgId, memberId } = await params;
     const auth = await requireMembershipAdmin(req, orgId);
     if (!auth.ok) return apiError('Insufficient permissions', auth.status);
 

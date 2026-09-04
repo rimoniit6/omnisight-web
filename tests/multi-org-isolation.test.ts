@@ -106,8 +106,8 @@ before(async () => {
 
   await db.activity.createMany({
     data: [
-      { employeeId: empA.id, type: 'application', applicationName: 'App-A', category: 'productive', duration: 120, timestamp: new Date() },
-      { employeeId: empB.id, type: 'application', applicationName: 'App-B', category: 'productive', duration: 999, timestamp: new Date() },
+      { employeeId: empA.id, organizationId: orgA.id, type: 'application', applicationName: 'App-A', category: 'productive', duration: 120, timestamp: new Date() },
+      { employeeId: empB.id, organizationId: orgB.id, type: 'application', applicationName: 'App-B', category: 'productive', duration: 999, timestamp: new Date() },
     ],
   });
 
@@ -713,7 +713,7 @@ test('MO-32: ai-analysis only sees the caller org\'s activities (org A)', async 
   // Give org B a HUGE unproductive activity. If org B data leaked into org
   // A's analysis, the productive percentage would collapse below 100%.
   const leakProbe = await db.activity.create({
-    data: { employeeId: empB.id, type: 'idle', category: 'unproductive', duration: 50000, timestamp: new Date() },
+    data: { employeeId: empB.id, organizationId: orgB.id, type: 'idle', category: 'unproductive', duration: 50000, timestamp: new Date() },
   });
   try {
     const res = await api.GET(req(adminAToken, { url: 'http://localhost:3000/api/insights/ai-analysis' }));
@@ -733,7 +733,7 @@ test('MO-32: ai-analysis only sees the caller org\'s activities (org A)', async 
 test('MO-33: ai-analysis ignores client-supplied orgId (no tenant switch)', async () => {
   const api = await import('../src/app/api/insights/ai-analysis/route');
   const leakProbe = await db.activity.create({
-    data: { employeeId: empB.id, type: 'idle', category: 'unproductive', duration: 50000, timestamp: new Date() },
+    data: { employeeId: empB.id, organizationId: orgB.id, type: 'idle', category: 'unproductive', duration: 50000, timestamp: new Date() },
   });
   try {
     const res = await api.GET(req(adminAToken, { url: 'http://localhost:3000/api/insights/ai-analysis?orgId=org-b' }));

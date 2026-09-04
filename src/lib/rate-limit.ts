@@ -42,6 +42,7 @@ const SECURITY_CRITICAL_PREFIXES = [
   'device-claim:',
   'agent-account-write:',
   'ai-test-connection:',
+  'license-validate:', // self-hosted license validation — fail closed
 ];
 
 function isSecurityCritical(key: string): boolean {
@@ -103,6 +104,8 @@ export const RATE_LIMITS = {
   deviceClaimWrite: { limit: 30, windowMs: 60 * 1000 }, // approve/reject/revoke claim / IP
   orgCreate: { limit: 10, windowMs: 60 * 1000 }, // org creation / min / IP+admin (bootstrap path)
   aiTestConnection: { limit: 10, windowMs: 60 * 1000 }, // 10 / min / IP
+  licenseGenerate: { limit: 10, windowMs: 60 * 1000 }, // license key creation / IP (super admin)
+  licenseValidate: { limit: 5, windowMs: 60 * 1000 }, // 5 license validations / min / IP
 
   // ── Sensitive / expensive API classes (applied centrally in proxy.ts) ──
   exportCsv: { limit: 15, windowMs: 60 * 1000 }, // CSV/Excel export / IP

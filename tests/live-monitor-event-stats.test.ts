@@ -105,20 +105,20 @@ test('ES-00: seed ORG A + ORG B with known event counts', async () => {
   // 1 screenshot, 1 usb, 1 break activity, 1 device updated.
   const now = new Date();
   for (let i = 0; i < 3; i++) {
-    await db.activity.create({ data: { employeeId: empAId, type: 'application', title: `ES-act-${i}`, applicationName: `ES-app-${i}`, category: 'neutral', duration: 5, timestamp: now, createdAt: now } });
+    await db.activity.create({ data: { employeeId: empAId, organizationId: orgAId, type: 'application', title: `ES-act-${i}`, applicationName: `ES-app-${i}`, category: 'neutral', duration: 5, timestamp: now, createdAt: now } });
   }
-  await db.activity.create({ data: { employeeId: empAId, type: 'application', title: 'Break Mode Started', applicationName: 'WorkLensAI Agent', category: 'neutral', duration: 1, timestamp: now, createdAt: now } });
+  await db.activity.create({ data: { employeeId: empAId, organizationId: orgAId, type: 'application', title: 'Break Mode Started', applicationName: 'WorkLensAI Agent', category: 'neutral', duration: 1, timestamp: now, createdAt: now } });
   await db.notification.create({ data: { title: 'ES-notif-1', message: 'm', type: 'system', organizationId: orgAId, createdAt: now } });
   await db.notification.create({ data: { title: 'ES-notif-2', message: 'm', type: 'system', organizationId: orgAId, createdAt: now } });
   await db.screenshot.create({ data: { employeeId: empAId, filePath: 'es.png', fileName: 'es.png', fileSize: 1, organizationId: orgAId, capturedAt: now, createdAt: now } });
   await db.usbEvent.create({ data: { eventType: 'usb_insert', organizationId: orgAId, employeeId: empAId, createdAt: now } });
   await db.device.create({ data: { name: 'ES-device-A', organizationId: orgAId, employeeId: empAId, status: 'online', updatedAt: now } });
   // ORG B events: 1 activity only.
-  await db.activity.create({ data: { employeeId: empBId, type: 'application', title: 'ES-B-act', applicationName: 'B', category: 'neutral', duration: 5, timestamp: now, createdAt: now } });
+  await db.activity.create({ data: { employeeId: empBId, organizationId: orgBId, type: 'application', title: 'ES-B-act', applicationName: 'B', category: 'neutral', duration: 5, timestamp: now, createdAt: now } });
 
   // ORG A old event (10 days ago — outside 7d window).
   const old = new Date(now.getTime() - 10 * DAY_MS);
-  await db.activity.create({ data: { employeeId: empAId, type: 'application', title: 'ES-old', applicationName: 'old', category: 'neutral', duration: 5, timestamp: old, createdAt: old } });
+  await db.activity.create({ data: { employeeId: empAId, organizationId: orgAId, type: 'application', title: 'ES-old', applicationName: 'old', category: 'neutral', duration: 5, timestamp: old, createdAt: old } });
 
   // ORG A device updated 10 days ago (excluded from all windows).
   await db.device.create({ data: { name: 'ES-device-old', organizationId: orgAId, employeeId: empAId, status: 'offline', updatedAt: old } });
@@ -175,9 +175,9 @@ test('ES-06: 24h window equals today for freshly-created data', async () => {
 
 test('ES-07: >80 events are fully counted (no 80-cap)', async () => {
   const now = new Date();
-  const bulk: { employeeId: string; type: string; title: string; applicationName: string; category: string; duration: number; timestamp: Date; createdAt: Date }[] = [];
+  const bulk: { employeeId: string; organizationId: string; type: string; title: string; applicationName: string; category: string; duration: number; timestamp: Date; createdAt: Date }[] = [];
   for (let i = 0; i < 85; i++) {
-    bulk.push({ employeeId: empBId, type: 'website', title: `ES-bulk-${i}`, applicationName: null as unknown as string, category: 'neutral', duration: 1, timestamp: now, createdAt: now });
+    bulk.push({ employeeId: empBId, organizationId: orgBId, type: 'website', title: `ES-bulk-${i}`, applicationName: null as unknown as string, category: 'neutral', duration: 1, timestamp: now, createdAt: now });
   }
   await db.activity.createMany({ data: bulk as never });
   const { json } = await getStats(tokenB, 'today');

@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useRef, useCallback } from 'react';
-import { useAppStore, type PageType } from '@/lib/store';
+import { useAppStore, useAuthStore, type PageType } from '@/lib/store';
 import {
   CommandDialog,
   CommandEmpty,
@@ -119,6 +119,12 @@ export function CommandPalette() {
   }, [resetPalette, setCommandPaletteOpen]);
 
   const performSearch = useCallback(async (q: string) => {
+    // Org-less super_admin has no tenant to search — the API would return
+    // empty arrays and the palette would misleadingly say "No results found".
+    // Skip the request; the UI shows the org-selection hint instead.
+    const st = useAuthStore.getState();
+    if (st.user?.role === 'super_admin' && !st.organization) return;
+
     // Cancel previous request
     if (abortRef.current) abortRef.current.abort();
 
@@ -188,6 +194,13 @@ export function CommandPalette() {
     closePalette();
   };
 
+  const authUser = useAuthStore((s) => s.user);
+  const authOrganization = useAuthStore((s) => s.organization);
+  // A global super_admin without an active organization has no tenant data to
+  // search (every org-scoped API returns empty). Guide them to the switcher
+  // instead of the misleading "No results found".
+  const orgLessSuperAdmin = authUser?.role === 'super_admin' && !authOrganization;
+
   const hasSearchResults =
     searchResults &&
     (searchResults.employees.length > 0 ||
@@ -214,8 +227,20 @@ export function CommandPalette() {
           </div>
         )}
 
-        {!isSearching && isSearchActive && !hasSearchResults && (
+        {!isSearching && isSearchActive && !hasSearchResults && !orgLessSuperAdmin && (
           <CommandEmpty>No results found for &quot;{internalQuery}&quot;</CommandEmpty>
+        )}
+
+        {!isSearching && isSearchActive && orgLessSuperAdmin && (
+          <div className="py-6 px-4 text-center">
+            <Building2 className="mx-auto h-6 w-6 text-muted-foreground/50 mb-2" />
+            <p className="text-sm font-medium text-foreground">No organization selected</p>
+            <p className="text-xs text-muted-foreground mt-1 max-w-[280px] mx-auto leading-relaxed">
+              Search works inside one organization. Pick one from the
+              organization switcher in the top bar (next to your name), then
+              search again.
+            </p>
+          </div>
         )}
 
         {!isSearching && isSearchActive && hasSearchResults && (

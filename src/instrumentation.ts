@@ -17,6 +17,11 @@
  *     SCREENSHOT_PROCESSING_INTERVAL_SECONDS (default 60s, min 15s), bounded
  *     per run (default 100 rows), same JobRun lease so it is exclusive with
  *     every other scheduler invocation.
+ *  4. SaaS device-count sync — keeps Organization.activeDeviceCount accurate on
+ *     a ~30-minute cadence (requirement: every 30 min) instead of waiting for
+ *     the hourly maintenance pass. Dev AND production. Cadence
+ *     SYNC_DEVICE_COUNT_INTERVAL_SECONDS (default 1800s = 30min, min 300s),
+ *     same JobRun lease so it is exclusive with the hourly pass.
  */
 export async function register() {
   // Runtime boundary: Next.js compiles instrumentation.ts for BOTH the Node.js
@@ -30,10 +35,22 @@ export async function register() {
     return;
   }
 
+  // Fail fast on missing/incorrect required environment variables before any
+  // other initialisation. Throws with a clear message when misconfigured.
+  const { validateEnv } = await import('@/lib/env');
+  validateEnv();
+
+  // Self-hosted startup license check (cloud mode is a no-op). When
+  // SELF_HOSTED_REQUIRE_LICENSE=true and the configured key is invalid, this
+  // throws and the server refuses to start.
+  const { verifySelfHostedLicenseAtStartup } = await import('@/lib/licenses');
+  await verifySelfHostedLicenseAtStartup();
+
   const g = globalThis as unknown as {
     __jobsSchedulerStarted?: boolean;
     __projectTimeLoopStarted?: boolean;
     __screenshotProcessingLoopStarted?: boolean;
+    __syncDeviceCountLoopStarted?: boolean;
   };
 
   // 1. Hourly maintenance scheduler (production only — matches prior behavior).
@@ -91,5 +108,27 @@ export async function register() {
     setInterval(tick, safeInterval * 1000);
 
     console.log(`[jobs] screenshot processing loop started (interval ${safeInterval}s)`);
+  }
+
+  // 4. SaaS device-count sync loop — dev AND production, ~30-minute cadence.
+  //    Shares the 'sync_device_count' JobRun lease with the hourly pass, so it
+  //    never double-runs.
+  if (!g.__syncDeviceCountLoopStarted) {
+    g.__syncDeviceCountLoopStarted = true;
+
+    const { runSyncDeviceCountsJob } = await import('@/lib/jobs/run');
+
+    const intervalSec = parseInt(process.env.SYNC_DEVICE_COUNT_INTERVAL_SECONDS || '1800', 10);
+    const safeInterval = Number.isFinite(intervalSec) && intervalSec >= 300 ? intervalSec : 1800;
+
+    const tick = () => {
+      runSyncDeviceCountsJob().catch((error) =>
+        console.error('[jobs] device-count sync run failed:', error)
+      );
+    };
+    await tick();
+    setInterval(tick, safeInterval * 1000);
+
+    console.log(`[jobs] device-count sync loop started (interval ${safeInterval}s)`);
   }
 }

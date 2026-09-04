@@ -96,7 +96,10 @@ test('RW-2: an INSERT on a broadcast table fires pg_notify on the channel', asyn
     });
     db.activity
       .create({
-        data: { employeeId: emp.id, type: 'application', title: 'wake-test', applicationName: 'wake', category: 'neutral', duration: 1, timestamp: new Date(), createdAt: new Date() },
+        // organizationId is the mandatory direct tenant-ownership column added
+        // by Phase 1 Step 10 — an insert without it violates NOT NULL and the
+        // notify never fires.
+        data: { employeeId: emp.id, organizationId: org.id, type: 'application', title: 'wake-test', applicationName: 'wake', category: 'neutral', duration: 1, timestamp: new Date(), createdAt: new Date() },
       })
       .catch((e) => {
         insertError = String((e as Error)?.message ?? e);

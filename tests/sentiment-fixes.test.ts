@@ -108,8 +108,8 @@ before(async () => {
   const now = new Date();
   await db.activity.createMany({
     data: [
-      { employeeId: empA1.id, type: 'application', applicationName: 'App', category: 'productive', duration: 3600, timestamp: new Date(now.getTime() - 86400000) },
-      { employeeId: empA1.id, type: 'application', applicationName: 'App', category: 'productive', duration: 7200, timestamp: new Date(now.getTime() - 172800000) },
+      { employeeId: empA1.id, organizationId: orgA.id, type: 'application', applicationName: 'App', category: 'productive', duration: 3600, timestamp: new Date(now.getTime() - 86400000) },
+      { employeeId: empA1.id, organizationId: orgA.id, type: 'application', applicationName: 'App', category: 'productive', duration: 7200, timestamp: new Date(now.getTime() - 172800000) },
     ],
   });
 

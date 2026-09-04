@@ -590,7 +590,7 @@ test('H-22: self/telemetry-summary returns real aggregates when consent+config e
     data: { employeeId: emp.id, organizationId: org.id, intervalStart: new Date(now.getTime() - 3600_000), intervalEnd: now, keystrokeCount: 210, activeTypingSeconds: 90, application: 'code.exe' },
   });
   await db.activity.create({
-    data: { employeeId: emp.id, type: 'website', url: 'github.com', title: 'GitHub', category: 'productive', duration: 600, timestamp: now },
+    data: { employeeId: emp.id, organizationId: org.id, type: 'website', url: 'github.com', title: 'GitHub', category: 'productive', duration: 600, timestamp: now },
   });
   await db.locationEvent.create({
     data: { employeeId: emp.id, organizationId: org.id, latitude: 23.8103, longitude: 90.4125, accuracy: 25, recordedAt: now },

@@ -169,11 +169,14 @@ async function seedProject(orgId: string, name: string, extra: Record<string, un
 }
 
 async function seedActivity(employeeId: string, duration: number, createdAt: Date, type = 'application') {
+  // Phase 1: Activity requires direct organizationId — resolve from the employee (same rule as the DB backfill).
+  const emp = await db.employee.findUniqueOrThrow({ where: { id: employeeId }, select: { organizationId: true } });
   return db.activity.create({
     data: {
       type,
       duration,
       employeeId,
+      organizationId: emp.organizationId,
       timestamp: createdAt,
       createdAt,
       category: type === 'idle' ? 'idle' : 'neutral',

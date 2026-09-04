@@ -25,12 +25,20 @@ export async function POST(request: NextRequest) {
     if (!hasRole(auth.role, 'manager')) return authError({ ok: false, status: 403 });
 
     // Tenant isolation: the project must belong to the caller's org.
+    // Org-less super_admin must switch to a MANAGED organization first —
+    // a projectId alone never grants cross-customer access (Phase 2 privacy).
     const scope = await requireSessionOrg(request, { allowGlobal: true });
     if (!scope.ok) return authError(scope);
+    if (!scope.organizationId) {
+      return NextResponse.json(
+        { error: 'Tenant context required. Switch to a managed organization first.', code: 'TENANT_CONTEXT_REQUIRED' },
+        { status: 403 },
+      );
+    }
 
     // Fetch project with department, scoped to the session org (cross-org 404).
     const project = await db.project.findFirst({
-      where: { id: projectId, ...(scope.organizationId ? { organizationId: scope.organizationId } : {}) },
+      where: { id: projectId, organizationId: scope.organizationId },
       include: { department: true },
     });
 
@@ -45,13 +53,13 @@ export async function POST(request: NextRequest) {
     // rendered into the PDF — never load the full row (it carries
     // agentPassword).
     const members = await db.projectMember.findMany({
-      where: { projectId, ...(scope.organizationId ? { organizationId: scope.organizationId } : {}) },
+      where: { projectId, organizationId: scope.organizationId },
       include: { employee: { select: { id: true, firstName: true, lastName: true } } },
     });
 
     // Fetch time entries for the project (same org boundary).
     const timeEntries = await db.timeEntry.findMany({
-      where: { projectId, ...(scope.organizationId ? { organizationId: scope.organizationId } : {}) },
+      where: { projectId, organizationId: scope.organizationId },
       include: { employee: { select: { id: true, firstName: true, lastName: true } } },
       orderBy: { date: 'desc' },
       take: 200,

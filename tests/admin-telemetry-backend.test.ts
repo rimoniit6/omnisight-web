@@ -150,6 +150,7 @@ async function seedTelemetry(employeeId: string, orgId: string) {
     data: [
       {
         employeeId,
+        organizationId: orgId,
         type: 'website',
         url: 'github.com',
         title: 'GitHub',
@@ -159,6 +160,7 @@ async function seedTelemetry(employeeId: string, orgId: string) {
       },
       {
         employeeId,
+        organizationId: orgId,
         type: 'website',
         url: 'https://www.youtube.com/watch?v=abc',
         title: 'YouTube',
