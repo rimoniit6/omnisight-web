@@ -457,7 +457,7 @@ test('B-08: a disabled AgentAccount fails closed with 403, never 409', async () 
 
 // ─── B-09: inactive org/employee/device fail closed ─────────────────────────
 
-test('B-09: inactive employee, suspended org and inactive device never produce a false 409', async () => {
+test('B-09: inactive employee, paused org and inactive device never produce a false 409', async () => {
   // Inactive employee.
   const empI = await seedEmployee(org.id, 'B09I-EMP', { status: 'inactive' });
   await createAgentAccount({ employeeId: empI.id, agentId: 'B09I-EMP', password: PASSWORD, status: 'active' });
@@ -470,7 +470,7 @@ test('B-09: inactive employee, suspended org and inactive device never produce a
   const empO = await seedEmployee(org.id, 'B09O-EMP');
   await createAgentAccount({ employeeId: empO.id, agentId: 'B09O-EMP', password: PASSWORD, status: 'active' });
   const bO = await seedEligibleDeviceDirect(org.id, empO.id, 'key-b09o-device-b-0123456789', '203.0.113.902');
-  await db.organization.update({ where: { id: org.id }, data: { status: 'suspended' } });
+  await db.organization.update({ where: { id: org.id }, data: { status: 'paused' } });
   try {
     const rO = await doAuthenticate(authBody(bO.deviceId, bO.secret), '203.0.113.902');
     assert.equal(rO.status, 403, JSON.stringify(rO.body));

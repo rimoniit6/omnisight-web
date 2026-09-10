@@ -125,6 +125,131 @@ export async function checkDeviceLimit(
 }
 
 /**
+ * The subscription states that grant the Agent operational access.
+ * PAUSED and EXPIRED/CANCELLED do NOT grant access — the Agent must
+ * stop collecting telemetry when the subscription is not active.
+ */
+const AGENT_ENTITLEMENT_STATUSES = ['ACTIVE'] as const;
+
+/**
+ * Subscription entitlement result for Agent authorization.
+ * Used by validateAgentToken() and the Agent config endpoint to make a
+ * single authoritative decision about whether the Agent may operate.
+ */
+export interface AgentEntitlement {
+  /** Whether the Agent is authorized to operate (collect telemetry). */
+  allowed: boolean;
+  /** The current subscription status (null = no subscription). */
+  subscriptionStatus: string | null;
+  /** The plan name (null = no subscription). */
+  planName: string | null;
+  /** Human-readable reason when not allowed. */
+  reason?: string;
+}
+
+/**
+ * Centralized server-authoritative Agent entitlement check.
+ *
+ * The Agent must NEVER become the authority for subscription validity.
+ * This function is the SINGLE source of truth for whether an Agent
+ * attached to the given organization may continue operating.
+ *
+ * Resolution order (PRD §46):
+ *   Authentication → Role → Organization → Organization Status →
+ *   Subscription Status → Package Entitlement → Service Model
+ *
+ * This function covers Subscription Status and Package Entitlement.
+ * Organization status is checked separately in validateAgentToken().
+ *
+ * Trial organizations (trialEndsAt > now) are treated as having full
+ * access — same as the existing hasFeature() behavior.
+ */
+export async function checkAgentEntitlement(
+  organizationId: string,
+): Promise<AgentEntitlement> {
+  // 1. Check trial — trial orgs have full access.
+  const org = await db.organization.findUnique({
+    where: { id: organizationId },
+    select: { trialEndsAt: true },
+  });
+  if (org && hasValidTrial(org)) {
+    return { allowed: true, subscriptionStatus: 'TRIAL', planName: 'Trial' };
+  }
+
+  // 2. Find the subscription (most recent, any status).
+  const sub = await db.subscription.findFirst({
+    where: { organizationId },
+    include: { plan: true },
+    orderBy: { createdAt: 'desc' },
+  });
+
+  if (!sub) {
+    return {
+      allowed: false,
+      subscriptionStatus: null,
+      planName: null,
+      reason: 'No subscription found',
+    };
+  }
+
+  // 3. Check subscription status.
+  const now = new Date();
+  const endDateValid = !sub.endDate || sub.endDate > now;
+
+  if (sub.status === 'ACTIVE' && endDateValid) {
+    return {
+      allowed: true,
+      subscriptionStatus: 'ACTIVE',
+      planName: sub.plan.name,
+    };
+  }
+
+  if (sub.status === 'PAUSED') {
+    return {
+      allowed: false,
+      subscriptionStatus: 'PAUSED',
+      planName: sub.plan.name,
+      reason: 'Subscription is paused',
+    };
+  }
+
+  if (sub.status === 'EXPIRED' || (sub.status === 'ACTIVE' && !endDateValid)) {
+    return {
+      allowed: false,
+      subscriptionStatus: 'EXPIRED',
+      planName: sub.plan.name,
+      reason: 'Subscription has expired',
+    };
+  }
+
+  if (sub.status === 'CANCELLED') {
+    return {
+      allowed: false,
+      subscriptionStatus: 'CANCELLED',
+      planName: sub.plan.name,
+      reason: 'Subscription has been cancelled',
+    };
+  }
+
+  if (sub.status === 'PENDING') {
+    return {
+      allowed: false,
+      subscriptionStatus: 'PENDING',
+      planName: sub.plan.name,
+      reason: 'Subscription is pending payment verification',
+    };
+  }
+
+  // Unknown status — fail closed.
+  return {
+    allowed: false,
+    subscriptionStatus: sub.status,
+    planName: sub.plan.name,
+    reason: `Unknown subscription status: ${sub.status}`,
+  };
+}
+
+/**
  * Determine whether an organization has a valid subscription or trial.
  * Returns an object indicating the access state and any trial metadata.
  */

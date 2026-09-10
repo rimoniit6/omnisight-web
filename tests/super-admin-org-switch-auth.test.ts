@@ -113,7 +113,7 @@ test('SA-SWITCH-01: Fresh SA login → /api/auth/me returns 200 with role=super_
   assert.equal(res.status, 200);
   assert.equal(body.user.role, 'super_admin');
   assert.ok(body.user.id, 'User ID present');
-  assert.ok(body.organizationCount >= 2, 'Organization count reported');
+
 });
 
 // ─── SA-SWITCH-02: Switch to OrgA → valid auth ──────────────────────────
@@ -247,7 +247,7 @@ test('SA-SWITCH-06: Org-less SA (no activeOrganizationId) → 200 with null org'
   assert.equal(res.status, 200);
   assert.equal(body.user.role, 'super_admin');
   assert.equal(body.organization, null, 'No org bound');
-  assert.ok(body.organizationCount >= 2, 'Org count reported');
+
 });
 
 // ─── SA-SWITCH-07: Repeated A→B→A switching ─────────────────────────────

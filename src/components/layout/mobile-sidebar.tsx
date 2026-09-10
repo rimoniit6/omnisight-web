@@ -2,118 +2,15 @@
 
 import { useAppStore, useAuthStore, type PageType } from '@/lib/store';
 import { useCurrentUser } from '@/hooks/use-current-user';
-import { canAccessPage } from '@/lib/navigation';
+import { visibleGroupsFor } from '@/lib/sidebar-nav';
 import { useEffectiveBranding } from '@/hooks/use-effective-branding';
 import { useRouter } from 'next/navigation';
-import {
-  LayoutDashboard,
-  Users,
-  Building2,
-  Monitor,
-  Activity,
-  Camera,
-  BarChart3,
-  Brain,
-  Bot,
-  Bell,
-  AlertTriangle,
-  FileText,
-  Settings,
-  ScrollText,
-  Pause,
-  FileBarChart,
-  ShieldAlert,
-  ShieldCheck,
-  FileCheck,
-  UserCircle,
-  FolderKanban,
-  HeartPulse,
-  Radio,
-  Crown,
-  Palette,
-  Inbox,
-} from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import Image from 'next/image';
 import { SheetTitle } from '@/components/ui/sheet';
 
-interface NavItem {
-  page: PageType;
-  label: string;
-  icon: React.ElementType;
-  href?: string;
-}
 
-interface NavGroup {
-  section: string;
-  items: NavItem[];
-}
-
-const navGroups: NavGroup[] = [
-  {
-    section: 'Overview',
-    items: [
-      { page: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
-      { page: 'employees', label: 'Employees', icon: Users },
-      { page: 'departments', label: 'Departments', icon: Building2 },
-      { page: 'devices', label: 'Devices', icon: Monitor },
-      { page: 'activities', label: 'Activities', icon: Activity },
-      { page: 'screenshots', label: 'Screenshots', icon: Camera },
-      { page: 'break-status', label: 'Break Monitor', icon: Pause },
-      { page: 'live-monitor', label: 'Live Monitor', icon: Radio },
-      { page: 'analytics', label: 'Analytics', icon: BarChart3 },
-    ],
-  },
-  {
-    section: 'Intelligence',
-    items: [
-      { page: 'insights', label: 'AI Insights', icon: Brain },
-      { page: 'sentiment', label: 'Sentiment', icon: HeartPulse },
-      { page: 'ai-provider', label: 'AI Provider', icon: Bot },
-    ],
-  },
-  {
-    section: 'Security',
-    items: [
-      { page: 'agent-approvals', label: 'Agent Approvals', icon: ShieldCheck },
-      { page: 'notifications', label: 'Notifications', icon: Bell },
-      { page: 'alerts', label: 'Alerts', icon: AlertTriangle },
-      { page: 'audit', label: 'Audit Logs', icon: ScrollText },
-      { page: 'security', label: 'Agent Security', icon: ShieldAlert },
-      { page: 'policies', label: 'Policies', icon: ShieldCheck },
-      { page: 'anomalies', label: 'Anomaly Detection', icon: Brain },
-      { page: 'consent', label: 'Consent', icon: FileCheck },
-    ],
-  },
-  {
-    section: 'Work Management',
-    items: [{ page: 'projects', label: 'Projects', icon: FolderKanban }],
-  },
-  {
-    section: 'Employee',
-    items: [{ page: 'self-portal', label: 'Employee Portal', icon: UserCircle }],
-  },
-  {
-    section: 'Admin',
-    items: [
-      { page: 'organization', label: 'Organization', icon: Building2 },
-      { page: 'users', label: 'Users & Members', icon: Users },
-      { page: 'reports', label: 'Reports', icon: FileText },
-      { page: 'daily-report', label: 'Daily Report', icon: FileBarChart },
-      { page: 'settings', label: 'Settings', icon: Settings },
-      { page: 'branding', label: 'Branding', icon: Palette },
-    ],
-  },
-  {
-    section: 'Platform',
-    items: [
-      { page: 'super-admin-organizations', label: 'Super Admin', icon: Crown },
-      { page: 'payments', label: 'Payment Verification', icon: ShieldAlert, href: '/admin/payments' },
-      { page: 'leads', label: 'Sales Leads', icon: Inbox, href: '/admin/leads' },
-    ],
-  },
-];
 
 interface MobileSidebarContentProps {
   onNavigate: () => void;
@@ -124,17 +21,14 @@ export function MobileSidebarContent({ onNavigate }: MobileSidebarContentProps) 
   const { currentPage, setCurrentPage } = useAppStore();
   const { user } = useCurrentUser();
   const authUser = useAuthStore((s) => s.user);
+  const organization = useAuthStore((s) => s.organization);
   const displayUser = user || authUser;
   const branding = useEffectiveBranding();
 
   // S-2: role-aware navigation (mirrors the desktop sidebar).
+  // Platform rule: an org-less super_admin sees ONLY the Control Center.
   const role = displayUser?.role ?? null;
-  const visibleGroups = navGroups
-    .map((group) => ({
-      ...group,
-      items: group.items.filter((item) => canAccessPage(role, item.page)),
-    }))
-    .filter((group) => group.items.length > 0);
+  const visibleGroups = visibleGroupsFor(role, Boolean(organization));
 
   const handleNavClick = (page: PageType, href?: string) => {
     if (href) {
@@ -170,8 +64,7 @@ export function MobileSidebarContent({ onNavigate }: MobileSidebarContentProps) 
 
       {/* Navigation */}
       <nav className="flex-1 overflow-y-auto py-3 px-2">
-        {visibleGroups.map((group, gi) => (
-          <div key={group.section}>
+        {visibleGroups.map((group, gi) => (            <div key={group.id}>
             {gi > 0 && <div className="my-2 mx-3 h-px bg-border" />}
             <p className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground/60 px-3 mb-1.5">
               {group.section}

@@ -28,6 +28,7 @@ enum BillingPeriod {
 enum SubscriptionStatus {
   PENDING   // Payment pending verification
   ACTIVE    // Fully active
+  PAUSED    // Temporarily paused by Super Admin
   EXPIRED   // Passed endDate
   CANCELLED // Manually cancelled by admin/user
 }
@@ -50,8 +51,7 @@ enum InvoiceStatus {
 //   access the organization's operational dashboard.
 // - CUSTOMER_DB: OmniSight owns app + API; customer owns primary database
 //   (+ optionally storage). Super Admin sees control-plane metadata only.
-// - PRIVATE: customer owns app + API + database + storage (+ optional custom
-//   domain). Super Admin sees control-plane metadata only.
+// - PRIVATE: Deprecated in V1.
 enum DeploymentMode {
   MANAGED
   CUSTOMER_DB
@@ -150,6 +150,8 @@ model Subscription {
   @@index([organizationId])
   @@index([planId])
   @@index([status])
+  // P5: getActiveSubscription() hot path (org + ACTIVE + newest)
+  @@index([organizationId, status, createdAt])
 }
 
 // ==================== Invoice ====================
@@ -177,6 +179,9 @@ model Invoice {
   @@index([organizationId])
   @@index([subscriptionId])
   @@index([status])
+  // P5: admin list ?status (global) and ?status + ?organizationId views, newest first
+  @@index([status, createdAt])
+  @@index([organizationId, status, createdAt])
 }
 
 // ==================== Organization ====================
@@ -192,7 +197,7 @@ model Organization {
   language  String   @default("en")
   currency  String   @default("USD")
   address   String?
-  status    String   @default("active") // active, suspended, archived
+  status    String   @default("active") // active, paused, archived
   // NOTE: seat-limit fields (maxSeats/currentSeats) were REMOVED by migration
   // 20260810130000_remove_seat_limit — employee capacity is unlimited.
   // --- SaaS fields ---
@@ -240,6 +245,8 @@ model Organization {
   consentPolicies           ConsentPolicy[]
   organizationSettings      OrganizationSetting[]
   customSettings            OrganizationSettings?
+  infrastructureChangeRequests InfrastructureChangeRequest[]
+  infraMigrations              InfrastructureMigration[]
   projects                  Project[]
   projectMembers            ProjectMember[]
   timeEntries               TimeEntry[]
@@ -625,12 +632,167 @@ model OrganizationSettings {
   dbTestedAt   DateTime?
   dbTestStatus String? // "success", "failed"
 
+  // Org-scoped storage (optional; independent of the platform storage pool).
+  // "local" = platform-managed (current default); "supabase" = dedicated
+  // customer bucket. storageKey is encrypted via encryptSecret() and is never
+  // returned in plaintext by any API.
+  storageDriver String? // "local", "supabase"
+  storageUrl    String? // Supabase project REST/storage URL (never a secret)
+  storageKey     String? // encrypted via encryptSecret()
+  storageTestedAt   DateTime?
+  storageTestStatus String? // "success", "failed"
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@index([organizationId])
 }
 
+// ==================== InfrastructureChangeRequest (Part 18 state machine) ====================
+// Org Admins NEVER write the active analytics DB / storage configuration
+// directly. Every change flows through this approval workflow:
+//
+//   draft -> submitted -> approved -> applied -> active
+//     \-> cancelled      \-> rejected      (switch applied)
+//
+// A newer request for the same (organizationId, kind) supersedes the older one
+// the moment it is submitted (older open requests become "superseded"). One
+// open (draft/submitted/approved-pending-migration) request per kind per org.
+//
+// Secrets are stored ENCRYPTED via src/lib/crypto.ts (AES-256-GCM,
+// ENCRYPTION_KEY) in dbPasswordEncrypted / storageKeyEncrypted. They are never
+// returned in plaintext, never logged, and masked (last-4) in every API view.
+//
+// The config snapshot on the request is IMMUTABLE after submission; edits to a
+// submitted request are rejected with 409 (submit a new request instead).
+
+model InfrastructureChangeRequest {
+  id             String   @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  kind           String // "DATABASE" | "STORAGE"
+  requestNo      Int // 1-based, monotonic per (organizationId, kind)
+  status         String @default("draft") // draft|submitted|approved|applied|active|rejected|cancelled|superseded
+
+  // Non-secret config snapshot (JSON string). Contains host/port/name/user/ssl
+  // for DATABASE and driver/url/bucket for STORAGE — NEVER the secret itself.
+  configJson String
+
+  // Secrets — encrypted at rest (encryptSecret()), never returned in plaintext.
+  dbPasswordEncrypted  String?
+  storageKeyEncrypted  String?
+
+  // Connection test result for the PROPOSED config.
+  lastTestStatus  String? // "success", "failed", "not-run"
+  lastTestMessage String?
+  lastTestedAt    DateTime?
+
+  // Requestor + approval trail (email snapshots kept so audit history survives
+  // user deletion; these are NOT foreign keys.)
+  requestedById    String
+  requestedByEmail String
+  requestedAt      DateTime @default(now())
+
+  approvedById    String?
+  approvedByEmail String?
+  approvedAt      DateTime?
+  approvalNote    String?
+
+  rejectedById    String?
+  rejectedByEmail String?
+  rejectedAt      DateTime?
+  rejectionReason String?
+
+  cancelledById    String?
+  cancelledByEmail String?
+  cancelledAt      DateTime?
+  cancellationReason String?
+
+  supersededByRequestNo Int? // requestNo of the newer request that replaced this one
+  supersededAt          DateTime?
+
+  // Migration/switch bookkeeping. "applied" = validated + staged on the target,
+  // "active" = the live settings row now points at this config.
+  migratedAt   DateTime?
+  appliedAt    DateTime?
+  activatedAt  DateTime?
+  errorMessage String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  migration InfrastructureMigration?
+
+  @@unique([organizationId, kind, requestNo])
+  @@index([organizationId, kind, status])
+  @@index([status])
+  @@index([createdAt])
+}
+
+
+// ==================== Infrastructure Data Migration ====================
+// Organization-scoped copy of the FULL org-owned analytics data from the
+// platform database/storage to the APPROVED dedicated destination — the step
+// between Super Admin approval and activation. A successful connection test or
+// approval NEVER migrates data; only this entity's state machine does:
+//   QUEUED -> MIGRATING -> VERIFYING -> READY_TO_ACTIVATE -> CUTOVER -> ACTIVATED
+//   QUEUED -> CANCELLED (request rejected/cancelled before starting)
+//   MIGRATING|VERIFYING|CUTOVER -> FAILED (destination unchanged; retryable)
+// Strictly org-scoped: every copied row carries the request's organizationId;
+// platform/shared tables are never copied (see src/lib/migration/plan.ts).
+//
+// FULL-ORGANIZATION CUTOVER semantics:
+//   • ready_to_activate is only reached after a verified, loss-free snapshot
+//     copy (destination holds every org row that existed at the verification
+//     boundary). Data that keeps arriving while the transfer runs is captured
+//     deterministically at activation: the CUTOVER phase flips runtime routing
+//     atomically with recording `cutoverAt`, then DRAINS every row that reached
+//     the platform source before the flip into the destination and re-verifies.
+//     Nothing written by the organization before the cutover boundary is lost.
+//   • `transferStartedAt` is intentionally NOT a separate column: `startedAt`
+//     is the server-side (database-clock, never browser-clock) time the transfer
+//     began. `cutoverAt` is the deterministic cutover boundary (sets once, at
+//     the atomic routing flip). `activatedAt` is when the switch fully lands.
+model InfrastructureMigration {
+  id             String   @id @default(cuid())
+  requestId      String   @unique // one migration per InfrastructureChangeRequest
+  request        InfrastructureChangeRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  kind           String // "DATABASE" | "STORAGE" (mirrors the request kind)
+
+  // queued|migrating|verifying|ready_to_activate|cutover|activated|failed|cancelled
+  status         String   @default("queued")
+
+  // REAL progress — incremented from actual copied work, never simulated.
+  recordsTotal   Int      @default(0)
+  recordsDone    Int      @default(0)
+  objectsTotal   Int      @default(0)
+  objectsDone    Int      @default(0)
+  bytesTotal     BigInt   @default(0)
+  bytesDone      BigInt   @default(0)
+  // Per-table/object progress snapshot, e.g. {"Employee":{"done":120,"total":120},...}
+  tableProgress  String?
+
+  currentTable   String?
+  verifiedCount  Int? // destination rows/objects counted during verification
+  errorStage     String? // migrate|verify|storage
+  errorMessage   String? // sanitized, user-safe (never credentials)
+  startedAt      DateTime?
+  verifiedAt     DateTime?
+  // Deterministic cutover boundary: the database-server timestamp at which the
+  // runtime routing flipped to the destination AND the drain of any in-flight
+  // platform rows began. Every org-owned row written before this boundary is
+  // drained to the destination; every row written after lands directly there.
+  cutoverAt      DateTime?
+  activatedAt    DateTime?
+  finishedAt     DateTime?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@index([organizationId, status])
+  @@index([status, createdAt])
+}
 
 // ==================== Work Day Summary (Phase 4 aggregation) ================
 // Daily derived rollup of one employee's org-local workday. One row per
@@ -980,6 +1142,10 @@ model AuditLog {
 
   @@index([organizationId])
   @@index([organizationId, createdAt])
+  // P5: global SA audit browse (no org filter) orders by createdAt DESC
+  @@index([createdAt])
+  // P5: SA audit action-filtered browse
+  @@index([action, createdAt])
 }
 
 // ==================== Report ====================
@@ -1863,4 +2029,17 @@ model OrganizationBranding {
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
 
   @@index([organizationId])
+}
+
+// ==================== Landing Page Content ====================
+// Super Admin-managed copy for the public marketing landing page. Single row
+// (key 'site') holding a validated JSON document of string overrides; the
+// landing page merges them over its built-in defaults. Public reads via
+// GET /api/landing; writes are super_admin-only (PUT /api/landing).
+model LandingContent {
+  key       String   @id // 'site' (single document today)
+  value     Json
+  updatedBy String? // userId of the super_admin who last saved
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }

@@ -5,40 +5,9 @@ import { useRouter } from 'next/navigation';
 import { useQuery } from '@tanstack/react-query';
 import { useAppStore, type PageType, useAuthStore } from '@/lib/store';
 import { useCurrentUser } from '@/hooks/use-current-user';
-import { canAccessPage } from '@/lib/navigation';
 import { useEffectiveBranding } from '@/hooks/use-effective-branding';
-import {
-  LayoutDashboard,
-  Users,
-  Building2,
-  Monitor,
-  Activity,
-  Camera,
-  BarChart3,
-  Brain,
-  Bot,
-  Bell,
-  AlertTriangle,
-  FileText,
-  Settings,
-  ScrollText,
-  ShieldCheck,
-  ChevronLeft,
-  ChevronRight,
-  Pause,
-  FileBarChart,
-  ShieldAlert,
-  Radio,
-  FileCheck,
-  UserCircle,
-  FolderKanban,
-  HeartPulse,
-  Mic,
-  Crown,
-  Palette,
-  CreditCard,
-  Inbox,
-} from 'lucide-react';
+import { ChevronLeft, ChevronRight } from 'lucide-react';
+import { visibleGroupsFor } from '@/lib/sidebar-nav';
 import { cn } from '@/lib/utils';
 import {
   Tooltip,
@@ -50,85 +19,7 @@ import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { Separator } from '@/components/ui/separator';
 import Image from 'next/image';
 
-interface NavItem {
-  page: PageType;
-  label: string;
-  icon: React.ElementType;
-  showBadge?: boolean;
-  href?: string;
-}
 
-interface NavGroup {
-  section: string;
-  items: NavItem[];
-}
-
-const navGroups: NavGroup[] = [
-  {
-    section: 'Overview',
-    items: [
-      { page: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
-      { page: 'employees', label: 'Employees', icon: Users },
-      { page: 'departments', label: 'Departments', icon: Building2 },
-      { page: 'devices', label: 'Devices', icon: Monitor },
-      { page: 'activities', label: 'Activities', icon: Activity },
-      { page: 'screenshots', label: 'Screenshots', icon: Camera },
-      { page: 'audio', label: 'Audio Transcriptions', icon: Mic },
-      { page: 'break-status', label: 'Break Monitor', icon: Pause },
-      { page: 'live-monitor', label: 'Live Monitor', icon: Radio },
-      { page: 'analytics', label: 'Analytics', icon: BarChart3 },
-    ],
-  },
-  {
-    section: 'Intelligence',
-    items: [
-      { page: 'insights', label: 'AI Insights', icon: Brain },
-      { page: 'sentiment', label: 'Sentiment', icon: HeartPulse },
-      { page: 'ai-provider', label: 'AI Provider', icon: Bot },
-    ],
-  },
-  {
-    section: 'Security',
-    items: [
-      { page: 'agent-approvals', label: 'Agent Approvals', icon: ShieldCheck, showBadge: true },
-      { page: 'notifications', label: 'Notifications', icon: Bell, showBadge: true },
-      { page: 'alerts', label: 'Alerts', icon: AlertTriangle },
-      { page: 'audit', label: 'Audit Logs', icon: ScrollText },
-      { page: 'security', label: 'Agent Security', icon: ShieldAlert },
-      { page: 'policies', label: 'Policies', icon: ShieldCheck },
-      { page: 'anomalies', label: 'Anomaly Detection', icon: Brain },
-      { page: 'consent', label: 'Consent', icon: FileCheck },
-    ],
-  },
-  {
-    section: 'Work Management',
-    items: [{ page: 'projects', label: 'Projects', icon: FolderKanban }],
-  },
-  {
-    section: 'Employee',
-    items: [{ page: 'self-portal', label: 'Employee Portal', icon: UserCircle }],
-  },
-  {
-    section: 'Admin',
-    items: [
-      { page: 'organization', label: 'Organization', icon: Building2 },
-      { page: 'users', label: 'Users & Members', icon: Users },
-      { page: 'reports', label: 'Reports', icon: FileText },
-      { page: 'daily-report', label: 'Daily Report', icon: FileBarChart },
-      { page: 'billing', label: 'Billing & Subscription', icon: CreditCard, href: '/dashboard/billing' },
-      { page: 'settings', label: 'Settings', icon: Settings },
-      { page: 'branding', label: 'Branding', icon: Palette },
-    ],
-  },
-  {
-    section: 'Platform',
-    items: [
-      { page: 'super-admin-organizations', label: 'Super Admin', icon: Crown },
-      { page: 'payments', label: 'Payment Verification', icon: ShieldAlert, href: '/admin/payments' },
-      { page: 'leads', label: 'Sales Leads', icon: Inbox, href: '/admin/leads' },
-    ],
-  },
-];
 
 interface AppSidebarProps {
   onNavigate?: () => void;
@@ -139,19 +30,17 @@ export function AppSidebar({ onNavigate }: AppSidebarProps) {
   const router = useRouter();
   const { user } = useCurrentUser();
   const authUser = useAuthStore((s) => s.user);
+  const organization = useAuthStore((s) => s.organization);
   const displayUser = user || authUser;
   const [unreadCount, setUnreadCount] = useState<number>(0);
   const branding = useEffectiveBranding();
 
   // S-2: role-aware navigation — a viewer must never see admin-only items.
   // API RBAC remains the security boundary; this is UX filtering only.
+  // Platform rule: an org-less super_admin sees ONLY the Control Center;
+  // tenant operational groups appear once the SA has an organization context.
   const role = displayUser?.role ?? null;
-  const visibleGroups = navGroups
-    .map((group) => ({
-      ...group,
-      items: group.items.filter((item) => canAccessPage(role, item.page)),
-    }))
-    .filter((group) => group.items.length > 0);
+  const visibleGroups = visibleGroupsFor(role, Boolean(organization));
 
   // Agent Approvals badge — the pending device claims queue.
   // TanStack Query keys are prefix-matched by the realtime invalidation
@@ -259,7 +148,7 @@ export function AppSidebar({ onNavigate }: AppSidebarProps) {
         {/* Navigation */}
         <nav className="flex-1 overflow-y-auto custom-scrollbar py-2 px-2" aria-label="Main navigation">
           {visibleGroups.map((group, gi) => (
-            <div key={group.section}>
+            <div key={group.id}>
               {gi > 0 && <Separator className="my-2 bg-sidebar-border/50" />}
               {sidebarOpen && (
                 <p className="text-[11px] uppercase tracking-[0.08em] text-sidebar-foreground/40 font-semibold px-3 mb-1.5">

@@ -5,7 +5,7 @@ import { db } from '@/lib/db';
 import { format, subDays } from 'date-fns';
 import { authError, requireSessionOrg } from '@/lib/api';
 import { NON_INTERNAL_AGENT_ACTIVITY_FILTER, excludeInternalAgentActivities } from '@/lib/agent-process';
-import { safeTimezone, zonedDayStart, zonedDayEnd, localDayKey, hourInTimezone } from '@/lib/timezone';
+import { safeTimezone, zonedDayStart, addDaysToKey, localDayKey, hourInTimezone } from '@/lib/timezone';
 import { log, requestContext } from '@/lib/logger';
 
 /** Defensive normalization of a stored website value to a bare lowercase domain. */
@@ -59,23 +59,30 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
     // Organization-local day boundaries — "today" means today in the org's
     // timezone (same convention as /api/activities), never the server's UTC
     // midnight.
+    //
+    // Half-open interval: >= startOfDay(from) AND < startOfDay(to + 1 day).
     const orgTz = safeTimezone(employee.organization?.timezone);
 
     // Determine date range
     const now = new Date();
     let startDate: Date;
-    let endDate: Date;
+    let endExclusive: Date;
 
     if (fromParam && toParam) {
       startDate = zonedDayStart(fromParam, orgTz);
-      endDate = zonedDayEnd(toParam, orgTz);
+      endExclusive = zonedDayStart(addDaysToKey(toParam, 1), orgTz);
     } else if (fromParam) {
       startDate = zonedDayStart(fromParam, orgTz);
-      endDate = now;
+      endExclusive = now;
     } else {
       startDate = zonedDayStart(localDayKey(subDays(now, 6), orgTz), orgTz);
-      endDate = now;
+      endExclusive = now;
     }
+
+    // For "to now" case (no endExclusive boundary), use lte for inclusive
+    const timestampFilter = endExclusive === now
+      ? { gte: startDate }
+      : { gte: startDate, lt: endExclusive };
 
     // Count all-time stats. Internal agent processes are excluded via the
     // shared NOT filter (case-insensitive) so the monitoring agent never
@@ -108,7 +115,7 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
       db.activity.findMany({
         where: {
           employeeId: id,
-          timestamp: { gte: startDate, lte: endDate },
+          timestamp: timestampFilter,
           ...NON_INTERNAL_AGENT_ACTIVITY_FILTER,
         },
         orderBy: { timestamp: 'desc' },
@@ -121,7 +128,7 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
       db.activity.count({
         where: {
           employeeId: id,
-          timestamp: { gte: startDate, lte: endDate },
+          timestamp: timestampFilter,
           ...NON_INTERNAL_AGENT_ACTIVITY_FILTER,
         },
       }),
@@ -130,36 +137,36 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
 
     // Ranged summary (internal agent processes excluded)
     const rangeSummary = await db.activity.aggregate({
-      where: { employeeId: id, timestamp: { gte: startDate, lte: endDate }, ...NON_INTERNAL_AGENT_ACTIVITY_FILTER },
+      where: { employeeId: id, timestamp: timestampFilter, ...NON_INTERNAL_AGENT_ACTIVITY_FILTER },
       _sum: { duration: true },
       _count: { id: true },
     });
 
     const rangeProductive = await db.activity.aggregate({
-      where: { employeeId: id, category: 'productive', timestamp: { gte: startDate, lte: endDate }, ...NON_INTERNAL_AGENT_ACTIVITY_FILTER },
+      where: { employeeId: id, category: 'productive', timestamp: timestampFilter, ...NON_INTERNAL_AGENT_ACTIVITY_FILTER },
       _sum: { duration: true },
     });
 
     const rangeNeutral = await db.activity.aggregate({
-      where: { employeeId: id, category: 'neutral', timestamp: { gte: startDate, lte: endDate }, ...NON_INTERNAL_AGENT_ACTIVITY_FILTER },
+      where: { employeeId: id, category: 'neutral', timestamp: timestampFilter, ...NON_INTERNAL_AGENT_ACTIVITY_FILTER },
       _sum: { duration: true },
     });
 
     const rangeUnproductive = await db.activity.aggregate({
-      where: { employeeId: id, category: 'unproductive', timestamp: { gte: startDate, lte: endDate }, ...NON_INTERNAL_AGENT_ACTIVITY_FILTER },
+      where: { employeeId: id, category: 'unproductive', timestamp: timestampFilter, ...NON_INTERNAL_AGENT_ACTIVITY_FILTER },
       _sum: { duration: true },
     });
 
     // Daily productivity for the date range — bucketed by the ORGANIZATION
     // timezone (P2-3): 23:30 UTC belongs to the NEXT local day in Asia/Dhaka.
     // The keys are org-local calendar days, never the server's local zone.
-    const rangeSpanDays = Math.max(1, Math.ceil((endDate.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24)));
+    const rangeSpanDays = Math.max(1, Math.ceil((endExclusive.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24)));
     const dailyMap: Record<string, { productive: number; neutral: number; unproductive: number; total: number }> = {};
 
     // Initialize all days in range (dedupe so a DST-skipped/repeated day can
     // never double-initialize or leave a gap).
     for (let i = rangeSpanDays; i >= 0; i--) {
-      const day = localDayKey(subDays(endDate, i), orgTz);
+      const day = localDayKey(subDays(endExclusive, i), orgTz);
       if (!dailyMap[day]) {
         dailyMap[day] = { productive: 0, neutral: 0, unproductive: 0, total: 0 };
       }
@@ -198,7 +205,7 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
           employeeId: id,
           type: 'application',
           applicationName: { not: null },
-          timestamp: { gte: startDate, lte: endDate },
+          timestamp: timestampFilter,
           ...NON_INTERNAL_AGENT_ACTIVITY_FILTER,
         },
         _sum: { duration: true },
@@ -209,7 +216,7 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
           employeeId: id,
           type: 'website',
           url: { not: null },
-          timestamp: { gte: startDate, lte: endDate },
+          timestamp: timestampFilter,
           ...NON_INTERNAL_AGENT_ACTIVITY_FILTER,
         },
         _sum: { duration: true },
@@ -305,7 +312,7 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
       where: {
         employeeId: id,
         type: 'work_session',
-        timestamp: { gte: startDate, lte: endDate },
+        timestamp: timestampFilter,
       },
     });
 
@@ -333,7 +340,7 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
       },
       dateRange: {
         from: startDate.toISOString(),
-        to: endDate.toISOString(),
+        to: endExclusive.toISOString(),
       },
       allTime: {
         totalDuration: allTimeSummary._sum.duration || 0,
@@ -369,7 +376,7 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
       alerts: empAlerts,
       notifications: empNotifications,
     });
-  } catch (error) {
+  } catch {
     log.error('api.employees.id.detail.', { error: String('Employee detail error:') }, requestContext(request));
     return NextResponse.json({ error: 'Failed to fetch employee details' }, { status: 500 });
   }

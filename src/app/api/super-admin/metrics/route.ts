@@ -57,7 +57,7 @@ export async function GET(req: NextRequest) {
       byStatus: subs,
       active: subs.ACTIVE ?? 0,
       expiringSoon: expiringSubs,
-      suspended: byStatus.suspended ?? 0,
+      paused: byStatus.paused ?? 0,
     },
     licenses: { active: activeLicenses },
     billing: { pendingInvoices },

@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { authError, requireSessionOrg } from '@/lib/api';
 import { NON_INTERNAL_AGENT_ACTIVITY_FILTER } from '@/lib/agent-process';
-import { safeTimezone, zonedDayStart, zonedDayEnd, localDayKey } from '@/lib/timezone';
+import { safeTimezone, zonedDayStart, addDaysToKey, localDayKey } from '@/lib/timezone';
 import { subDays } from 'date-fns';
 import { log, requestContext } from '@/lib/logger';
 
@@ -11,8 +11,11 @@ import { log, requestContext } from '@/lib/logger';
 // Paginated, org-scoped activity timeline for a single employee.
 //
 //   - Employee lookup is org-scoped (foreign ids → 404, never a leak).
-//   - Dates use the same server-local day semantics as the employee-detail
-//     route (`to` ends at 23:59:59.999 of the selected local day).
+//   - Date filtering uses a half-open interval: >= start AND < endExclusive.
+//     The `to` parameter is an inclusive YYYY-MM-DD day key; internally it is
+//     converted to the NEXT day's local midnight (endExclusive) so the
+//     comparison is `timestamp < endExclusive`. This avoids timestamp precision
+//     bugs and correctly includes the entire selected end day.
 //   - Internal-agent processes are excluded with the NULL-safe predicate so
 //     website/idle/screenshot/work_session rows (NULL applicationName) are
 //     preserved and the timeline totals match the detail stats.
@@ -74,6 +77,10 @@ export async function GET(
     // Organization-local day boundaries — "today" means today in the org's
     // timezone (same convention as /api/activities), never the server's UTC
     // midnight.
+    //
+    // Half-open interval: >= startOfDay(from) AND < startOfDay(to + 1 day).
+    // The `to` param is an inclusive day key; endExclusive is the NEXT day's
+    // local midnight so `timestamp < endExclusive` includes the entire `to` day.
     const org = await db.organization.findUnique({
       where: { id: employee.organizationId },
       select: { timezone: true },
@@ -82,23 +89,28 @@ export async function GET(
 
     const now = new Date();
     let startDate: Date;
-    let endDate: Date;
+    let endExclusive: Date;
     if (fromParam && toParam) {
       startDate = zonedDayStart(fromParam, orgTz);
-      endDate = zonedDayEnd(toParam, orgTz);
+      // Half-open: endExclusive = next day's local midnight
+      endExclusive = zonedDayStart(addDaysToKey(toParam, 1), orgTz);
     } else if (fromParam) {
       startDate = zonedDayStart(fromParam, orgTz);
-      endDate = now;
+      endExclusive = now;
     } else {
       startDate = zonedDayStart(localDayKey(subDays(now, 6), orgTz), orgTz);
-      endDate = now;
+      endExclusive = now;
     }
+
+    const timestampFilter = endExclusive === now
+      ? { gte: startDate }
+      : { gte: startDate, lt: endExclusive };
 
     const [activities, total] = await Promise.all([
       db.activity.findMany({
         where: {
           employeeId: id,
-          timestamp: { gte: startDate, lte: endDate },
+          timestamp: timestampFilter,
           ...NON_INTERNAL_AGENT_ACTIVITY_FILTER,
         },
         orderBy: { timestamp: 'desc' },
@@ -111,7 +123,7 @@ export async function GET(
       db.activity.count({
         where: {
           employeeId: id,
-          timestamp: { gte: startDate, lte: endDate },
+          timestamp: timestampFilter,
           ...NON_INTERNAL_AGENT_ACTIVITY_FILTER,
         },
       }),
@@ -124,7 +136,7 @@ export async function GET(
       pageSize,
       totalPages: Math.ceil(total / pageSize),
     });
-  } catch (error) {
+  } catch {
     log.error('api.employees.id.activities.', { error: String('Employee activities error:') }, requestContext(request));
     return NextResponse.json({ error: 'Failed to fetch employee activities' }, { status: 500 });
   }

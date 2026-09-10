@@ -55,6 +55,12 @@ before(async () => {
 
   orgA = await db.organization.create({ data: { name: 'Org A', slug: 'org-a-mon', timezone: 'UTC' } });
   orgB = await db.organization.create({ data: { name: 'Org B', slug: 'org-b-mon', timezone: 'UTC' } });
+  
+  // Activate orgs
+  const subA = await db.subscription.create({ data: { organizationId: orgA.id, planId: "cmtmu2q5n0001fi1gce9dkp9f", status: 'ACTIVE', startDate: new Date(), endDate: new Date(Date.now() + 864e5) } });
+  await db.organization.update({ where: { id: orgA.id }, data: { subscriptionId: subA.id } });
+  const subB = await db.subscription.create({ data: { organizationId: orgB.id, planId: "cmtmu2q5n0001fi1gce9dkp9f", status: 'ACTIVE', startDate: new Date(), endDate: new Date(Date.now() + 864e5) } });
+  await db.organization.update({ where: { id: orgB.id }, data: { subscriptionId: subB.id } });
 
   adminAToken = await signJWT({ userId: 'admin-a', email: 'admin@a.test', role: 'admin', organizationId: orgA.id });
   adminBToken = await signJWT({ userId: 'admin-b', email: 'admin@b.test', role: 'admin', organizationId: orgB.id });
@@ -286,8 +292,8 @@ test('MON-PROD-12: GET exposes the Phase 1 server-side keys (activity_dedupe, ag
   const dedupe = byKey.get('activity_dedupe');
   assert.ok(dedupe, 'activity_dedupe must be listed');
   assert.equal(dedupe?.type, 'boolean');
-  assert.equal(dedupe?.default, false, 'dedupe must default OFF (safe rollout)');
-  assert.equal(dedupe?.value, false, 'no row set yet — default false');
+  assert.equal(dedupe?.default, true, 'dedupe must default ON');
+  assert.equal(dedupe?.value, true, 'no row set yet — default true');
 
   const minVer = byKey.get('agent_min_version');
   assert.ok(minVer, 'agent_min_version must be listed');

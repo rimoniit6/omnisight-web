@@ -317,14 +317,14 @@ test('MO-6: Super Admin can suspend and reactivate organizations', async () => {
       'content-type': 'application/json',
       authorization: `Bearer ${await signTestJWT(superAdmin.id, superAdmin.email, 'super_admin', undefined)}`,
     },
-    body: JSON.stringify({ status: 'suspended' }),
+    body: JSON.stringify({ status: 'paused' }),
   });
 
   const suspendRes = await suspendApi.PATCH(suspendReq, { params: Promise.resolve({ id: orgA.id }) });
   assert.equal(suspendRes.status, 200, 'Suspend should succeed');
 
   const orgAfterSuspend = await db.organization.findUnique({ where: { id: orgA.id } });
-  assert.equal(orgAfterSuspend.status, 'suspended', 'Org should be suspended');
+  assert.equal(orgAfterSuspend.status, 'paused', 'Org should be paused');
 
   // Reactivate
   const reactivateReq = new NextRequest(`http://localhost:3000/api/super-admin/organizations/${orgA.id}`, {
@@ -398,15 +398,15 @@ test('MO-9: Suspended organization blocks agent token validation', async () => {
   // Suspend org A
   await db.organization.update({
     where: { id: orgA.id },
-    data: { status: 'suspended' },
+    data: { status: 'paused' },
   });
 
-  // Agent token for Org A should be invalid when org is suspended
+  // Agent token for Org A should be invalid when org is paused
   const org = await db.organization.findUnique({
     where: { id: orgA.id },
     select: { status: true },
   });
-  assert.equal(org.status, 'suspended', 'Org A is suspended');
+  assert.equal(org.status, 'paused', 'Org A is paused');
   // The validateAgentToken function checks org status and returns invalid
 
   // Restore

@@ -141,7 +141,17 @@ async function enforceRateLimit(req: NextRequest): Promise<NextResponse | null> 
 }
 
 // ─── Public / agent-token whitelist (exact path prefixes) ──────────────────
-const PUBLIC_PREFIXES = ['/api/auth/login'];
+const PUBLIC_PREFIXES = [
+  '/api/auth/login',
+  // Public marketing surfaces: pricing catalog (active plans only) and the
+  // contact-sales lead form. Both routes are documented public, rate-limited,
+  // and leak no credentials or tenant data.
+  '/api/plans',
+  '/api/leads',
+  // Public landing copy overrides (Super Admin-managed; page renders built-in
+  // defaults when empty). Read-only, never exposes tenant/credential data.
+  '/api/landing',
+];
 const AGENT_PREFIXES = ['/api/agent/'];
 // Public health probes for external monitoring: the routes only reveal
 // availability + latency (no credentials, no schema, no env). Prefix match

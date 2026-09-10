@@ -6,8 +6,27 @@ import { isOrgRole, canAssignRole, resolveActorDbRole } from '@/lib/org-members'
 import { normalizeEmail } from '@/lib/email';
 import { log, requestContext } from '@/lib/logger';
 
+// ─── Helpers ────────────────────────────────────────────────────────────────────
+
+/** Bounded page sizes — an unbounded pageSize can balloon a list response. */
+export const ALLOWED_PAGE_SIZES = [10, 25, 50, 100] as const;
+export const DEFAULT_PAGE_SIZE = 25;
+
+/** Strict positive-integer parser: leading zeros/plus/whitespace noise → null. */
+function parsePositiveInt(raw: string | null): number | null {
+  if (raw === null) return null;
+  const t = raw.trim();
+  if (!/^\d+$/.test(t)) return null;
+  const n = Number(t);
+  if (!Number.isSafeInteger(n) || n < 1) return null;
+  return n;
+}
+
 // ─── GET /api/organizations/[orgId]/members ────────────────────────────────────
 // List members of an organization. Admin+ within the org, or super_admin.
+// Paginated via `page` / `pageSize` (one of 10/25/50/100; default 25) so large
+// orgs never ship the whole membership in one payload. Response always carries
+// `pagination` metadata: { page, pageSize, total, pages }.
 export async function GET(
   req: NextRequest,
   { params }: { params: Promise<{ orgId: string }> }
@@ -17,21 +36,49 @@ export async function GET(
     const auth = await requireOrgAdmin(req, orgId);
     if (!auth.ok) return apiError('Insufficient permissions', auth.status);
 
-    const members = await db.organizationMembership.findMany({
-      where: { organizationId: orgId },
-      include: {
-        user: {
-          select: {
-            id: true,
-            email: true,
-            name: true,
-            avatar: true,
-            isActive: true,
+    const sp = req.nextUrl.searchParams;
+    const rawPage = sp.get('page');
+    const rawPageSize = sp.get('pageSize');
+
+    let pageSize = DEFAULT_PAGE_SIZE;
+    if (rawPageSize !== null) {
+      const n = parsePositiveInt(rawPageSize);
+      if (n === null || !(ALLOWED_PAGE_SIZES as readonly number[]).includes(n)) {
+        return apiError('pageSize must be one of 10, 25, 50, 100', 400);
+      }
+      pageSize = n;
+    }
+
+    let page = 1;
+    if (rawPage !== null) {
+      const n = parsePositiveInt(rawPage);
+      if (n === null) return apiError('page must be a positive integer', 400);
+      page = n;
+    }
+
+    const where = { organizationId: orgId };
+    const [total, members] = await Promise.all([
+      db.organizationMembership.count({ where }),
+      db.organizationMembership.findMany({
+        where,
+        include: {
+          user: {
+            select: {
+              id: true,
+              email: true,
+              name: true,
+              avatar: true,
+              isActive: true,
+            },
           },
         },
-      },
-      orderBy: { createdAt: 'asc' },
-    });
+        // Stable ordering: createdAt alone can tie on fast consecutive inserts,
+        // and an unstable order makes paging duplicate/skip rows.
+        orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+        skip: (page - 1) * pageSize,
+        take: pageSize,
+      }),
+    ]);
 
     return apiSuccess({
       members: members.map((m) => ({
@@ -45,6 +92,12 @@ export async function GET(
         status: m.status,
         createdAt: m.createdAt,
       })),
+      pagination: {
+        page,
+        pageSize,
+        total,
+        pages: Math.max(1, Math.ceil(total / pageSize)),
+      },
     });
   } catch (error) {
     log.error('api.orgs.members.list', { error: String(error) }, requestContext(req));

@@ -2,8 +2,8 @@
  * Super Admin Optional Organization Context — Regression Tests
  *
  * Proves the architectural contract:
- *   - Super Admin with 0 orgs → Create Organization required
- *   - Super Admin with 1+ orgs → NO organization prompt, app loads
+ *   - Super Admin with 0 orgs → app loads (no onboarding gate)
+ *   - Super Admin with 1+ orgs → app loads
  *   - Super Admin with activeOrgId=null → valid authenticated state
  *   - Super Admin role preserved after org switch
  *   - Org Admin / Manager / Viewer behavior unchanged
@@ -92,9 +92,9 @@ function meReq(token: string): NextRequest {
   });
 }
 
-// ─── SA-ORG-01: Super Admin with zero orgs → Create Org required ──────
+// ─── SA-ORG-01: Super Admin with zero orgs → app loads (no gate) ────
 
-test('SA-ORG-01: /api/auth/me with 0 orgs returns organizationCount=0 and org=null', async () => {
+test('SA-ORG-01: /api/auth/me with 0 orgs returns org=null (no onboarding gate)', async () => {
   // Ensure zero orgs
   await db.organization.deleteMany();
   const count = await db.organization.count();
@@ -105,12 +105,13 @@ test('SA-ORG-01: /api/auth/me with 0 orgs returns organizationCount=0 and org=nu
   assert.equal(res.status, 200);
   assert.equal(body.user.role, 'super_admin');
   assert.equal(body.organization, null, 'No active organization');
-  assert.equal(body.organizationCount, 0, 'organizationCount must be 0');
+  // organizationCount is no longer returned — the onboarding gate was removed per PRD §43
+  assert.equal(body.organizationCount, undefined, 'organizationCount no longer included');
 });
 
-// ─── SA-ORG-02: Super Admin with 1 org → no org prompt ────────────────
+// ─── SA-ORG-02: Super Admin with 1 org → app loads ─────────────────
 
-test('SA-ORG-02: /api/auth/me with 1 org returns organizationCount=1', async () => {
+test('SA-ORG-02: /api/auth/me with 1 org returns org=null (no onboarding)', async () => {
   orgA = await db.organization.create({
     data: { name: 'Test Org A', slug: 'sa-org-ctx-a' },
   });
@@ -119,14 +120,13 @@ test('SA-ORG-02: /api/auth/me with 1 org returns organizationCount=1', async () 
   const body = await res.json();
   assert.equal(res.status, 200);
   assert.equal(body.user.role, 'super_admin');
-  assert.equal(body.organizationCount, 1, 'organizationCount must be 1');
   // Organization is null because SA has no active org binding
   assert.equal(body.organization, null, 'Org-less SA has null organization');
 });
 
-// ─── SA-ORG-03: Super Admin with multiple orgs → no org prompt ────────
+// ─── SA-ORG-03: Super Admin with multiple orgs → app loads ──────────
 
-test('SA-ORG-03: /api/auth/me with multiple orgs returns correct count', async () => {
+test('SA-ORG-03: /api/auth/me with multiple orgs returns 200', async () => {
   const orgB = await db.organization.create({
     data: { name: 'Test Org B', slug: 'sa-org-ctx-b' },
   });
@@ -134,7 +134,6 @@ test('SA-ORG-03: /api/auth/me with multiple orgs returns correct count', async (
   const res = await meApi.GET(meReq(saToken));
   const body = await res.json();
   assert.equal(res.status, 200);
-  assert.ok(body.organizationCount >= 2, `Expected >= 2 orgs, got ${body.organizationCount}`);
 });
 
 // ─── SA-ORG-04: Org-less Super Admin is valid authenticated state ──────
@@ -147,7 +146,6 @@ test('SA-ORG-04: Org-less SA token → 200 with valid user and null org', async 
   assert.equal(body.user.role, 'super_admin');
   assert.ok(body.user.email, 'Email present');
   assert.equal(body.organization, null, 'Org-less state is valid');
-  assert.ok(body.organizationCount >= 2, 'Org count reported');
 });
 
 // ─── SA-ORG-05: Super Admin switches org → role remains super_admin ────
@@ -174,7 +172,6 @@ test('SA-ORG-05: SA with activeOrgId + membership → role stays super_admin, or
   assert.equal(body.user.role, 'super_admin', 'Role must remain super_admin');
   assert.ok(body.organization, 'Active org is present');
   assert.equal(body.organization.id, orgA.id, 'Correct org bound');
-  assert.ok(body.organizationCount >= 2, 'Org count still reported');
 });
 
 // ─── SA-ORG-06: SA after switch can access operational dashboard ───────
@@ -195,17 +192,15 @@ test('SA-ORG-06: SA bound to orgA → organization detail is correct', async () 
   assert.equal(body.organization.name, 'Test Org A');
 });
 
-// ─── SA-ORG-07: SA clears org → does NOT trigger Create Org ───────────
+// ─── SA-ORG-07: SA clears org → app loads (no onboarding gate) ─────
 
-test('SA-ORG-07: Org-less SA with existing orgs → organizationCount > 0', async () => {
-  // This is the KEY test: SA with null org but orgs exist
+test('SA-ORG-07: Org-less SA with existing orgs → 200 with null org', async () => {
+  // This is the KEY test: SA with null org but orgs exist — must not be blocked
   const res = await meApi.GET(meReq(saToken));
   const body = await res.json();
   assert.equal(body.user.role, 'super_admin');
   assert.equal(body.organization, null, 'No active org');
-  assert.ok(body.organizationCount >= 2, 'But orgs exist in DB');
-  // The frontend AuthGuard should NOT show CreateOrganizationScreen
-  // because organizationCount > 0
+  assert.equal(res.status, 200, 'SA can access the app without an organization');
 });
 
 // ─── SA-ORG-08: Unauthenticated → 401 ─────────────────────────────────
@@ -235,8 +230,8 @@ test('SA-ORG-09: Non-SA user → organizationCount is undefined (not included)',
   const body = await res.json();
   assert.equal(res.status, 200);
   assert.equal(body.user.role, 'org_admin');
-  // organizationCount should NOT be present for non-SA users
-  assert.equal(body.organizationCount, undefined, 'Non-SA users do not get organizationCount');
+  // organizationCount is no longer returned by the API for any user
+  assert.equal(body.organizationCount, undefined, 'organizationCount no longer included');
 });
 
 // ─── SA-ORG-10: Organization membership RBAC unchanged ─────────────────
@@ -263,23 +258,28 @@ test('SA-ORG-10: Viewer cannot access super-admin endpoints', async () => {
   assert.ok(res.status === 401 || res.status === 403, `Viewer denied, got ${res.status}`);
 });
 
-// ─── SA-ORG-11: AuthGuard logic verification (structural) ──────────────
+// ─── SA-ORG-11: AuthGuard no longer forces org creation ────────────
 
-test('SA-ORG-11: AuthGuard in page.tsx checks organizationCount === 0', async () => {
+test('SA-ORG-11: AuthGuard does NOT show CreateOrganizationScreen', async () => {
   const { readFileSync } = await import('fs');
   const { resolve } = await import('path');
   const pageSrc = readFileSync(resolve(__dirname, '../src/app/page.tsx'), 'utf8');
 
-  // The AuthGuard must check organizationCount, not just !organization
+  // The onboarding gate was removed per PRD §43:
+  // Super Admin must NOT be blocked by organizationCount === 0
   assert.ok(
-    pageSrc.includes('organizationCount === 0'),
-    'AuthGuard must check organizationCount === 0 (not just !organization)'
+    !pageSrc.includes('organizationCount === 0'),
+    'AuthGuard must NOT gate on organizationCount === 0'
   );
-  // Must NOT have the old unconditionally-blocking pattern
+  // Must NOT reference the removed create-organization-screen
   assert.ok(
-    !pageSrc.includes("user?.role === 'super_admin' && !organization") ||
-      pageSrc.includes("user?.role === 'super_admin' && !organization && organizationCount !== null && organizationCount === 0"),
-    'AuthGuard must not unconditionally block SA when org is null'
+    !pageSrc.includes('CreateOrganizationScreen'),
+    'AuthGuard must not import or render CreateOrganizationScreen'
+  );
+  // Must NOT import the deleted component
+  assert.ok(
+    !pageSrc.includes('create-organization-screen'),
+    'AuthGuard must not import the deleted create-organization-screen component'
   );
 });
 

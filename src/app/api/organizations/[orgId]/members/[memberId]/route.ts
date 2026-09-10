@@ -4,6 +4,7 @@ import { getRoleLabel } from '@/lib/auth';
 import { requireMembershipAdmin, apiError, apiSuccess } from '@/lib/api';
 import { revokeAllUserSessions } from '@/lib/session';
 import { isOrgRole, canAssignRole, resolveActorDbRole } from '@/lib/org-members';
+import { getMembershipDeleteImpact } from '@/lib/delete-impact';
 import { log, requestContext } from '@/lib/logger';
 
 const MEMBERSHIP_STATUSES = ['ACTIVE', 'SUSPENDED'];
@@ -116,6 +117,12 @@ export async function PATCH(
 // ─── DELETE /api/organizations/[orgId]/members/[memberId] ──────────────────────
 // Remove a user's membership from this organization. Removing Org A does not
 // affect their membership in any other organization.
+//
+// Hardened:
+//   - never leaves the organization with zero ACTIVE administrator members
+//     (last-admin guard; a Super Admin may still override)
+//   - the removed member's web sessions for THIS org are revoked server-side
+//     so a stale JWT cannot keep operating inside the org
 export async function DELETE(
   req: NextRequest,
   { params }: { params: Promise<{ orgId: string; memberId: string }> }
@@ -133,6 +140,13 @@ export async function DELETE(
       return apiError('Membership not found', 404);
     }
 
+    // Last-admin guard: refuse to leave the org unmanageable unless a global
+    // Super Admin is performing the removal.
+    const impact = await getMembershipDeleteImpact(orgId, memberId, !!auth.isSuperAdmin);
+    if (impact.disposition === 'blocked') {
+      return apiError(impact.blockReason ?? 'Cannot remove the last administrator', 409);
+    }
+
     await db.organizationMembership.delete({
       where: { userId_organizationId: { userId: memberId, organizationId: orgId } },
     });
@@ -146,6 +160,18 @@ export async function DELETE(
         userId: auth.userId,
         organizationId: orgId,
       },
+    });
+
+    // Revoke this member's sessions that were bound to the removed org
+    // (including their active-org pointer), so any still-valid JWT is rejected
+    // on the next authenticated request.
+    await db.userSession.updateMany({
+      where: {
+        userId: memberId,
+        revokedAt: null,
+        OR: [{ organizationId: orgId }, { activeOrganizationId: orgId }],
+      },
+      data: { revokedAt: new Date() },
     });
 
     return apiSuccess({ message: 'Membership removed', userId: memberId });

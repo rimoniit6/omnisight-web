@@ -9,8 +9,6 @@ import { toast } from 'sonner';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
-import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
-import { Label } from '@/components/ui/label';
 import { useCurrentUser } from '@/hooks/use-current-user';
 
 interface Plan {
@@ -25,12 +23,6 @@ interface Plan {
   features: string[];
 }
 
-const PAYMENT_METHODS = [
-  { value: 'Bank_Transfer', label: 'Bank Transfer', hint: 'Manual bank transfer — reference required' },
-  { value: 'bKash', label: 'bKash', hint: 'Send money to our bKash number' },
-  { value: 'Nagad', label: 'Nagad', hint: 'Send money to our Nagad number' },
-  { value: 'Rocket', label: 'Rocket', hint: 'Send money to our Rocket number' },
-];
 
 function CheckoutInner() {
   const router = useRouter();
@@ -39,7 +31,6 @@ function CheckoutInner() {
   const period = searchParams.get('period') === 'YEARLY' ? 'YEARLY' : 'MONTHLY';
 
   const { user, org, isLoading: authLoading } = useCurrentUser();
-  const [method, setMethod] = useState('Bank_Transfer');
   const [submitting, setSubmitting] = useState(false);
 
   const { data, isLoading: planLoading } = useQuery<{ plans: Plan[] }>({
@@ -73,7 +64,7 @@ function CheckoutInner() {
         toast.error(msg);
         return;
       }
-      toast.success(`Invoice ${json.invoiceNumber ?? ''} created — submit payment to activate.`);
+      toast.success(`Invoice ${json.invoiceNumber ?? ''} created — OmniSight will contact you to arrange payment.`);
       router.push(`/invoices/${json.invoiceId}`);
     } catch {
       toast.error('Network error. Please try again.');
@@ -154,29 +145,18 @@ function CheckoutInner() {
 
         <Card>
           <CardHeader>
-            <CardTitle className="text-lg">Payment method — Manual</CardTitle>
+            <CardTitle className="text-lg">Payment — Manual</CardTitle>
             <CardDescription>
-              Pay manually, then submit your transaction reference. An admin will verify your payment.
+              OmniSight subscriptions are billed manually — there is no online checkout and no card is required here.
             </CardDescription>
           </CardHeader>
           <CardContent>
-            <RadioGroup value={method} onValueChange={setMethod} className="space-y-3">
-              {PAYMENT_METHODS.map((m) => (
-                <div key={m.value} className="flex items-start gap-3 rounded-lg border p-4">
-                  <RadioGroupItem value={m.value} id={m.value} className="mt-0.5" />
-                  <div>
-                    <Label htmlFor={m.value} className="font-medium">
-                      {m.label}
-                    </Label>
-                    <p className="text-sm text-muted-foreground">{m.hint}</p>
-                  </div>
-                </div>
-              ))}
-            </RadioGroup>
-            <p className="mt-4 text-xs text-muted-foreground">
-              After confirming, you&apos;ll be asked to provide your transaction ID on the invoice page to complete
-              the request.
-            </p>
+            <div className="rounded-lg bg-muted/40 p-4 text-sm text-muted-foreground space-y-2">
+              <p>
+                After confirming, an invoice is created and the OmniSight team contacts you with payment
+                instructions. Your subscription is activated once payment is confirmed.
+              </p>
+            </div>
           </CardContent>
           <CardFooter>
             <Button className="w-full" onClick={handleSubscribe} disabled={submitting}>

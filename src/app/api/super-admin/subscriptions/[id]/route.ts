@@ -3,10 +3,12 @@ import { db as prisma } from '@/lib/db';
 import { requireDbVerifiedRole, apiError, apiSuccess, authError, parseJsonBody, BodyParseError } from '@/lib/api';
 
 // PATCH /api/super-admin/subscriptions/[id]
-// Body: { action: 'activate' | 'cancel' | 'expire', notes? }
+// Body: { action: 'activate' | 'pause' | 'resume' | 'cancel' | 'expire', notes? }
 //   activate: PENDING -> ACTIVE (+ org active + subscription pointer)
-//   cancel:   PENDING/ACTIVE -> CANCELLED (+ clear org pointer when pointing
-//             here; org status left for the subscription sweep to reconcile)
+//   pause:    ACTIVE -> PAUSED (PRD §18: subscription pause)
+//   resume:   PAUSED -> ACTIVE (PRD §18: subscription resume)
+//   cancel:   PENDING/ACTIVE/PAUSED -> CANCELLED (+ clear org pointer when
+//             pointing here; org status left for the subscription sweep to reconcile)
 //   expire:   ACTIVE -> EXPIRED (manual early expiry; natural expiry is the sweep)
 // All transitions are transactional with an audit record. No silent fallback.
 export async function PATCH(
@@ -26,8 +28,8 @@ export async function PATCH(
   }
 
   const action = body.action as string | undefined;
-  if (!['activate', 'cancel', 'expire'].includes(action ?? '')) {
-    return apiError("action must be 'activate', 'cancel', or 'expire'", 422);
+  if (!['activate', 'pause', 'resume', 'cancel', 'expire'].includes(action ?? '')) {
+    return apiError("action must be 'activate', 'pause', 'resume', 'cancel', or 'expire'", 422);
   }
 
   const sub = await prisma.subscription.findUnique({
@@ -69,10 +71,62 @@ export async function PATCH(
     return apiSuccess(updated);
   }
 
+  if (action === 'pause') {
+    if (sub.status === 'PAUSED') return apiError('Subscription is already paused', 409);
+    if (sub.status !== 'ACTIVE') return apiError(`Only ACTIVE subscriptions can be paused (current: ${sub.status})`, 422);
+    const updated = await prisma.$transaction(async (tx) => {
+      const u = await tx.subscription.update({
+        where: { id },
+        data: { status: 'PAUSED', notes: notes ?? sub.notes, updatedAt: now },
+      });
+      await tx.auditLog.create({
+        data: {
+          action: 'update',
+          resource: 'subscription',
+          resourceId: id,
+          description: `Super admin (${admin.email}) paused subscription for org "${sub.organization.name}" (package ${sub.plan.name})${notes ? `: ${notes}` : ''}`,
+          userId: admin.userId,
+          organizationId: sub.organizationId,
+        },
+      });
+      return u;
+    });
+    return apiSuccess(updated);
+  }
+
+  if (action === 'resume') {
+    if (sub.status === 'ACTIVE') return apiError('Subscription is already active', 409);
+    if (sub.status !== 'PAUSED') return apiError(`Only PAUSED subscriptions can be resumed (current: ${sub.status})`, 422);
+    const updated = await prisma.$transaction(async (tx) => {
+      const u = await tx.subscription.update({
+        where: { id },
+        data: { status: 'ACTIVE', notes: notes ?? sub.notes, updatedAt: now },
+      });
+      // Restore org to active if it was paused due to subscription pause.
+      const org = await tx.organization.findUnique({ where: { id: sub.organizationId }, select: { status: true } });
+      if (org && org.status === 'paused') {
+        await tx.organization.update({ where: { id: sub.organizationId }, data: { status: 'active', updatedAt: now } });
+      }
+      await tx.auditLog.create({
+        data: {
+          action: 'update',
+          resource: 'subscription',
+          resourceId: id,
+          description: `Super admin (${admin.email}) resumed subscription for org "${sub.organization.name}" (package ${sub.plan.name})${notes ? `: ${notes}` : ''}`,
+          userId: admin.userId,
+          organizationId: sub.organizationId,
+        },
+      });
+      return u;
+    });
+    return apiSuccess(updated);
+  }
+
   if (action === 'cancel') {
     if (sub.status === 'CANCELLED') return apiError('Subscription is already cancelled', 409);
     if (sub.status === 'EXPIRED') return apiError('Expired subscriptions cannot be cancelled', 422);
     const updated = await prisma.$transaction(async (tx) => {
+      // PAUSED subscriptions can also be cancelled.
       const u = await tx.subscription.update({
         where: { id },
         data: { status: 'CANCELLED', notes: notes ?? sub.notes, updatedAt: now },

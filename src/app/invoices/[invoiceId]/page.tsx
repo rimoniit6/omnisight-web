@@ -4,16 +4,11 @@ import { useQuery } from '@tanstack/react-query';
 import { useParams, useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
-import { ArrowLeft, Loader2, ReceiptText, CheckCircle2, Landmark } from 'lucide-react';
-import { toast } from 'sonner';
-import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
+import { ArrowLeft, ReceiptText, CheckCircle2, Landmark } from 'lucide-react';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
-import { Label } from '@/components/ui/label';
-import { Input } from '@/components/ui/input';
-import { Textarea } from '@/components/ui/textarea';
-import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { useCurrentUser } from '@/hooks/use-current-user';
 
 interface PlanBrief {
@@ -39,13 +34,6 @@ interface InvoiceDetail {
   plan: PlanBrief | null;
 }
 
-const PAYMENT_METHODS = [
-  { value: 'Bank_Transfer', label: 'Bank Transfer' },
-  { value: 'bKash', label: 'bKash' },
-  { value: 'Nagad', label: 'Nagad' },
-  { value: 'Rocket', label: 'Rocket' },
-];
-
 function statusBadge(status: string) {
   const map: Record<string, string> = {
     PAID: 'bg-emerald-500/15 text-emerald-600',
@@ -61,12 +49,7 @@ export default function InvoiceDetailPage() {
   const invoiceId = params.invoiceId;
   const router = useRouter();
 
-  const { user, org, isLoading: authLoading } = useCurrentUser();
-  const [method, setMethod] = useState('Bank_Transfer');
-  const [txnId, setTxnId] = useState('');
-  const [note, setNote] = useState('');
-  const [submitting, setSubmitting] = useState(false);
-
+  const { user, isLoading: authLoading } = useCurrentUser();
   const [notFound, setNotFound] = useState(false);
   const [forbidden, setForbidden] = useState(false);
 
@@ -148,39 +131,6 @@ export default function InvoiceDetailPage() {
   const isPaid = invoice.status === 'PAID';
   const isCancelled = invoice.status === 'CANCELLED';
 
-  const handleSubmit = async () => {
-    if (!txnId.trim()) {
-      toast.error('Please enter your transaction / payment reference');
-      return;
-    }
-    setSubmitting(true);
-    try {
-      const res = await fetch(`/api/invoices/${invoiceId}/submit-payment`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'same-origin',
-        body: JSON.stringify({
-          paymentMethod: method,
-          transactionId: txnId.trim(),
-          notes: note.trim() || undefined,
-        }),
-      });
-      const json = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        toast.error(json.error ?? 'Failed to submit payment');
-        return;
-      }
-      toast.success('Payment details submitted. An admin will verify your payment.');
-      query.refetch();
-    } catch {
-      toast.error('Network error. Please try again.');
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
-  const ownOrg = org?.id === invoice.organization.id;
-
   return (
     <div className="min-h-screen bg-background">
       <header className="border-b sticky top-0 z-10 bg-background/95 backdrop-blur">
@@ -236,7 +186,7 @@ export default function InvoiceDetailPage() {
           </CardContent>
         </Card>
 
-        {/* Payment section */}
+        {/* Payment status */}
         {isPaid ? (
           <Card>
             <CardContent className="flex items-center gap-3 py-8">
@@ -263,62 +213,22 @@ export default function InvoiceDetailPage() {
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2 text-lg">
-                <Landmark className="w-5 h-5 text-primary" /> Submit manual payment
+                <Landmark className="w-5 h-5 text-primary" /> Payment arranged with OmniSight
               </CardTitle>
               <CardDescription>
-                Choose how you paid and enter the transaction reference. We&apos;ll verify it manually.
+                OmniSight subscriptions are billed manually — no online checkout and nothing to submit here.
               </CardDescription>
             </CardHeader>
-            <CardContent className="space-y-5">
-              <RadioGroup value={method} onValueChange={setMethod} className="space-y-2">
-                {PAYMENT_METHODS.map((m) => (
-                  <div key={m.value} className="flex items-center gap-3 rounded-lg border p-3">
-                    <RadioGroupItem value={m.value} id={m.value} />
-                    <Label htmlFor={m.value} className="font-medium">
-                      {m.label}
-                    </Label>
-                  </div>
-                ))}
-              </RadioGroup>
-
-              <div className="space-y-1.5">
-                <Label htmlFor="txn">Transaction / Payment reference</Label>
-                <Input
-                  id="txn"
-                  placeholder="e.g. bkash trx 9XK3T2U8, or bank ref"
-                  value={txnId}
-                  onChange={(e) => setTxnId(e.target.value)}
-                />
-              </div>
-
-              <div className="space-y-1.5">
-                <Label htmlFor="note">Note (optional)</Label>
-                <Textarea
-                  id="note"
-                  placeholder="Anything we should know about your payment"
-                  value={note}
-                  onChange={(e) => setNote(e.target.value)}
-                  rows={3}
-                />
+            <CardContent>
+              <div className="rounded-lg bg-muted/40 p-4 text-sm text-muted-foreground space-y-2">
+                <p>
+                  The OmniSight team shares payment instructions separately. This invoice stays{' '}
+                  <span className="font-medium text-foreground">PENDING</span> until payment is confirmed, at
+                  which point your subscription is activated and the invoice is marked paid.
+                </p>
+                <p>Questions about this invoice? Contact your OmniSight representative.</p>
               </div>
             </CardContent>
-            <CardFooter>
-              <Button
-                className="w-full"
-                onClick={handleSubmit}
-                disabled={submitting || !ownOrg}
-              >
-                {submitting ? (
-                  <>
-                    <Loader2 className="w-4 h-4 mr-2 animate-spin" /> Submitting...
-                  </>
-                ) : ownOrg ? (
-                  'Submit payment details'
-                ) : (
-                  'You cannot pay this invoice'
-                )}
-              </Button>
-            </CardFooter>
           </Card>
         )}
       </main>

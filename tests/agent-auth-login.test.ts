@@ -7,7 +7,7 @@
  *     → PENDING DeviceClaim → cancel/rediscover → (admin approve) → device
  *     → PATH A authenticate → device-bound AgentToken.
  *
- * Covers the master prompt's AUTH-1..25 plus two hardening cases (G1 suspended
+ * Covers the master prompt's AUTH-1..25 plus two hardening cases (G1 paused
  * organization, G2 login session cannot reach device routes).
  *
  * Runs against a THROWAWAY PostgreSQL database (workai_test_agentauth).
@@ -322,9 +322,9 @@ test('AUTH-16: disabling the AgentAccount invalidates an in-flight session', asy
   assert.equal(after.valid, false, 'disabled account must fail closed mid-session');
 });
 
-test('G1: login is denied for an inactive (suspended) organization — uniform 401', async () => {
+test('G1: login is denied for an inactive (paused) organization — uniform 401', async () => {
   const { emp } = await seedAccount(orgA.id, 'AUTH-SUSP-1');
-  await db.organization.update({ where: { id: orgA.id }, data: { status: 'suspended' } });
+  await db.organization.update({ where: { id: orgA.id }, data: { status: 'paused' } });
   const r = await doLogin('AUTH-SUSP-1', PASSWORD, {}, '203.0.113.17');
   assert.equal(r.status, 401);
   assert.equal(r.body.error, 'Invalid credentials');

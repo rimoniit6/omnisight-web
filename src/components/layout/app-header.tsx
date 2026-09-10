@@ -58,8 +58,15 @@ const pageLabels: Record<string, string> = {
   'daily-report': 'Daily Report',
   settings: 'Settings',
   'agent-approvals': 'Agent Approvals',
-  'super-admin-organizations': 'Super Admin — Organizations',
-  'super-admin-organization-detail': 'Super Admin — Organization',
+  'super-admin-organizations': 'Organizations',
+  'super-admin-organization-detail': 'Organization Detail',
+  'sa-overview': 'Overview',
+  'sa-packages': 'Packages',
+  'sa-create-organization': 'Provision Organization',
+  'sa-landing': 'Landing Page',
+  'sa-audit': 'Audit Logs',
+  'data-infrastructure': 'Data Infrastructure',
+  'sa-infra-requests': 'Infrastructure Requests',
 };
 
 interface AppHeaderProps {
@@ -95,6 +102,13 @@ export function AppHeader({ onMobileMenuToggle, isMobile }: AppHeaderProps) {
 
   const displayUser = user || authUser;
 
+  // ── Role-aware header (SUPER_ADMIN ≠ tenant operator) ────────────────
+  // The Super Admin is a control-plane operator: tenant controls that make
+  // sense for organization users (notifications bell, live-monitor shortcut,
+  // tenant Settings) must not render for them. Server-side authorization
+  // remains authoritative — this is UX correctness, not a security gate.
+  const isSuperAdmin = authUser?.role === 'super_admin';
+
   return (
     <header className="h-14 bg-background/80 backdrop-blur supports-[backdrop-filter]:bg-background/60 flex items-center justify-between px-4 md:px-6 sticky top-0 z-30 border-b border-border" role="banner">
       {/* ── Left side: hamburger + title + breadcrumb ── */}
@@ -118,17 +132,23 @@ export function AppHeader({ onMobileMenuToggle, isMobile }: AppHeaderProps) {
             {pageLabels[currentPage] || 'Dashboard'}
           </h1>
 
-          {/* Breadcrumb — simple muted style */}
+          {/* Breadcrumb — simple muted style. SUPER ADMIN: the breadcrumb
+              hierarchy ("Home › Control Center — Overview") duplicated the
+              sidebar navigation and competed with the page title, so the SA
+              header shows the single page title + optional context crumb
+              only. Tenant users keep the full breadcrumb (Home → page). */}
           <nav className="flex items-center gap-0.5 mt-0.5" aria-label="Breadcrumb">
-            <button
-              onClick={() => setCurrentPage('dashboard')}
-              className="flex items-center gap-0.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
-            >
-              <Home className="w-2.5 h-2.5" />
-              <span>Home</span>
-            </button>
+            {authUser?.role !== 'super_admin' && (
+              <button
+                onClick={() => setCurrentPage('dashboard')}
+                className="flex items-center gap-0.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
+              >
+                <Home className="w-2.5 h-2.5" />
+                <span>Home</span>
+              </button>
+            )}
 
-            {currentPage !== 'dashboard' && (
+            {authUser?.role !== 'super_admin' && currentPage !== 'dashboard' && (
               <>
                 <ChevronRight className="w-2.5 h-2.5 text-muted-foreground/50" />
                 <button
@@ -153,6 +173,9 @@ export function AppHeader({ onMobileMenuToggle, isMobile }: AppHeaderProps) {
                   {pageContextLabel || pageContext.replace(/-/g, ' ')}
                 </span>
               </>
+            )}
+            {authUser?.role === 'super_admin' && pageContext && (
+              <span className="text-xs text-muted-foreground">— Control Center</span>
             )}
           </nav>
         </div>
@@ -200,7 +223,9 @@ export function AppHeader({ onMobileMenuToggle, isMobile }: AppHeaderProps) {
           </Button>
         </div>
 
-        {/* WebSocket Connection Status */}
+        {/* WebSocket Connection Status — tenant operational shortcut and
+            device/employee counts are hidden from the Super Admin (control-
+            plane operator); they see connection state only. */}
         <Popover>
           <PopoverTrigger asChild>
             <Button
@@ -254,23 +279,29 @@ export function AppHeader({ onMobileMenuToggle, isMobile }: AppHeaderProps) {
                 <span className="font-medium">{serverInfo?.employeeCount ?? '—'}</span>
               </div>
             </div>
-            <div className="px-4 py-2 border-t">
-              <Button
-                variant="ghost"
-                size="sm"
-                className="w-full h-7 text-xs text-primary hover:text-primary hover:bg-primary/10"
-                onClick={() => setCurrentPage('live-monitor')}
-              >
-                Open Live Monitor →
-              </Button>
-            </div>
+            {!isSuperAdmin && (
+              <div className="px-4 py-2 border-t">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="w-full h-7 text-xs text-primary hover:text-primary hover:bg-primary/10"
+                  onClick={() => setCurrentPage('live-monitor')}
+                >
+                  Open Live Monitor →
+                </Button>
+              </div>
+            )}
           </PopoverContent>
         </Popover>
 
-        {/* Notifications */}
-        <div data-tour-target="notifications">
-          <NotificationBell />
-        </div>
+        {/* Notifications — tenant-scoped (organizationId-scoped API); the
+            Super Admin is a control-plane operator with no tenant context,
+            so the bell does not render for them. */}
+        {!isSuperAdmin && (
+          <div data-tour-target="notifications">
+            <NotificationBell />
+          </div>
+        )}
 
         {/* Organization Switcher — only shown for multi-org users */}
         <OrgSwitcher />
@@ -294,11 +325,15 @@ export function AppHeader({ onMobileMenuToggle, isMobile }: AppHeaderProps) {
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="w-48">
-            <DropdownMenuItem onClick={() => setCurrentPage('settings')}>
-              <Settings className="mr-2 h-4 w-4" />
-              Settings
-            </DropdownMenuItem>
-            <DropdownMenuSeparator />
+            {/* Tenant organization Settings — NOT part of the Super Admin
+                experience (control-plane operator, no tenant config). */}
+            {!isSuperAdmin && (
+              <DropdownMenuItem onClick={() => setCurrentPage('settings')}>
+                <Settings className="mr-2 h-4 w-4" />
+                Settings
+              </DropdownMenuItem>
+            )}
+            {!isSuperAdmin && <DropdownMenuSeparator />}
             <ChangePasswordDialog>
               <DropdownMenuItem onSelect={(e) => e.preventDefault()}>
                 <KeyRound className="mr-2 h-4 w-4" />

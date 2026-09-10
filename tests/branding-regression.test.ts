@@ -36,7 +36,6 @@ const USER_FACING = [
   'src/lib/pdf-generator.ts',
   'src/lib/brand.ts',
   'src/components/auth/login-page.tsx',
-  'src/components/auth/create-organization-screen.tsx',
   'src/components/layout/app-sidebar.tsx',
   'src/components/layout/mobile-sidebar.tsx',
   'src/components/settings/settings-page.tsx',
@@ -202,10 +201,14 @@ agentTest('BRAND-8: desktop agent logo uses the tight-crop derivative + responsi
 });
 
 test('BRAND-7: brand images are displayed LARGE (no tiny-icon regressions)', () => {
+  // Login was redesigned (cinematic split layout): the centered 112px logo was
+  // intentionally replaced by a brand row — 44px mark + wordmark on desktop,
+  // 40px mark + wordmark on mobile. Assert that markup so it never shrinks.
   const login = readFileSync(join(ROOT, 'src/components/auth/login-page.tsx'), 'utf8');
-  assert.ok(login.includes('width={112}') && login.includes('height={112}'), 'login logo must be 112px');
-  const orgCreate = readFileSync(join(ROOT, 'src/components/auth/create-organization-screen.tsx'), 'utf8');
-  assert.ok(orgCreate.includes('width={112}') && orgCreate.includes('height={112}'), 'org-create logo must be 112px');
+  assert.ok(login.includes('h-11 w-11') && login.includes('sizes="44px"'), 'login desktop mark must stay 44px');
+  assert.ok(login.includes('text-xl font-semibold'), 'login desktop brand wordmark must stay text-xl');
+  assert.ok(login.includes('h-10 w-10') && login.includes('sizes="40px"'), 'login mobile mark must stay 40px');
+  assert.ok(!login.includes('h-6 w-6') && !login.includes('w-5 h-5'), 'tiny login mark containers must be gone');
   const sidebar = readFileSync(join(ROOT, 'src/components/layout/app-sidebar.tsx'), 'utf8');
   assert.ok(sidebar.includes('width={64}') && sidebar.includes('height={64}'), 'sidebar logo must be 64px');
   assert.ok(sidebar.includes('text-lg'), 'sidebar brand name must be text-lg');

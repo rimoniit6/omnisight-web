@@ -97,9 +97,41 @@ export async function POST(req: NextRequest) {
 
     const org = await db.organization.findUnique({
       where: { id: organizationId },
-      select: { id: true, name: true },
+      select: { id: true, name: true, slug: true, status: true, deploymentMode: true },
     });
     if (!org) return apiError('Organization not found', 404);
+    if (org.status === 'archived') {
+      return apiError('Organization is archived — licenses cannot be issued', 422);
+    }
+    // License is a runtime authorization for PRIVATE (self-hosted) deployments.
+    // MANAGED / CUSTOMER_DB organizations run on platform infrastructure and
+    // are governed by subscription + manual payment, not a license key.
+    if (org.deploymentMode !== 'PRIVATE') {
+      return apiError(
+        'Licenses can only be issued for PRIVATE deployments',
+        422,
+      );
+    }
+
+    // Duplicate-active protection: never silently create a second active
+    // license for the same organization. Reissue must be explicit (revoke
+    // first, then issue).
+    const existingActive = await db.licenseKey.findFirst({
+      where: {
+        organizationId,
+        isRevoked: false,
+        isActive: true,
+        validUntil: { gt: new Date() },
+      },
+      orderBy: { createdAt: 'desc' },
+      select: { id: true, validUntil: true },
+    });
+    if (existingActive) {
+      return apiError(
+        `An active license already exists for this organization (valid until ${existingActive.validUntil.toISOString().slice(0, 10)}). Revoke it before issuing a new one.`,
+        409,
+      );
+    }
 
     const plan = await db.plan.findUnique({
       where: { id: planId },

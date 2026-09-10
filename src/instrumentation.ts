@@ -22,6 +22,12 @@
  *     the hourly maintenance pass. Dev AND production. Cadence
  *     SYNC_DEVICE_COUNT_INTERVAL_SECONDS (default 1800s = 30min, min 300s),
  *     same JobRun lease so it is exclusive with the hourly pass.
+ *  5. Infrastructure DATA MIGRATION runner — processes approved change
+ *     requests' queued migrations (org-scoped data copy → verification →
+ *     ready_to_activate). Dev AND production. Cadence
+ *     INFRA_MIGRATION_INTERVAL_SECONDS (default 30s, min 10s). Concurrency is
+ *     guarded by an atomic DB claim inside the runner itself, so it never
+ *     double-runs a migration even across processes.
  */
 export async function register() {
   // Runtime boundary: Next.js compiles instrumentation.ts for BOTH the Node.js
@@ -51,6 +57,7 @@ export async function register() {
     __projectTimeLoopStarted?: boolean;
     __screenshotProcessingLoopStarted?: boolean;
     __syncDeviceCountLoopStarted?: boolean;
+    __infraMigrationLoopStarted?: boolean;
   };
 
   // 1. Hourly maintenance scheduler (production only — matches prior behavior).
@@ -130,5 +137,28 @@ export async function register() {
     setInterval(tick, safeInterval * 1000);
 
     console.log(`[jobs] device-count sync loop started (interval ${safeInterval}s)`);
+  }
+
+  // 5. Infrastructure data-migration runner loop — dev AND production.
+  //    Runs approved change requests' queued migrations. The runner claims
+  //    each migration atomically (queued → migrating updateMany), so multiple
+  //    server processes never run the same migration twice.
+  if (!g.__infraMigrationLoopStarted) {
+    g.__infraMigrationLoopStarted = true;
+
+    const { runMigrationJob } = await import('@/lib/migration/runner');
+
+    const intervalSec = parseInt(process.env.INFRA_MIGRATION_INTERVAL_SECONDS || '30', 10);
+    const safeInterval = Number.isFinite(intervalSec) && intervalSec >= 10 ? intervalSec : 30;
+
+    const tick = () => {
+      runMigrationJob().catch((error) =>
+        console.error('[jobs] infrastructure migration run failed:', error)
+      );
+    };
+    await tick();
+    setInterval(tick, safeInterval * 1000);
+
+    console.log(`[jobs] infrastructure migration loop started (interval ${safeInterval}s)`);
   }
 }

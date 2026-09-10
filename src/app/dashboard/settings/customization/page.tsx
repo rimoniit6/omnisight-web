@@ -82,7 +82,7 @@ export default function CustomizationPage() {
   const [savingDb, setSavingDb] = useState(false);
   const [testing, setTesting] = useState<'ai' | 'db' | null>(null);
 
-  const settingsQuery = useQuery<{ data: OrgSettings }>({
+  const settingsQuery = useQuery<OrgSettings>({
     queryKey: ['org-settings', orgId],
     queryFn: async () => {
       const res = await fetch(`/api/organizations/${orgId}/settings`, { credentials: 'same-origin' });
@@ -94,7 +94,7 @@ export default function CustomizationPage() {
   });
 
   useEffect(() => {
-    const data = settingsQuery.data?.data;
+    const data = settingsQuery.data;
     if (data && !loaded) {
       setAiProvider(data.aiProvider ?? 'openai');
       setAiKey(data.hasAiKey ? KEEP_KEY : '');
@@ -166,29 +166,44 @@ export default function CustomizationPage() {
   const testAi = async () => {
     setTesting('ai');
     try {
-      const res = await fetch(`/api/organizations/${orgId}/settings/ai/test`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'same-origin',
-        body: JSON.stringify({
-          provider: aiProvider,
-          apiKey: aiKey && aiKey !== KEEP_KEY ? aiKey : undefined,
-          baseUrl: aiBaseUrl || undefined,
-        }),
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        toast.error(data.error || 'AI test failed');
+      let res: Response;
+      try {
+        res = await fetch(`/api/organizations/${orgId}/settings/ai/test`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'same-origin',
+          body: JSON.stringify({
+            provider: aiProvider,
+            apiKey: aiKey && aiKey !== KEEP_KEY ? aiKey : undefined,
+            baseUrl: aiBaseUrl || undefined,
+          }),
+        });
+      } catch {
+        // The API itself was unreachable — do NOT mislabel this as an AI failure.
+        toast.error('Connection test unavailable', {
+          description: 'OmniSight could not reach the server. Please check your connection and try again.',
+        });
         return;
       }
-      if (data.data?.status === 'connected') {
-        toast.success('AI connection successful');
+      const data = await res.json().catch(() => null);
+      if (!res.ok) {
+        toast.error('AI connection failed', {
+          description: data && typeof data.error === 'string' ? data.error : 'AI test failed',
+        });
+        return;
+      }
+      if (!data) {
+        toast.error('Connection test unavailable', {
+          description: 'OmniSight could not reach the server. Please check your connection and try again.',
+        });
+        return;
+      }
+      if (data.status === 'connected') {
+        toast.success('AI connection successful', { description: data.message || 'Connection successful' });
       } else {
-        toast.error(data.data?.message || 'AI connection failed');
+        toast.error('AI connection failed', { description: data.message || 'AI connection failed' });
       }
       settingsQuery.refetch();
-    } catch {
-      toast.error('Network error');
     } finally {
       setTesting(null);
     }
@@ -231,30 +246,47 @@ export default function CustomizationPage() {
   const testDb = async () => {
     setTesting('db');
     try {
-      const res = await fetch(`/api/organizations/${orgId}/settings/database/test`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'same-origin',
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        toast.error(data.error || 'Database test failed');
+      let res: Response;
+      try {
+        res = await fetch(`/api/organizations/${orgId}/settings/database/test`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'same-origin',
+        });
+      } catch {
+        // The API itself was unreachable — do NOT mislabel this as a DB failure.
+        toast.error('Connection test unavailable', {
+          description: 'OmniSight could not reach the server. Please check your connection and try again.',
+        });
         return;
       }
-      if (data.data?.status === 'connected') {
-        toast.success('Database connection successful');
+      const data = await res.json().catch(() => null);
+      if (!res.ok) {
+        toast.error('Connection failed', {
+          description: data && typeof data.error === 'string' ? data.error : 'Database test failed',
+        });
+        return;
+      }
+      if (!data) {
+        toast.error('Connection test unavailable', {
+          description: 'OmniSight could not reach the server. Please check your connection and try again.',
+        });
+        return;
+      }
+      if (data.status === 'success' || data.status === 'connected') {
+        toast.success('Connection successful', { description: 'OmniSight can connect to this database.' });
+      } else if (data.status === 'not_configured') {
+        toast.info(data.message || 'No dedicated database configured');
       } else {
-        toast.error(data.data?.message || 'Database connection failed');
+        toast.error('Connection failed', { description: data.message || 'Database connection failed' });
       }
       settingsQuery.refetch();
-    } catch {
-      toast.error('Network error');
     } finally {
       setTesting(null);
     }
   };
 
-  const settings = settingsQuery.data?.data;
+  const settings = settingsQuery.data;
 
   return (
     <div className="mx-auto max-w-3xl p-6">

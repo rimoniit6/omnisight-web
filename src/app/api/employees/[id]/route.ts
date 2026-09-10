@@ -3,6 +3,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { Prisma } from '@prisma/client';
 import { authError, requireSessionOrg, requireAdminOrg } from '@/lib/api';
+import { getEmployeeDeleteImpact } from '@/lib/delete-impact';
+import { getClientIp } from '@/lib/agent/auth';
 import { log, requestContext } from '@/lib/logger';
 
 const EMPLOYEE_STATUSES = ['active', 'inactive', 'archived'] as const;
@@ -225,15 +227,46 @@ export async function DELETE(
     const { id } = await params;
     const existing = await db.employee.findFirst({
       where: { id, organizationId: admin.organizationId },
-      select: { id: true },
+      select: { id: true, firstName: true, lastName: true, status: true },
     });
     if (!existing) return NextResponse.json({ error: 'Employee not found' }, { status: 404 });
 
-    const employee = await db.employee.update({
-      where: { id },
-      data: { status: 'archived' },
+    // Informational impact (employee delete is the project's soft-archive
+    // pattern — all history is preserved).
+    const impact = await getEmployeeDeleteImpact(id, admin.organizationId);
+
+    const employee = await db.$transaction(async (tx) => {
+      const archived = await tx.employee.update({
+        where: { id },
+        data: { status: 'archived' },
+      });
+
+      // Security: an archived employee must no longer be able to authenticate
+      // through their agent login. The AgentAccount row is kept (1:1 with the
+      // employee) but disabled, so the employee record's audit trail stays
+      // intact while the dead credential is inert. Agent authentication
+      // rejects disabled accounts.
+      await tx.agentAccount.updateMany({
+        where: { employeeId: id, status: 'active' },
+        data: { status: 'disabled' },
+      });
+
+      await tx.auditLog.create({
+        data: {
+          action: 'delete',
+          resource: 'employee',
+          resourceId: id,
+          description: `Employee ${existing.firstName} ${existing.lastName} archived (DELETE → soft)${impact.preserved?.some((p) => p.model === 'agentAccount') ? '; agent login disabled' : ''}.`,
+          userId: admin.userId,
+          ipAddress: getClientIp(req),
+          organizationId: admin.organizationId,
+        },
+      });
+
+      return archived;
     });
-    return NextResponse.json({ data: employee });
+
+    return NextResponse.json({ data: employee, archived: true, impact });
   } catch (error) {
     log.error('api.employees.id.', { error: String('Employee DELETE error:') }, requestContext(req));
     return NextResponse.json({ error: 'Failed to archive employee' }, { status: 500 });

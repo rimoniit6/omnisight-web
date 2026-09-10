@@ -3,17 +3,9 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { useAuthStore } from '@/lib/store';
-import { Building2, Check, ChevronDown, Loader2, Plus, Search, X } from 'lucide-react';
+import { Building2, Check, ChevronDown, Loader2, Search, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 
@@ -28,11 +20,15 @@ interface Organization {
 }
 
 /**
- * Organization Switcher — allows users with multiple organization memberships
- * to switch their active organization without logging out.
+ * Organization Switcher — allows normal users with multiple organization
+ * memberships to switch their active organization without logging out.
  *
- * For Super Admin: shows ALL organizations (no membership required).
- * For normal users: shows only organizations where user has membership.
+ * SUPER ADMIN IS EXCLUDED BY DESIGN: the platform administrator is NOT an
+ * operational organization user. There is no SA switch UX, and no SA
+ * quick-create dialog (creation goes exclusively through the Control Center
+ * provisioning flow → POST /api/admin/organizations/create). The switch API
+ * itself remains available for legitimate multi-membership users and support
+ * use; only this UI path is gated off for super_admin.
  *
  * SECURITY: The switch is purely a UX mechanism. Every API/database query
  * continues to derive organization scope from authenticated server-side context.
@@ -46,9 +42,6 @@ export function OrgSwitcher() {
   const [switching, setSwitching] = useState(false);
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState('');
-  const [createDialogOpen, setCreateDialogOpen] = useState(false);
-  const [createName, setCreateName] = useState('');
-  const [createLoading, setCreateLoading] = useState(false);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const queryClient = useQueryClient();
 
@@ -140,48 +133,23 @@ export function OrgSwitcher() {
     }
   };
 
-  const handleCreate = async () => {
-    if (!createName.trim() || createLoading) return;
-    setCreateLoading(true);
-    try {
-      const res = await fetch('/api/super-admin/organizations', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
-        },
-        credentials: 'same-origin',
-        body: JSON.stringify({ name: createName.trim() }),
-      });
-
-      if (res.ok) {
-        toast.success('Organization created');
-        setCreateDialogOpen(false);
-        setCreateName('');
-        // Refresh organization list
-        await fetchOrganizations();
-        queryClient.invalidateQueries();
-      } else {
-        const err = await res.json().catch(() => ({}));
-        toast.error(err.error || 'Failed to create organization');
-      }
-    } catch {
-      toast.error('Network error. Please try again.');
-    } finally {
-      setCreateLoading(false);
-    }
-  };
+  // ─── Organization list actions ──────────────────────────────────────
+  // (The SA quick-create path was removed: organization creation is the
+  // Control Center provisioning flow's exclusive job — see §6 of the
+  // Super Admin cleanup. The POST /api/super-admin/organizations API itself
+  // remains server-side for authorized consumers.)
 
   // Don't show if:
   // - No token (not authenticated)
-  // - Only one organization and not Super Admin (no need to switch)
+  // - Super Admin (platform admin is not an operational org user — no switch
+  //   UX, no quick-create dialog; creation lives in the Control Center)
+  // - Only one organization (no need to switch)
   // - Still loading and no organizations yet
-  if (!token || (!loading && organizations.length === 0)) {
+  if (!token || isSuperAdmin || (!loading && organizations.length === 0)) {
     return null;
   }
 
-  // Super Admin always sees the switcher (even with 0 or 1 orgs, for Create button)
-  if (!isSuperAdmin && organizations.length <= 1) {
+  if (organizations.length <= 1) {
     return null;
   }
 
@@ -303,62 +271,10 @@ export function OrgSwitcher() {
                 )}
               </div>
 
-              {/* Create Organization (Super Admin only) */}
-              {isSuperAdmin && (
-                <>
-                  <div className="border-t border-border" />
-                  <button
-                    onClick={() => {
-                      setOpen(false);
-                      setCreateDialogOpen(true);
-                    }}
-                    className="w-full flex items-center gap-2.5 px-3 py-2.5 text-left hover:bg-accent/50 transition-colors text-primary"
-                  >
-                    <div className="h-7 w-7 rounded-md bg-primary/10 flex items-center justify-center shrink-0">
-                      <Plus className="w-3.5 h-3.5" />
-                    </div>
-                    <span className="text-sm font-medium">Create Organization</span>
-                  </button>
-                </>
-              )}
             </div>
           </>
         )}
       </div>
-
-      {/* Create Organization Dialog */}
-      <Dialog open={createDialogOpen} onOpenChange={setCreateDialogOpen}>
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle>Create Organization</DialogTitle>
-            <DialogDescription>
-              Create a new organization for OmniSight.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-4 py-2">
-            <div>
-              <label className="text-sm font-medium">Organization Name</label>
-              <Input
-                placeholder="e.g. Acme Corporation"
-                value={createName}
-                onChange={(e) => setCreateName(e.target.value)}
-                className="mt-1"
-                onKeyDown={(e) => e.key === 'Enter' && handleCreate()}
-                autoFocus
-              />
-            </div>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setCreateDialogOpen(false)}>
-              Cancel
-            </Button>
-            <Button disabled={createLoading || !createName.trim()} onClick={handleCreate}>
-              {createLoading && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
-              Create Organization
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </>
   );
 }

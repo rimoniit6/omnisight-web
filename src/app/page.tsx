@@ -1,11 +1,10 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { AppSidebar } from '@/components/layout/app-sidebar';
 import { AppHeader } from '@/components/layout/app-header';
 import { CommandPalette } from '@/components/layout/command-palette';
 import { MobileSidebarContent } from '@/components/layout/mobile-sidebar';
-import { CreateOrganizationScreen } from '@/components/auth/create-organization-screen';
 import { ForcePasswordChangeScreen } from '@/components/auth/ForcePasswordChangeScreen';
 import { MarketingPage } from '@/components/marketing/MarketingPage';
 import { useAppStore, useAuthStore } from '@/lib/store';
@@ -49,7 +48,14 @@ const AudioPage = dynamic(() => import('@/components/audio/audio-page').then(m =
 const UsersPage = dynamic(() => import('@/components/users/users-page').then(m => ({ default: m.UsersPage })), { ssr: false });
 const SuperAdminOrganizationsPage = dynamic(() => import('@/components/super-admin/super-admin-organizations-page').then(m => ({ default: m.SuperAdminOrganizationsPage })), { ssr: false });
 const SuperAdminOrganizationDetailPage = dynamic(() => import('@/components/super-admin/super-admin-organization-detail-page').then(m => ({ default: m.SuperAdminOrganizationDetailPage })), { ssr: false });
+const SuperAdminOverviewPage = dynamic(() => import('@/components/super-admin/sa-overview-page').then(m => ({ default: m.SuperAdminOverviewPage })), { ssr: false });
+const SuperAdminPackagesPage = dynamic(() => import('@/components/super-admin/sa-billing-pages').then(m => ({ default: m.SuperAdminPackagesPage })), { ssr: false });
+const SuperAdminCreateOrganizationPage = dynamic(() => import('@/components/super-admin/sa-create-organization-page').then(m => ({ default: m.SuperAdminCreateOrganizationPage })), { ssr: false });
+const SuperAdminLandingPage = dynamic(() => import('@/components/super-admin/sa-landing-page').then(m => ({ default: m.SuperAdminLandingPage })), { ssr: false });
+const SuperAdminAuditPage = dynamic(() => import('@/components/super-admin/sa-audit-page').then(m => ({ default: m.SuperAdminAuditPage })), { ssr: false });
 const BrandingPage = dynamic(() => import('@/components/branding/branding-page').then(m => ({ default: m.BrandingPage })), { ssr: false });
+const DataInfrastructurePage = dynamic(() => import('@/components/data-infrastructure/data-infrastructure-page').then(m => ({ default: m.DataInfrastructurePage })), { ssr: false });
+const SaInfraRequestsPage = dynamic(() => import('@/components/super-admin/sa-infra-requests-page').then(m => ({ default: m.SaInfraRequestsPage })), { ssr: false });
 
 const pageComponents: Record<string, React.ComponentType> = {
   dashboard: DashboardPage,
@@ -83,14 +89,42 @@ const pageComponents: Record<string, React.ComponentType> = {
   users: UsersPage,
   'super-admin-organizations': SuperAdminOrganizationsPage,
   'super-admin-organization-detail': SuperAdminOrganizationDetailPage,
+  'sa-overview': SuperAdminOverviewPage,
+  'sa-packages': SuperAdminPackagesPage,
+  'sa-create-organization': SuperAdminCreateOrganizationPage,
+  'sa-landing': SuperAdminLandingPage,
+  'sa-audit': SuperAdminAuditPage,
   branding: BrandingPage,
+  'data-infrastructure': DataInfrastructurePage,
+  'sa-infra-requests': SaInfraRequestsPage,
 };
 
 function AppLayout() {
-  const { currentPage, mobileOpen, setMobileOpen } = useAppStore();
+  const { currentPage, mobileOpen, setMobileOpen, setCurrentPage } = useAppStore();
   const isMobile = useIsMobile();
   const branding = useEffectiveBranding();
+  const authUser = useAuthStore((s) => s.user);
   const PageComponent = pageComponents[currentPage] || DashboardPage;
+
+  // ── Role-aware entry page (SUPER_ADMIN_POST_LOGIN_REDIRECT) ──────────
+  // The SPA shell's default page is the tenant operational dashboard, which
+  // is the WRONG landing for the platform administrator. An authenticated
+  // super_admin must land on the Control Center Overview — never the tenant
+  // dashboard — regardless of any organization context restored by the
+  // server (last-active-org) or a previous session's currentPage value.
+  // This is a one-time role-gated correction on mount: it does not restrict
+  // navigation afterwards and does not affect org-bound users (they keep
+  // 'dashboard'). The sidebar already shows ONLY the Control Center group
+  // for an org-less super_admin (visibleGroupsFor), so the tenant surface is
+  // not reachable from the shell either.
+  const entryPageResolved = useRef(false);
+  useEffect(() => {
+    if (entryPageResolved.current) return;
+    if (authUser?.role === 'super_admin' && currentPage === 'dashboard') {
+      entryPageResolved.current = true;
+      setCurrentPage('sa-overview');
+    }
+  }, [authUser?.role, currentPage, setCurrentPage]);
 
   return (
     <div className='h-screen overflow-hidden flex flex-col'>
@@ -105,7 +139,7 @@ function AppLayout() {
         {!isMobile && <AppSidebar />}
         <div className='flex-1 flex flex-col min-w-0'>
           <AppHeader isMobile={isMobile} onMobileMenuToggle={() => setMobileOpen(true)} />
-          <main id="main-content" role="main" aria-label="Main content" className='flex-1 p-4 md:p-6 overflow-y-auto min-h-0'>
+          <main id="main-content" role="main" aria-label="Main content" className='flex-1 px-4 py-4 md:px-6 md:py-6 lg:px-8 xl:px-10 overflow-y-auto min-h-0 w-full'>
             <AnimatePresence mode="wait">
               <motion.div
                 key={currentPage}
@@ -185,9 +219,6 @@ function AuthGuard() {
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
   const hydrated = useAuthStore((s) => s._hydrated);
   const user = useAuthStore((s) => s.user);
-  const organization = useAuthStore((s) => s.organization);
-  const organizationCount = useAuthStore((s) => s.organizationCount);
-
   // Wait for cookie-session hydration before deciding login vs app.
   if (!hydrated) {
     return (
@@ -202,14 +233,6 @@ function AuthGuard() {
   }
 
   if (!isAuthenticated) return <MarketingPage />;
-
-  // Fresh-deployment bootstrap: an org-less Super Admin must create the first
-  // organization ONLY when zero organizations exist in the database.
-  // When organizations already exist, the Super Admin can enter the application
-  // directly and use the Organization Switcher for operational context.
-  if (user?.role === 'super_admin' && !organization && organizationCount !== null && organizationCount === 0) {
-    return <CreateOrganizationScreen />;
-  }
 
   // First-login security gate: a provisioned admin with a temporary password
   // must set a new password before accessing the rest of the application.

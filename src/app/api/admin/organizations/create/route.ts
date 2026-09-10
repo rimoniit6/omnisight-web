@@ -10,6 +10,7 @@ import {
   BodyParseError,
 } from '@/lib/api';
 import { hashPassword, getRoleLabel } from '@/lib/auth';
+import { isDeploymentMode } from '@/lib/deployment-mode';
 import { normalizeEmail, sendWelcomeEmail } from '@/lib/email';
 import { log, requestContext } from '@/lib/logger';
 
@@ -37,9 +38,9 @@ import { log, requestContext } from '@/lib/logger';
  *                     and returned ONCE in the response),
  *   planName?: string ("Free" | "Pro" | "Business" | ...),
  *   timezone?: string (default "Asia/Dhaka"),
- *   deploymentMode?: 'MANAGED' | 'PRIVATE' (default MANAGED; CUSTOMER_DB is
- *                     rejected until a customer primary-database mechanism
- *                     exists — Phase 2 §9-10),
+ *   deploymentMode?: 'MANAGED' | 'CUSTOMER_DB' | 'PRIVATE' (default MANAGED
+ *                     when omitted — the explicitly defined legacy default;
+ *                     any other value is rejected, never silently remapped),
  *   status?: 'active' | 'pending' (default active; pending keeps the org
  *            locked out via requireActiveSessionOrg until SA activates it)
  * }
@@ -70,14 +71,11 @@ export async function POST(req: NextRequest) {
   const adminName = typeof body.adminName === 'string' ? body.adminName.trim().slice(0, 120) : null;
   const timezone = typeof body.timezone === 'string' && body.timezone.trim() ? body.timezone.trim() : 'Asia/Dhaka';
 
-  // Phase 2 §9: deployment mode is explicit at creation. CUSTOMER_DB is
-  // rejected (no datasource infra — fail closed, never inferred from useOwnDb).
-  const deploymentMode = typeof body.deploymentMode === 'string' ? body.deploymentMode : 'MANAGED';
-  if (deploymentMode !== 'MANAGED' && deploymentMode !== 'PRIVATE') {
+  // V1 active: MANAGED, CUSTOMER_DB. PRIVATE is deprecated and rejected.
+  const deploymentMode = body.deploymentMode === undefined ? 'MANAGED' : body.deploymentMode;
+  if (!isDeploymentMode(deploymentMode) || deploymentMode === 'PRIVATE') {
     return apiError(
-      deploymentMode === 'CUSTOMER_DB'
-        ? 'CUSTOMER_DB requires a configured customer primary database (Configuration: Pending). Create as MANAGED or PRIVATE instead.'
-        : 'Invalid deploymentMode. Must be: MANAGED or PRIVATE',
+      'Invalid deploymentMode. Must be one of: MANAGED, CUSTOMER_DB',
       422,
     );
   }
@@ -141,6 +139,45 @@ export async function POST(req: NextRequest) {
     }
   }
   const isPaid = plan !== null && plan.name !== 'Free' && plan.priceMonthly > 0;
+
+  // Optional manual-payment information captured at provisioning (manual sales
+  // model — no payment gateway). Fields describe the payment record on the
+  // created invoice. Invoice status stays PENDING unless the Super Admin
+  // records the payment as received (PAID). No secrets are ever accepted.
+  const PAYMENT_METHODS = ['Bank_Transfer', 'bKash', 'Nagad', 'Rocket', 'Cash', 'Other'];
+  let payStatus: 'PENDING' | 'PAID' = 'PENDING';
+  let payMethod: string | undefined;
+  let payRef: string | undefined;
+  let payDate: Date | undefined;
+  let payNotes: string | undefined;
+  if (isPaid) {
+    if (body.paymentStatus !== undefined) {
+      const ps = String(body.paymentStatus);
+      if (ps !== 'PENDING' && ps !== 'PAID') return apiError("paymentStatus must be 'PENDING' or 'PAID'", 422);
+      payStatus = ps as 'PENDING' | 'PAID';
+    }
+    if (body.paymentMethod !== undefined) {
+      if (typeof body.paymentMethod !== 'string' || !PAYMENT_METHODS.includes(body.paymentMethod)) {
+        return apiError(`paymentMethod must be one of: ${PAYMENT_METHODS.join(', ')}`, 422);
+      }
+      payMethod = body.paymentMethod;
+    }
+    if (body.transactionId !== undefined) {
+      const ref = typeof body.transactionId === 'string' ? body.transactionId.trim() : '';
+      if (ref.length > 120) return apiError('transactionId must be at most 120 characters', 422);
+      payRef = ref || undefined;
+    }
+    if (body.paidAt !== undefined) {
+      const parsed = new Date(String(body.paidAt));
+      if (Number.isNaN(parsed.getTime())) return apiError('paidAt must be a valid date', 422);
+      if (parsed.getTime() > Date.now() + 86_400_000) return apiError('paidAt cannot be in the future', 422);
+      payDate = parsed;
+    }
+    if (body.paymentNotes !== undefined) {
+      const n = typeof body.paymentNotes === 'string' ? body.paymentNotes.trim() : '';
+      payNotes = n ? n.slice(0, 500) : undefined;
+    }
+  }
 
   const hashedPassword = await hashPassword(password);
 
@@ -215,9 +252,12 @@ export async function POST(req: NextRequest) {
           invoiceNumber,
           amount: plan.priceMonthly,
           currency: plan.currency || 'BDT',
-          status: 'PENDING',
+          status: payStatus,
           dueDate,
-          notes: `Subscription to ${plan.name} (manual provisioning)`,
+          paidAt: payStatus === 'PAID' ? (payDate ?? new Date()) : payDate ?? null,
+          ...(payMethod ? { paymentMethod: payMethod } : {}),
+          ...(payRef ? { transactionId: payRef } : {}),
+          notes: [`Subscription to ${plan.name} (manual provisioning)`, payNotes].filter(Boolean).join('\n') || undefined,
         },
       });
 

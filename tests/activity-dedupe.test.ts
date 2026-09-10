@@ -59,7 +59,17 @@ let runRetentionForOrg: typeof import('../src/lib/jobs/retention')['runRetention
 const ORG_SLUG = 'dedupe-test';
 
 async function seedOrg(name: string) {
-  return db.organization.create({ data: { name, slug: `${ORG_SLUG}-${name.toLowerCase().replace(/[^a-z0-9]+/g, '-')}-${Date.now()}-${randomBytes(3).toString('hex')}` } });
+  return db.organization.create({
+    data: {
+      name,
+      slug: `${ORG_SLUG}-${name.toLowerCase().replace(/[^a-z0-9]+/g, '-')}-${Date.now()}-${randomBytes(3).toString('hex')}`,
+      // Deterministic entitlement: a future trial window grants full agent
+      // access via hasValidTrial (documented trial = full-access behavior),
+      // removing the flaky "No subscription found" 401 from this test.
+      // This only seeds trial state — it does not change any security rule.
+      trialEndsAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
+    },
+  });
 }
 
 async function seedEmployee(orgId: string, code: string) {
@@ -151,18 +161,22 @@ const ACTIVITY_URL = 'http://localhost:3000/api/agent/activity';
 
 let orgA: { id: string };
 let orgB: { id: string };
+let orgC: { id: string };
 let empA1: { id: string };
 let empA2: { id: string };
 let empB1: { id: string };
+let empC1: { id: string };
 let tokenA1: string;
 let tokenA2: string;
 let tokenB1: string;
+let tokenC1: string;
 // Fixed, route-valid RFC-4122 v4-shaped ids (distinct per scenario).
 const BATCH_1 = '11111111-1111-4111-a111-111111111111';
 const BATCH_2 = '22222222-2222-4222-a222-222222222222';
 const BATCH_X = '33333333-3333-4333-a333-333333333333';
 const BATCH_RACE = '99999999-9999-4999-a999-999999999999';
 const BATCH_FLAG_OFF = '44444444-4444-4444-a444-444444444444';
+const BATCH_DEFAULT_ON = '55555555-5555-4555-a555-555555555555';
 
 before(async () => {
   const dbModule = await import('../src/lib/db');
@@ -172,17 +186,19 @@ before(async () => {
 
   orgA = await seedOrg('org-a');
   orgB = await seedOrg('org-b');
+  orgC = await seedOrg('org-c');
   empA1 = await seedEmployee(orgA.id, 'AD-EMP-A1');
   empA2 = await seedEmployee(orgA.id, 'AD-EMP-A2');
   empB1 = await seedEmployee(orgB.id, 'AD-EMP-B1');
-  await Promise.all([
-    grantConsent(empA1.id, orgA.id, 'activity_tracking'),
-    grantConsent(empA2.id, orgA.id, 'activity_tracking'),
-    grantConsent(empB1.id, orgB.id, 'activity_tracking'),
-  ]);
+  empC1 = await seedEmployee(orgC.id, 'AD-EMP-C1');
+  await grantConsent(empA1.id, orgA.id, 'activity_tracking');
+  await grantConsent(empA2.id, orgA.id, 'activity_tracking');
+  await grantConsent(empB1.id, orgB.id, 'activity_tracking');
+  await grantConsent(empC1.id, orgC.id, 'activity_tracking');
   tokenA1 = await agentTokenFor(empA1.id);
   tokenA2 = await agentTokenFor(empA2.id);
   tokenB1 = await agentTokenFor(empB1.id);
+  tokenC1 = await agentTokenFor(empC1.id);
 });
 
 after(async () => {
@@ -366,9 +382,32 @@ test('P1-9: malformed batchId / batchSeq rejected with 422', async () => {
   assert.equal(await countReceipts(orgA.id, empA1.id, BATCH_X), 0);
 });
 
-// ─── P1-10 Retention ───────────────────────────────────────────────────────
+// ─── P1-10 Default ON (decision A) ─────────────────────────────────────────
 
-test('P1-10: stale receipts are purged by the activity retention sweep; fresh kept', async () => {
+test('P1-10: activity_dedupe DEFAULTS ON — fresh org (no setting) dedupes by default', async () => {
+  // orgC is seeded with NO activity_dedupe setting; the resolution default is
+  // now true (decision A, 2026-09-08). Verify a replayed batchId dedupes.
+  const first = await route.POST(
+    req(tokenC1, { method: 'POST', url: ACTIVITY_URL, body: { activities: activityBatch(2, 'default-on'), batchId: BATCH_DEFAULT_ON, batchSeq: 1 } })
+  );
+  assert.equal(first.status, 200);
+  assert.equal((await first.json()).count, 2, 'first upload accepted');
+  assert.equal(await countActivities(empC1.id), 2);
+
+  const replay = await route.POST(
+    req(tokenC1, { method: 'POST', url: ACTIVITY_URL, body: { activities: activityBatch(2, 'default-on'), batchId: BATCH_DEFAULT_ON, batchSeq: 2 } })
+  );
+  assert.equal(replay.status, 200);
+  const body = (await replay.json()) as { count: number; deduplicated: number };
+  assert.equal(body.count, 0, 'default-on → replay deduped by default');
+  assert.ok(body.deduplicated > 0, 'dedupe reporting present under the default');
+  assert.equal(await countActivities(empC1.id), 2, 'no duplicate rows under the default');
+  assert.equal(await countReceipts(orgC.id, empC1.id, BATCH_DEFAULT_ON), 1, 'one receipt under the default');
+});
+
+// ─── P1-11 Retention ───────────────────────────────────────────────────────
+
+test('P1-11: stale receipts are purged by the activity retention sweep; fresh kept', async () => {
   // Fresh receipts exist under org A (BATCH_1 for empA1). Backdate one receipt
   // beyond the activity window and run the org sweep.
   await db.organizationSetting.create({
@@ -404,9 +443,9 @@ test('P1-10: stale receipts are purged by the activity retention sweep; fresh ke
   });
 });
 
-// ─── P1-11 Cross-repo contract (agent tree present) ────────────────────────
+// ─── P1-12 Cross-repo contract (agent tree present) ────────────────────────
 
-test('P1-11: agent sends batchId/batchSeq with a retry-stable batch id (contract)', () => {
+test('P1-12: agent sends batchId/batchSeq with a retry-stable batch id (contract)', () => {
   // Same sibling-tree convention as branding-regression.test.ts: when the
   // omnisight-agent checkout is present next to omnisight-web, verify the
   // agent's upload contract statically. When absent the check is skipped —

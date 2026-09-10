@@ -119,12 +119,13 @@ export const MONITORING_KEYS = {
   // OrganizationSetting storage and the org-isolation guarantees of every
   // other key — no separate flag system is invented.
   //
-  // activity_dedupe (default OFF — safe rollout): when enabled, activity
-  // uploads that carry a batchId are deduplicated through
+  // activity_dedupe (default ON — decision A, 2026-09-08): when enabled,
+  // activity uploads that carry a batchId are deduplicated through
   // ActivityBatchReceipt (one receipt per organization+employee+batchId,
   // written in the same transaction as the rows). When disabled, ingestion
-  // keeps today's exact behavior and receipts are never consulted.
-  activity_dedupe: { type: 'boolean', default: false },
+  // keeps today's exact behavior and receipts are never consulted. Old
+  // agents that omit batchId are still accepted (legacy path).
+  activity_dedupe: { type: 'boolean', default: true },
   // agent_min_version (optional, INFORMATIONAL): an org-declared semantic
   // version floor (e.g. "1.2.0") for FUTURE capability gating. Nothing
   // enforces it in Phase 1 — older agents are never rejected. Empty/unset =
@@ -389,11 +390,16 @@ export async function resolveAlertRulesEnabled(orgId: string): Promise<boolean> 
   return (await getOrgSetting(orgId, ALERT_RULES_ENABLED_SETTING_KEY, 'false')) === 'true';
 }
 
-// Cheap single-row read that mirrors the registry default (false) exactly;
+// Cheap single-row read that mirrors the registry default (true) exactly;
 // resolveOrgMonitoring() offers the fully-typed alternative when a caller
 // already needs the whole org configuration.
+//
+// DEFAULT ON (decision A, 2026-09-08): batch-id deduplication is enabled for
+// an org unless it is explicitly set to 'false'. Old agents that omit batchId
+// are still accepted via the legacy non-dedupe insert path, so this default is
+// backward compatible.
 export async function resolveActivityDedupeEnabled(orgId: string): Promise<boolean> {
-  return (await getOrgSetting(orgId, ACTIVITY_DEDUPE_SETTING_KEY, 'false')) === 'true';
+  return (await getOrgSetting(orgId, ACTIVITY_DEDUPE_SETTING_KEY, 'true')) === 'true';
 }
 
 // ─── Phase 3: server-authoritative classification flag ─────────────────────

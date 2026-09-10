@@ -8,7 +8,7 @@
  *  ACO-04  Agent A token → heartbeat works only for own org
  *  ACO-05  Agent A token with corrupted org → validateAgentToken rejects
  *  ACO-06  Expired agent token → rejected
- *  ACO-07  Agent from suspended org → all operations blocked
+ *  ACO-07  Agent from paused org → all operations blocked
  *  ACO-08  Agent token org mismatch detection (token org ≠ employee org)
  *
  * Runs against a THROWAWAY PostgreSQL database.
@@ -59,6 +59,14 @@ before(async () => {
 
   orgA = await db.organization.create({ data: { name: 'Attack Org A', slug: 'attack-org-a' } });
   orgB = await db.organization.create({ data: { name: 'Attack Org B', slug: 'attack-org-b' } });
+
+  // Create plans and active subscriptions for both orgs (required by subscription entitlement enforcement)
+  const planA = await db.plan.create({ data: { name: 'TestPlanA', priceMonthly: 100, features: ['screenshots', 'activity_tracking'] } });
+  const planB = await db.plan.create({ data: { name: 'TestPlanB', priceMonthly: 100, features: ['screenshots', 'activity_tracking'] } });
+  const subA = await db.subscription.create({ data: { organizationId: orgA.id, planId: planA.id, status: 'ACTIVE', startDate: new Date() } });
+  const subB = await db.subscription.create({ data: { organizationId: orgB.id, planId: planB.id, status: 'ACTIVE', startDate: new Date() } });
+  await db.organization.update({ where: { id: orgA.id }, data: { subscriptionId: subA.id } });
+  await db.organization.update({ where: { id: orgB.id }, data: { subscriptionId: subB.id } });
 
   empA = await db.employee.create({
     data: { employeeId: 'ACO-A-001', firstName: 'Agent', lastName: 'A', email: 'agent-a@aco.test', organizationId: orgA.id, status: 'active', agentApproved: true },
@@ -239,22 +247,22 @@ test('ACO-05: Expired agent token is rejected', async () => {
   assert.equal(result.valid, false, 'Expired token must be rejected');
 });
 
-// ─── ACO-06: Agent from suspended org → blocked ────────────────────────
+// ─── ACO-06: Agent from paused org → blocked ────────────────────────
 
-test('ACO-06: Agent from suspended org is blocked', async () => {
+test('ACO-06: Agent from paused org is blocked', async () => {
   const { validateAgentToken } = await import('../src/lib/agent/auth');
   
   // Suspend Org A
-  await db.organization.update({ where: { id: orgA.id }, data: { status: 'suspended' } });
+  await db.organization.update({ where: { id: orgA.id }, data: { status: 'paused' } });
   
   try {
-    const suspendedReq = new NextRequest('http://localhost:3000/api/agent/heartbeat', {
+    const pausedReq = new NextRequest('http://localhost:3000/api/agent/heartbeat', {
       method: 'POST',
       headers: { 'authorization': `Bearer ${tokenA}` },
       body: JSON.stringify({ timestamp: new Date().toISOString() }),
     });
     
-    const result = await validateAgentToken(suspendedReq);
+    const result = await validateAgentToken(pausedReq);
     assert.equal(result.valid, false, 'Suspended org agent must be rejected');
     assert.ok(result.error?.toLowerCase().includes('organization') || result.error?.toLowerCase().includes('active'), `Error should mention org: ${result.error}`);
   } finally {

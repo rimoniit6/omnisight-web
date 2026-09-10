@@ -172,17 +172,14 @@ export type OrgScopeResult =
 /**
  * Canonical authorization helper (P0). Authenticate, derive the organization
  * STRICTLY from the verified session/JWT (never client input), load the
- * Organization row, and enforce `status === 'active'`. Rejects
- * suspended/archived orgs with 403 even for an already-authenticated session —
- * this is what stops a retained web-admin session from keeping access after the
- * organization is suspended or archived.
+ * Organization row, and enforce `status === 'active'`. Rejects  * paused/archived orgs with 403 even for an already-authenticated session —
+ * this is what stops a retained web-admin session from keeping access after the  * organization is paused or archived.
  *
  * SECURITY: organization identity is taken only from `auth.activeOrganizationId`
  * or `auth.organizationId` (both HMAC-signed claims). Query params, request
  * bodies, Zustand state, localStorage and URL values are NEVER consulted.
  *
- * The only exception is the org-less super_admin global scope (`allowGlobal`),
- * which must stay usable so Super Admin can still manage suspended/archived
+ * The only exception is the org-less super_admin global scope (`allowGlobal`),  * which must stay usable so Super Admin can still manage paused/archived
  * orgs via the super-admin API.
  */
 export type ActiveSessionOrgResult =
@@ -284,8 +281,7 @@ export type ManagerOrgResult =
 /**
  * Authenticate a request and require an ORG-BOUND manager-or-above session
  * (report generation/export S-3). Organization identity is always derived
- * from the verified session — never from client-supplied input. Org status is
- * enforced (suspended/archived -> 403).
+ * from the verified session — never from client-supplied input. Org status is  * enforced (paused/archived -> 403).
  */
 export async function requireManagerOrg(
   req: NextRequest
@@ -320,8 +316,7 @@ export type OrgAdminResult =
  *
  * SECURITY: `targetOrgId` is taken from the URL, but the caller's own
  * authority is derived ONLY from the verified session — we never trust a
- * client-supplied organization id for the caller's identity. For non-super-admins
- * the target org must be ACTIVE (suspended/archived orgs are locked for normal
+ * client-supplied organization id for the caller's identity. For non-super-admins  * the target org must be ACTIVE (paused/archived orgs are locked for normal
  * admins; super_admin may still manage them).
  */
 export async function requireOrgAdmin(

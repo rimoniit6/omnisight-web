@@ -49,6 +49,7 @@ npm run test:sentiment
 
 # Members
 npm run test:members-add
+npm run test:members-pagination
 ```
 
 ### E2E Tests
@@ -171,7 +172,7 @@ tsx --test tests/location-distance.test.ts
 | `png-dimensions.test.ts` | PNG dimension validation |
 | `timezone-boundaries.test.ts` | Timezone handling |
 | `create-user-flow-integration.test.ts` | User creation flow |
-| `demo-data-integrity.test.ts` | Demo data integrity |
+| `delete-impact.test.ts` | Dependency-aware delete system (org cascade, device retire, membership last-admin guard, employee agent disable) |
 | `react-duplicate-key-regression.test.ts` | React key regression |
 
 ## Code Quality

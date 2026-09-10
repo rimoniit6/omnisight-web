@@ -3,6 +3,7 @@ import { db } from '@/lib/db';
 import { hashPassword, verifyPassword } from '@/lib/auth';
 import { getClientIpFromHeaders } from '@/lib/rate-limit';
 import { log } from '@/lib/logger';
+import { checkAgentEntitlement } from '@/lib/subscription';
 
 
 // ─── Device claim secrets ─────────────────────────────────────────────────
@@ -140,7 +141,7 @@ export async function validateAgentToken(req: Request): Promise<{
       }
     }
 
-    // Organization suspension check: a suspended/archived org must not
+    // Organization pause check: a paused/archived org must not
     // allow agent operations. Fail closed.
     const org = await db.organization.findUnique({
       where: { id: agentToken.employee.organizationId },
@@ -156,6 +157,21 @@ export async function validateAgentToken(req: Request): Promise<{
     if (agentToken.organizationId !== agentToken.employee.organizationId) {
       log.warn('agent.auth.org_mismatch', { employeeId: agentToken.employee.employeeId, ip: getClientIp(req) });
       return { valid: false, error: 'Token organization mismatch' };
+    }
+
+    // ── Subscription entitlement enforcement (PRD §46) ───────────────────────
+    // The server is authoritative for subscription state. The Agent must NOT
+    // operate when the subscription is PAUSED, EXPIRED, CANCELLED, or PENDING.
+    // Trial organizations are treated as having full access.
+    const entitlement = await checkAgentEntitlement(agentToken.employee.organizationId);
+    if (!entitlement.allowed) {
+      log.warn('agent.auth.subscription_denied', {
+        employeeId: agentToken.employee.employeeId,
+        subscriptionStatus: entitlement.subscriptionStatus,
+        reason: entitlement.reason,
+        ip: getClientIp(req),
+      });
+      return { valid: false, error: entitlement.reason ?? 'Subscription not active' };
     }
 
     // Update lastUsedAt

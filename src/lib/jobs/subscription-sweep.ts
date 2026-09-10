@@ -6,7 +6,7 @@ import { db } from '@/lib/db';
 
 export interface SubscriptionSweepResult {
   expired: number;
-  suspendedOrgs: number;
+  pausedOrgs: number;
 }
 
 /**
@@ -24,8 +24,7 @@ export async function runSubscriptionSweep(now = new Date()): Promise<Subscripti
     data: { status: 'EXPIRED' },
   });
 
-  // 2) Suspension: orgs with no remaining active subscription and no valid
-  //    trial -> 'suspended'. Only active orgs are considered; a manually
+  // 2) Suspension: orgs with no remaining active subscription and no valid   //    trial -> 'paused'. Only active orgs are considered; a manually
   //    archived org is never touched.
   const orgs = await db.organization.findMany({
     where: { status: 'active' },
@@ -46,14 +45,14 @@ export async function runSubscriptionSweep(now = new Date()): Promise<Subscripti
     if (!hasActiveSub && !inTrial) toSuspend.push(org.id);
   }
 
-  let suspendedOrgs = 0;
+  let pausedOrgs = 0;
   if (toSuspend.length) {
     const res = await db.organization.updateMany({
       where: { id: { in: toSuspend } },
-      data: { status: 'suspended' },
+      data: { status: 'paused' },
     });
-    suspendedOrgs = res.count;
+    pausedOrgs = res.count;
   }
 
-  return { expired: expired.count, suspendedOrgs };
+  return { expired: expired.count, pausedOrgs };
 }

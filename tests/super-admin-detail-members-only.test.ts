@@ -8,8 +8,9 @@
  *     administration page (list / add / create user / role change /
  *     suspend & reactivate / remove membership).
  *   - The EMPLOYEES / DEVICES / PROJECTS / AUDIT LOGS tabs were REMOVED
- *     from this page (they remain available after switching into the
- *     organization via the Organization Switcher → operational dashboard).
+ *     from this page — the Super Admin is not an operational org user and
+ *     does not enter the tenant dashboard; the Organization Owner/Admin
+ *     handles operational monitoring in their own workspace.
  *   - The underlying Member CRUD API endpoints are PRESERVED (not deleted).
  *   - The sub-resource APIs that were previously surfaced as super-admin
  *     detail tabs (employees/devices/projects/audit-logs) remain intact
@@ -109,11 +110,14 @@ test('SAMD-4: page still fetches an organization detail (metadata/member count) 
   );
 });
 
-test('SAMD-5: page keeps the operational access path — Switch to Organization', () => {
-  assert.ok(/Switch to Organization/.test(detailSrc), 'page must offer Switch to Organization');
+test('SAMD-5: page has NO operational access path — no Switch to Organization', () => {
+  // The Super Admin is not an operational org user: the switch UI was removed
+  // (cleanup §5). The POST /api/me/organization/switch API remains server-side
+  // for legitimate multi-membership users — only this UI path is gone.
+  assert.ok(!/Switch to Organization/.test(detailSrc), 'page must NOT offer Switch to Organization');
   assert.ok(
-    detailSrc.includes('/api/me/organization/switch'),
-    'Switch to Organization must call the org-switch endpoint'
+    !detailSrc.includes('/api/me/organization/switch'),
+    'page must not call the org-switch endpoint from the UI'
   );
 });
 

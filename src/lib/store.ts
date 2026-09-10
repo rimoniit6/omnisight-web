@@ -32,10 +32,15 @@ export type PageType =
   | 'users'
   | 'super-admin-organizations'
   | 'super-admin-organization-detail'
+  | 'sa-overview'
+  | 'sa-packages'
+  | 'sa-create-organization'
+  | 'sa-landing'
+  | 'sa-audit'
   | 'branding'
   | 'billing'
-  | 'payments'
-  | 'leads';
+  | 'data-infrastructure'
+  | 'sa-infra-requests';
 
 function getInitialTourState(): boolean {
   if (typeof window === 'undefined') return false;
@@ -73,10 +78,6 @@ interface AuthState {
   token: string | null;
   user: AuthUser | null;
   organization: AuthOrg | null;
-  /** Total organization count — populated only for super_admin during hydrate.
-   *  Used by AuthGuard to distinguish "fresh deployment (0 orgs)" from
-   *  "org-less Super Admin with existing organizations". */
-  organizationCount: number | null;
   isAuthenticated: boolean;
   _hydrated: boolean;
   login: (token: string, user: AuthUser, organization: AuthOrg | null) => void;
@@ -96,9 +97,7 @@ interface AuthState {
  */
 export const useAuthStore = create<AuthState>((set, get) => ({
   token: null,
-  user: null,
-  organization: null,
-  organizationCount: null,
+  user: null,    organization: null,
   isAuthenticated: false,
   _hydrated: false,
 
@@ -110,7 +109,6 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         set({
           user: data.user,
           organization: data.organization,
-          organizationCount: data.organizationCount ?? null,
           isAuthenticated: true,
           _hydrated: true,
         });
@@ -186,6 +184,10 @@ interface AppState {
 }
 
 export const useAppStore = create<AppState>((set) => ({
+  // Default landing page for an AUTHENTICATED ORGANIZATION user. The SPA shell
+  // (src/app/page.tsx) resolves the role-aware entry page at mount time —
+  // super_admin lands on 'sa-overview' (Control Center), never the tenant
+  // dashboard. This default is only the pre-hydration value.
   currentPage: 'dashboard',
   setCurrentPage: (page) => set({ currentPage: page, pageContext: '', pageContextLabel: '' }),
   pageContext: '',

@@ -52,6 +52,7 @@ export function tenantAccessPolicyLine(mode: DeploymentMode): string {
     case 'CUSTOMER_DB':
       return 'Customer-owned database — Super Admin access is limited to control-plane management.';
     case 'PRIVATE':
-      return 'Private deployment hosted in customer infrastructure — operational data is not accessible from the central console.';
+      // PRIVATE is deprecated in V1; this policy line remains for backward compatibility.
+      return 'Private deployment (deprecated in V1) — operational data is not accessible from the central console.';
   }
 }

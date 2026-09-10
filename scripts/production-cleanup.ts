@@ -80,11 +80,22 @@ if (!DRY_RUN) {
 
 // ─── 2. Row counts before ───────────────────────────────────────────────────
 const BUSINESS_MODELS = [
-  'sentimentRecord', 'timeEntry', 'projectMember', 'project', 'consentLog', 'consent',
-  'consentPolicy', 'organizationSetting', 'agentToken', 'agentRegistration', 'usbEvent',
-  'appListEntry', 'screenshot', 'anomaly', 'activity', 'auditLog', 'aiInsight', 'alert',
-  'notification', 'report', 'monitoringPolicy', 'deviceClaim', 'device', 'employee',
-  'department', 'organization',
+  // Leaf/child tables first (dependency order: children before parents).
+  'projectTimeSyncCursor', 'projectTimeSync', 'timeEntry', 'projectMember', 'project',
+  'consentLog', 'consent', 'consentPolicy',
+  'organizationSetting', 'organizationSettings', 'organizationBranding',
+  'alertRuleFiring', 'alertRule', 'categoryRule',
+  'workDaySummary', 'keyboardActivity', 'locationEvent', 'webcamSession', 'breakSession',
+  'audioTranscription', 'audioRecording', 'agentCommand',
+  'usbEvent', 'policyViolation', 'appListEntry',
+  'screenshot', 'anomaly', 'activityBatchReceipt', 'activity',
+  'aiUsage', 'aiInsight', 'lead',
+  'alert', 'notificationPreference', 'notification', 'report', 'auditLog',
+  'agentToken', 'deviceClaim', 'device', 'employee', 'department',
+  'organizationMembership', 'userSession',
+  'licenseKey', 'subscription', 'invoice',
+  // Last: deleting the organization cascades any remaining tenant rows.
+  'organization',
 ] as const;
 
 type ModelName = (typeof BUSINESS_MODELS)[number];

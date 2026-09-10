@@ -2,6 +2,7 @@
 
 import { useState, useRef, useCallback } from 'react';
 import { useAppStore, useAuthStore, type PageType } from '@/lib/store';
+import { canAccessPage } from '@/lib/navigation';
 import {
   CommandDialog,
   CommandEmpty,
@@ -196,6 +197,19 @@ export function CommandPalette() {
 
   const authUser = useAuthStore((s) => s.user);
   const authOrganization = useAuthStore((s) => s.organization);
+
+  // ── Role-aware page list (S-2 centralization) ─────────────────────────
+  // The palette must not become a backdoor around sidebar visibility: hidden
+  // tenant pages stay unreachable via Ctrl+K. The single authoritative gate
+  // (canAccessPage) is reused here — the same one the sidebar shells use —
+  // so header, sidebar and palette cannot drift apart.
+  const role = authUser?.role ?? null;
+  const hasOrgContext = !!authOrganization;
+  const visiblePages = pages.filter((p) => canAccessPage(role, p.key) && (
+    // Tenant operational pages additionally require an organization context —
+    // an org-less super_admin has no tenant to navigate into.
+    !(role === 'super_admin' && !hasOrgContext) || p.key.startsWith('sa-') || p.key === 'super-admin-organizations' || p.key === 'super-admin-organization-detail'
+  ));
   // A global super_admin without an active organization has no tenant data to
   // search (every org-scoped API returns empty). Guide them to the switcher
   // instead of the misleading "No results found".
@@ -312,7 +326,7 @@ export function CommandPalette() {
         {!isSearchActive && (
           <>
             <CommandGroup heading='Pages'>
-              {pages.map((p) => (
+              {visiblePages.map((p) => (
                 <CommandItem
                   key={p.key}
                   onSelect={() => handleSelect(p.key)}

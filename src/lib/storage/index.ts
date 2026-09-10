@@ -1,5 +1,6 @@
 import { basename } from 'path';
 import { log } from '@/lib/logger';
+import { getOrgStorage } from '@/lib/org-storage';
 import { LocalStorageDriver } from './local';
 import { SupabaseStorageDriver } from './supabase';
 import {
@@ -116,18 +117,24 @@ export async function putScreenshot(
   bytes: Buffer,
   mimeType: string
 ): Promise<void> {
-  await storage().put(screenshotKey(orgId, filename), {
+  const res = await getOrgStorage(orgId);
+  const driver = res.mode === 'org' ? res.driver : storage();
+  await driver.put(screenshotKey(orgId, filename), {
     bytes,
     contentType: mimeType,
   });
 }
 
 export async function getScreenshot(orgId: string, filePath: string): Promise<Buffer> {
-  return storage().get(screenshotKeyFromPath(orgId, filePath));
+  const res = await getOrgStorage(orgId);
+  const driver = res.mode === 'org' ? res.driver : storage();
+  return driver.get(screenshotKeyFromPath(orgId, filePath));
 }
 
 export async function deleteScreenshot(orgId: string, filePath: string): Promise<void> {
-  await storage().delete(screenshotKeyFromPath(orgId, filePath));
+  const res = await getOrgStorage(orgId);
+  const driver = res.mode === 'org' ? res.driver : storage();
+  await driver.delete(screenshotKeyFromPath(orgId, filePath));
 }
 
 /**
@@ -141,16 +148,18 @@ export async function screenshotAiInput(
   mimeType?: string | null
 ): Promise<{ type: 'base64'; base64: string; mimeType: string } | { type: 'url'; url: string } | null> {
   const key = screenshotKeyFromPath(orgId, filePath);
+  const res = await getOrgStorage(orgId);
+  const driver = res.mode === 'org' ? res.driver : storage();
   try {
-    if (storage().kind === 'supabase') {
-      const signed = await storage().getSignedUrl(key, 3600);
+    if (driver.kind === 'supabase') {
+      const signed = await driver.getSignedUrl(key, 3600);
       if (!signed) {
         log.error('storage.signed_url_failed', { key });
         return null;
       }
       return { type: 'url', url: signed };
     }
-    const bytes = await storage().get(key);
+    const bytes = await driver.get(key);
     const ext = basename(key).split('.').pop()?.toLowerCase() ?? '';
     return {
       type: 'base64',

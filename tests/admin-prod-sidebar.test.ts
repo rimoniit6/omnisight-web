@@ -67,7 +67,17 @@ test('NAV-4: admin sees everything including admin-only pages', () => {
 });
 
 test('NAV-5: owner and super_admin clear every gate', () => {
-  const superAdminOnlyPages = ['super-admin-organizations', 'super-admin-organization-detail'];
+  // Control Center pages are platform-level: super_admin only, never owner
+  // (owner is an org-scoped role). Same contract as the original two
+  // super-admin pages — expanded to the full Control Center page set.
+  // Subscriptions / Payments / Licenses / Audit are no longer standalone
+  // pages — they are managed from the Organization (org detail) and via their
+  // backend APIs, so they carry no PageType / nav gate of their own.
+  const superAdminOnlyPages = [
+    'super-admin-organizations', 'super-admin-organization-detail',
+    'sa-overview', 'sa-packages', 'sa-create-organization', 'sa-landing',
+    'sa-audit',
+  ];
   for (const role of ['owner', 'super_admin']) {
     for (const p of ALL_PAGES) {
       const expected = superAdminOnlyPages.includes(p) ? role === 'super_admin' : true;

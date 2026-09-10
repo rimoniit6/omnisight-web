@@ -14,7 +14,7 @@ export async function GET(req: NextRequest) {
   const organizationId = searchParams.get('organizationId') || '';
 
   const where: Record<string, unknown> = {};
-  if (status && ['PENDING', 'ACTIVE', 'EXPIRED', 'CANCELLED'].includes(status)) where.status = status;
+  if (status && ['PENDING', 'ACTIVE', 'PAUSED', 'EXPIRED', 'CANCELLED'].includes(status)) where.status = status;
   if (organizationId) where.organizationId = organizationId;
 
   const [subs, total] = await Promise.all([

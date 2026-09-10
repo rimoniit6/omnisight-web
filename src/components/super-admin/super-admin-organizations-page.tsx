@@ -48,6 +48,7 @@ import {
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
+import { ErrorState } from './ui';
 
 interface Organization {
   id: string;
@@ -60,8 +61,13 @@ interface Organization {
   memberCount: number;
   employeeCount: number;
   deviceCount: number;
-  subscription: { id: string; status: string; plan: { id: string; name: string } } | null;
-  licenseKey: { id: string; isActive: boolean; isRevoked: boolean } | null;
+  subscription: {
+    id: string;
+    status: string;
+    plan: { id: string; name: string };
+    invoices: { id: string; status: string; amount: number; currency: string; paymentMethod: string | null }[];
+  } | null;
+  licenseKey: { id: string; isActive: boolean; isRevoked: boolean; validUntil: string | null } | null;
 }
 
 const STATUS_CONFIG: Record<string, { label: string; className: string; icon: React.ElementType }> = {
@@ -88,6 +94,8 @@ const STATUS_CONFIG: Record<string, { label: string; className: string; icon: Re
 };
 
 // Phase 2 §7: deployment-mode badge config for the control-plane list.
+// PRIVATE is deprecated in V1 — kept in the map for backward-compat display
+// but should not appear in new V1 workflows.
 const MODE_CONFIG: Record<string, { label: string; className: string }> = {
   MANAGED: {
     label: 'Managed',
@@ -98,7 +106,7 @@ const MODE_CONFIG: Record<string, { label: string; className: string }> = {
     className: 'bg-blue-100 text-blue-700 border-blue-200 dark:bg-blue-900/30 dark:text-blue-400',
   },
   PRIVATE: {
-    label: 'Private',
+    label: 'Private (Deprecated)',
     className: 'bg-violet-100 text-violet-700 border-violet-200 dark:bg-violet-900/30 dark:text-violet-400',
   },
 };
@@ -114,9 +122,6 @@ export function SuperAdminOrganizationsPage() {
     currentStatus: string;
     newStatus: string;
   }>({ open: false, orgId: '', orgName: '', currentStatus: '', newStatus: '' });
-  const [createDialog, setCreateDialog] = useState(false);
-  const [createName, setCreateName] = useState('');
-  const [createLoading, setCreateLoading] = useState(false);
 
   const { setCurrentPage, setPageContext, setPageContextLabel } = useAppStore();
   const token = useAuthStore((s) => s.token);
@@ -126,7 +131,7 @@ export function SuperAdminOrganizationsPage() {
   const [modeFilter, setModeFilter] = useState('');
   const pageSize = 20;
 
-  const { data: orgsData, isLoading: loading } = useQuery({
+  const { data: orgsData, isLoading: loading, isError, refetch } = useQuery({
     queryKey: ['super-admin-organizations', search, statusFilter, modeFilter, page],
     queryFn: async () => {
       const params = new URLSearchParams({ page: String(page), pageSize: String(pageSize) });
@@ -144,7 +149,7 @@ export function SuperAdminOrganizationsPage() {
 
   // Control-plane metrics (Phase 2 §27): aggregate metadata only, never
   // cross-customer operational data.
-  const { data: metricsData } = useQuery({
+  const { data: metricsData, isError: metricsError, isFetching: metricsFetching, refetch: refetchMetrics } = useQuery({
     queryKey: ['super-admin-metrics'],
     queryFn: async () => {
       const res = await fetch('/api/super-admin/metrics', { credentials: 'same-origin' });
@@ -153,6 +158,7 @@ export function SuperAdminOrganizationsPage() {
     },
     placeholderData: (prev) => prev,
   });
+  // PRIVATE is deprecated in V1; metrics exclude it from customer-owned count.
   const metrics = metricsData?.data as
     | {
         organizations: { total: number; managed: number; customerDb: number; private: number; unresolvedModes: number; pendingDeployments: number };
@@ -190,33 +196,10 @@ export function SuperAdminOrganizationsPage() {
     }
   };
 
-  const handleCreate = async () => {
-    if (!createName.trim()) return;
-    setCreateLoading(true);
-    try {
-      const res = await fetch('/api/super-admin/organizations', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
-        },
-        credentials: 'same-origin',
-        body: JSON.stringify({ name: createName.trim() }),
-      });
-      if (res.ok) {
-        toast.success('Organization created');
-        setCreateDialog(false);
-        setCreateName('');
-        queryClient.invalidateQueries({ queryKey: ['super-admin-organizations'] });
-      } else {
-        const err = await res.json().catch(() => ({}));
-        toast.error(err.error || 'Failed to create organization');
-      }
-    } catch {
-      toast.error('Network error');
-    } finally {
-      setCreateLoading(false);
-    }
+  // Phase 2 §11: provisioning goes through the full flow (org + package +
+  // admin + subscription + temp password) — never a bare name-only org.
+  const openProvision = () => {
+    setCurrentPage('sa-create-organization');
   };
 
   const filtered = organizations; // Server-side filtering now handles this
@@ -238,13 +221,22 @@ export function SuperAdminOrganizationsPage() {
             Platform-wide organization management. Manage lifecycle, status, and memberships.
           </p>
         </div>
-        <Button onClick={() => setCreateDialog(true)} className="shrink-0">
+        <Button onClick={openProvision} className="shrink-0">
           <Plus className="w-4 h-4 mr-2" />
-          Create Organization
+          Provision Organization
         </Button>
       </div>
 
       {/* Stats — control-plane aggregates from /api/super-admin/metrics */}
+      {metricsError && (
+        <div className="flex items-center justify-between gap-3 rounded-lg border border-dashed border-border bg-muted/30 px-4 py-2.5">
+          <p className="text-xs text-muted-foreground">Control-plane metrics are temporarily unavailable.</p>
+          <Button variant="outline" size="sm" className="h-7 text-xs" onClick={() => refetchMetrics()} disabled={metricsFetching}>
+            {metricsFetching && <Loader2 className="w-3 h-3 mr-1 animate-spin" />}
+            Retry
+          </Button>
+        </div>
+      )}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <Card>
           <CardContent className="pt-4">
@@ -349,6 +341,8 @@ export function SuperAdminOrganizationsPage() {
               <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
               <span className="ml-2 text-sm text-muted-foreground">Loading organizations...</span>
             </div>
+          ) : isError ? (
+            <ErrorState title="Unable to load organizations" onRetry={() => refetch()} />
           ) : filtered.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-12 text-center">
               <Building2 className="w-12 h-12 text-muted-foreground/40 mb-3" />
@@ -365,8 +359,11 @@ export function SuperAdminOrganizationsPage() {
                 <TableHeader>
                   <TableRow>
                     <TableHead>Organization</TableHead>
-                    <TableHead>Deployment</TableHead>
+                    <TableHead>Service</TableHead>
                     <TableHead>Package</TableHead>
+                    <TableHead>Subscription</TableHead>
+                    <TableHead>Payment</TableHead>
+                    <TableHead>License</TableHead>
                     <TableHead>Status</TableHead>
                     <TableHead className="text-center">Users</TableHead>
                     <TableHead>Created</TableHead>
@@ -402,12 +399,64 @@ export function SuperAdminOrganizationsPage() {
                           </div>
                         </TableCell>
                         <TableCell>
-                          <div className="flex flex-col gap-0.5">
-                            <span className="text-xs font-medium">{org.subscription?.plan.name ?? '—'}</span>
-                            <span className="text-[10px] text-muted-foreground">
-                              {org.subscription ? org.subscription.status : 'no subscription'}
-                            </span>
-                          </div>
+                          <span className="text-xs font-medium">{org.subscription?.plan.name ?? '—'}</span>
+                        </TableCell>
+                        <TableCell>
+                          {org.subscription ? (
+                            <Badge
+                              variant="outline"
+                              className={cn(
+                                'text-[10px] h-5 px-1.5 border',
+                                org.subscription.status === 'ACTIVE'
+                                  ? 'border-emerald-200 bg-emerald-100 text-emerald-700 dark:border-emerald-900/30 dark:bg-emerald-900/30 dark:text-emerald-400'
+                                  : org.subscription.status === 'PENDING'
+                                    ? 'border-amber-200 bg-amber-100 text-amber-700 dark:border-amber-900/30 dark:bg-amber-900/30 dark:text-amber-400'
+                                    : org.subscription.status === 'CANCELLED'
+                                      ? 'border-slate-200 bg-slate-100 text-slate-600 dark:border-slate-800 dark:bg-slate-900/40 dark:text-slate-400'
+                                      : 'border-rose-200 bg-rose-100 text-rose-700 dark:border-rose-900/30 dark:bg-rose-900/30 dark:text-rose-400'
+                              )}
+                            >
+                              {org.subscription.status}
+                            </Badge>
+                          ) : (
+                            <span className="text-xs text-muted-foreground">—</span>
+                          )}
+                        </TableCell>
+                        <TableCell>
+                          {org.subscription?.invoices?.[0] ? (
+                            <Badge
+                              variant="outline"
+                              className={cn(
+                                'text-[10px] h-5 px-1.5 border',
+                                org.subscription.invoices[0].status === 'PAID'
+                                  ? 'border-emerald-200 bg-emerald-100 text-emerald-700 dark:border-emerald-900/30 dark:bg-emerald-900/30 dark:text-emerald-400'
+                                  : 'border-amber-200 bg-amber-100 text-amber-700 dark:border-amber-900/30 dark:bg-amber-900/30 dark:text-amber-400'
+                              )}
+                            >
+                              {org.subscription.invoices[0].status}
+                            </Badge>
+                          ) : (
+                            <span className="text-xs text-muted-foreground">—</span>
+                          )}
+                        </TableCell>
+                        <TableCell>
+                          {org.licenseKey ? (
+                            <Badge
+                              variant="outline"
+                              className={cn(
+                                'text-[10px] h-5 px-1.5 border',
+                                org.licenseKey.isRevoked
+                                  ? 'border-rose-200 bg-rose-100 text-rose-700 dark:border-rose-900/30 dark:bg-rose-900/30 dark:text-rose-400'
+                                  : org.licenseKey.isActive
+                                    ? 'border-emerald-200 bg-emerald-100 text-emerald-700 dark:border-emerald-900/30 dark:bg-emerald-900/30 dark:text-emerald-400'
+                                    : 'border-slate-200 bg-slate-100 text-slate-600 dark:border-slate-800 dark:bg-slate-900/40 dark:text-slate-400'
+                              )}
+                            >
+                              {org.licenseKey.isRevoked ? 'Revoked' : org.licenseKey.isActive ? 'Active' : 'Inactive'}
+                            </Badge>
+                          ) : (
+                            <span className="text-xs text-muted-foreground">—</span>
+                          )}
                         </TableCell>
                         <TableCell>
                           <Badge variant="outline" className={cn('text-[10px] h-5 px-1.5 border', statusConfig.className)}>
@@ -582,39 +631,6 @@ export function SuperAdminOrganizationsPage() {
             >
               {actionLoading === statusDialog.orgId && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
               {statusDialog.newStatus === 'active' ? 'Reactivate' : statusDialog.newStatus === 'suspended' ? 'Suspend' : 'Archive'}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* Create Organization Dialog */}
-      <Dialog open={createDialog} onOpenChange={(open) => !open && setCreateDialog(false)}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Create Organization</DialogTitle>
-            <DialogDescription>
-              Create a new organization. You will be set as the owner.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-4 py-2">
-            <div>
-              <label className="text-sm font-medium">Organization Name</label>
-              <Input
-                placeholder="e.g. Acme Corp"
-                value={createName}
-                onChange={(e) => setCreateName(e.target.value)}
-                className="mt-1"
-                onKeyDown={(e) => e.key === 'Enter' && handleCreate()}
-              />
-            </div>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setCreateDialog(false)}>
-              Cancel
-            </Button>
-            <Button disabled={createLoading || !createName.trim()} onClick={handleCreate}>
-              {createLoading && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
-              Create
             </Button>
           </DialogFooter>
         </DialogContent>

@@ -446,3 +446,136 @@
   letter-spacing: 0.08em;
   color: var(--muted-foreground);
 }
+
+/* ═══════════════════════════════════════════════════════════════════════
+   OmniSight — Cinematic public system (landing + login)
+   Scoped classes; never touches the authenticated dashboard theme.
+   ═══════════════════════════════════════════════════════════════════════ */
+
+@theme inline {
+  --font-tech: var(--font-space-mono);
+}
+
+/* Technical/space-mono font (loaded via next/font in src/lib/fonts.ts) */
+.tech-font {
+  font-family: var(--font-space-mono), ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+/* Glass panel — dark, thin border, soft blur */
+.glass-panel {
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+  border-radius: 20px;
+}
+
+/* Dot grid overlay (hero + login backgrounds) */
+.grid-overlay {
+  background-image:
+    linear-gradient(rgba(255, 255, 255, 0.045) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.045) 1px, transparent 1px);
+  background-size: 56px 56px;
+}
+
+/* Slow scanline sweep */
+.scanline {
+  background: linear-gradient(
+    180deg,
+    transparent 0%,
+    rgba(120, 220, 255, 0.05) 50%,
+    transparent 100%
+  );
+  animation: omni-scan 9s linear infinite;
+}
+
+@keyframes omni-scan {
+  0% { transform: translateY(-100%); }
+  100% { transform: translateY(100%); }
+}
+
+/* Floating drift for hero dashboard visual */
+@keyframes omni-float {
+  0%, 100% { transform: translateY(0px); }
+  50% { transform: translateY(-10px); }
+}
+.omni-float {
+  animation: omni-float 7s ease-in-out infinite;
+}
+
+/* Live tick pulse for synthetic activity rows */
+@keyframes omni-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+.omni-pulse {
+  animation: omni-pulse 2.2s ease-in-out infinite;
+}
+
+/* Vertical stream of synthetic data particles (hero + login) */
+@keyframes omni-fall {
+  0% { transform: translateY(-8vh); opacity: 0; }
+  8% { opacity: 0.7; }
+  92% { opacity: 0.7; }
+  100% { transform: translateY(108vh); opacity: 0; }
+}
+.omni-particle {
+  position: absolute;
+  top: 0;
+  width: 2px;
+  height: 2px;
+  border-radius: 9999px;
+  background: rgba(150, 230, 255, 0.55);
+  box-shadow: 0 0 6px rgba(120, 220, 255, 0.6);
+  animation: omni-fall linear infinite;
+}
+
+/* Subtle error shake (login) — max 300ms */
+@keyframes omni-shake {
+  0%, 100% { transform: translateX(0); }
+  20% { transform: translateX(-6px); }
+  40% { transform: translateX(6px); }
+  60% { transform: translateX(-4px); }
+  80% { transform: translateX(4px); }
+}
+.omni-shake {
+  animation: omni-shake 0.28s ease-in-out;
+}
+
+/* Scramble helper: no layout shift */
+.omni-scramble {
+  display: inline-block;
+  white-space: nowrap;
+}
+
+/* Cinematic root — force dark for public surfaces */
+.omni-cinematic {
+  background-color: #000;
+  color: #fff;
+}
+
+/* Marquee for the live activity ticker */
+@keyframes omni-marquee {
+  0% { transform: translateX(0); }
+  100% { transform: translateX(-50%); }
+}
+.omni-marquee {
+  animation: omni-marquee 32s linear infinite;
+}
+.omni-marquee:hover {
+  animation-play-state: paused;
+}
+
+/* Reduced motion: kill decorative public animations */
+@media (prefers-reduced-motion: reduce) {
+  .scanline,
+  .omni-float,
+  .omni-pulse,
+  .omni-particle,
+  .omni-marquee {
+    animation: none !important;
+  }
+  .omni-shake {
+    animation: none !important;
+  }
+}

@@ -1,7 +1,7 @@
 'use client';
 
 import { useQuery, useQueryClient, useInfiniteQuery } from '@tanstack/react-query';
-import { useMemo, useState, useEffect } from 'react';
+import { useMemo, useState, useEffect, useCallback } from 'react';
 import { type DateRange } from 'react-day-picker';
 import { subDays, format } from 'date-fns';
 import { Badge } from '@/components/ui/badge';
@@ -77,7 +77,6 @@ import { toast } from 'sonner';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { motion } from 'framer-motion';
 import { useTheme } from 'next-themes';
-import { exportToCSV } from '@/lib/csv-export';
 import { PdfDownloadButton } from '@/components/reports/pdf-download-button';
 import { consumePendingEmployeeTab } from '@/lib/employee-details-tab';
 import { isHeartbeatFresh } from '@/lib/presence';
@@ -216,11 +215,40 @@ export function EmployeeDetailsPage() {
   const [editOpen, setEditOpen] = useState(false);
   const [manageProjectsOpen, setManageProjectsOpen] = useState(false);
 
-  // Date range state
-  const [dateRange, setDateRange] = useState<DateRange | undefined>(() => ({
-    from: subDays(new Date(), 6),
-    to: new Date(),
-  }));
+  // Date range state — initialized from URL search params for persistence
+  const [dateRange, setDateRange] = useState<DateRange | undefined>(() => {
+    if (typeof window === 'undefined') return { from: subDays(new Date(), 6), to: new Date() };
+    const params = new URLSearchParams(window.location.search);
+    const fromStr = params.get('from');
+    const toStr = params.get('to');
+    const from = fromStr ? new Date(fromStr) : subDays(new Date(), 6);
+    const to = toStr ? new Date(toStr) : new Date();
+    if (isNaN(from.getTime()) || isNaN(to.getTime())) {
+      return { from: subDays(new Date(), 6), to: new Date() };
+    }
+    return { from, to };
+  });
+
+  // Sync date range to URL query params (replaceState — no navigation)
+  const syncDateToURL = useCallback((range: DateRange | undefined) => {
+    const url = new URL(window.location.href);
+    if (range?.from) {
+      url.searchParams.set('from', format(range.from, 'yyyy-MM-dd'));
+    } else {
+      url.searchParams.delete('from');
+    }
+    if (range?.to) {
+      url.searchParams.set('to', format(range.to, 'yyyy-MM-dd'));
+    } else {
+      url.searchParams.delete('to');
+    }
+    window.history.replaceState({}, '', url.toString());
+  }, []);
+
+  const handleDateChange = useCallback((range: DateRange | undefined) => {
+    setDateRange(range);
+    syncDateToURL(range);
+  }, [syncDateToURL]);
 
   // Render pulse (60s): forces freshness-derived UI — "Last heartbeat: X
   // ago", online/offline badges, break-status attributes — to recompute even
@@ -365,45 +393,33 @@ export function EmployeeDetailsPage() {
     if (!emp || exporting) return;
     setExporting(true);
     try {
-      // Export the COMPLETE selected dataset — loop every page of the paginated
-      // timeline endpoint (never just the loaded pages / a hardcoded slice).
-      const collected: Array<Record<string, unknown>> = [];
-      let page = 1;
-      let totalPages = 1;
-      let failed = false;
-      while (page <= totalPages && page <= 500) {
-        const params = new URLSearchParams({ page: String(page), pageSize: '100' });
-        if (fromStr) params.set('from', fromStr);
-        if (toStr) params.set('to', toStr);
-        const res = await fetch(`/api/employees/${emp.id}/activities?${params}`);
-        if (!res.ok) {
-          failed = true;
-          break;
-        }
-        const body = await res.json();
-        collected.push(...(body.data ?? []));
-        totalPages = body.totalPages ?? 1;
-        page += 1;
+      // Server-side export: the backend generates the complete CSV from the
+      // filtered dataset (never loaded into browser memory for large sets).
+      const params = new URLSearchParams();
+      if (fromStr) params.set('from', fromStr);
+      if (toStr) params.set('to', toStr);
+      const res = await fetch(`/api/employees/${emp.id}/activities/export?${params}`);
+      if (!res.ok) {
+        let msg = 'Failed to export activities';
+        try { const j = await res.json(); if (j?.error) msg = j.error; } catch { /* keep default */ }
+        throw new Error(msg);
       }
-      if (failed && collected.length === 0) {
-        throw new Error('Failed to export activities');
-      }
-      const exportData = collected.map((a: Record<string, unknown>) => ({
-        'Timestamp': a.timestamp ? format(new Date(a.timestamp as string), 'yyyy-MM-dd HH:mm') : '',
-        'Type': a.type || '',
-        'Application': a.applicationName || '',
-        'Title': a.title || '',
-        'URL': a.url || '',
-        'Category': a.category || '',
-        'Duration (minutes)': Math.round((a.duration as number) / 60),
-        'Device': (a.device as Record<string, string>)?.name || '',
-      }));
-      exportToCSV(exportData, `employee-${emp.firstName}-${emp.lastName}-activities`);
-      if (failed) {
-        toast.warning(`Partial export: ${exportData.length} rows (some pages failed)`);
-      } else {
-        toast.success(`Activity data exported (${exportData.length} rows)`);
-      }
+      // Stream the CSV response to a blob and trigger download
+      const blob = await res.blob();
+      const disposition = res.headers.get('Content-Disposition') || '';
+      const filenameMatch = disposition.match(/filename="(.+)"/);
+      const filename = filenameMatch
+        ? filenameMatch[1]
+        : `employee-activity-${emp.firstName}-${emp.lastName}-${fromStr || 'start'}-to-${toStr || 'now'}.csv`;
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+      toast.success(`Activity data exported (${activitiesTotal} rows)`);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Failed to export activities');
     } finally {
@@ -589,24 +605,68 @@ export function EmployeeDetailsPage() {
         </Card>
       </motion.div>
 
-      {/* Date Range Picker + Quick Stats */}
+      {/* Date Range Picker + Quick Presets + Export */}
       <motion.div
         initial={{ opacity: 0, y: 8 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.3, delay: 0.1 }}
         className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4"
       >
-        <div className="flex items-center gap-3">
-          <DatePickerWithRange
-            date={dateRange}
-            onDateChange={setDateRange}
-            className="w-[280px]"
-          />
-          {range && (
-            <span className="text-xs text-muted-foreground hidden sm:inline-flex">
-              {range.activeDays} active day{range.activeDays !== 1 ? 's' : ''} · {range.totalActivities} activities
+        <div className="flex flex-col gap-2">
+          <div className="flex items-center gap-3">
+            <DatePickerWithRange
+              date={dateRange}
+              onDateChange={handleDateChange}
+              className="w-[280px]"
+            />
+            {range && (
+              <span className="text-xs text-muted-foreground hidden sm:inline-flex">
+                {range.activeDays} active day{range.activeDays !== 1 ? 's' : ''} · {activitiesTotal} activities
+              </span>
+            )}
+          </div>
+          {/* Quick range presets */}
+          <div className="flex items-center gap-1.5 flex-wrap">
+            {([
+              { label: 'Today', from: () => new Date(), to: () => new Date() },
+              { label: 'Yesterday', from: () => subDays(new Date(), 1), to: () => subDays(new Date(), 1) },
+              { label: 'Last 7 Days', from: () => subDays(new Date(), 6), to: () => new Date() },
+              { label: 'Last 30 Days', from: () => subDays(new Date(), 29), to: () => new Date() },
+              { label: 'This Month', from: () => new Date(new Date().getFullYear(), new Date().getMonth(), 1), to: () => new Date() },
+            ] as const).map((preset) => {
+              const isActive = dateRange?.from && dateRange?.to &&
+                format(dateRange.from, 'yyyy-MM-dd') === format(preset.from(), 'yyyy-MM-dd') &&
+                format(dateRange.to, 'yyyy-MM-dd') === format(preset.to(), 'yyyy-MM-dd');
+              return (
+                <Button
+                  key={preset.label}
+                  variant={isActive ? 'default' : 'outline'}
+                  size="sm"
+                  className="h-7 text-xs px-2.5"
+                  onClick={() => handleDateChange({ from: preset.from(), to: preset.to() })}
+                >
+                  {preset.label}
+                </Button>
+              );
+            })}
+          </div>
+        </div>
+        <div className="flex items-center gap-2">
+          {fromStr && toStr && (
+            <span className="text-xs text-muted-foreground hidden lg:inline-flex">
+              {format(new Date(fromStr), 'MMM dd')} – {format(new Date(toStr), 'MMM dd, yyyy')}
             </span>
           )}
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleExport}
+            disabled={exporting || activitiesTotal === 0}
+            className="gap-1.5"
+          >
+            <Download className="w-3.5 h-3.5" />
+            {exporting ? 'Exporting…' : 'Download Activity'}
+          </Button>
         </div>
       </motion.div>
 
@@ -1058,13 +1118,12 @@ export function EmployeeDetailsPage() {
 
         {/* Timeline Tab */}
         <TabsContent value="timeline" className="space-y-4">
-            <Card className="border-0 shadow-sm">
-              <CardHeader className="pb-3">
+            <Card className="border-0 shadow-sm">                  <CardHeader className="pb-3">
                 <div className="flex items-center justify-between">
                   <div>
                     <CardTitle className="text-sm font-medium">Activity Timeline</CardTitle>
                     <CardDescription className="text-xs">
-                      {activities.length} of {activitiesTotal} activities in selected period
+                      {fromStr && toStr ? `${fromStr} → ${toStr}` : 'Last 7 days'} · {activitiesTotal} activities
                     </CardDescription>
                   </div>
                 </div>

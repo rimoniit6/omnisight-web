@@ -4,7 +4,7 @@ import { validateAgentToken } from '@/lib/agent/auth';
 import { resolveOrgMonitoring, resolveRetentionDays } from '@/lib/jobs/settings';
 import { APP_POLICY_VERSION_SETTING_KEY, DEFAULT_POLICY_VERSION, MAX_POLICY_PAYLOAD_ENTRIES } from '@/lib/policies/constants';
 import { log, requestContext } from '@/lib/logger';
-import { getActiveSubscription, parsePlanFeatures } from '@/lib/subscription';
+import { getActiveSubscription, parsePlanFeatures, checkAgentEntitlement } from '@/lib/subscription';
 
 // GET /api/agent/config
 // Agent fetches monitoring configuration (screenshot frequency, idle timeout, etc.)
@@ -210,7 +210,20 @@ export async function GET(req: NextRequest) {
       organizationName: org?.name ?? null,
     };
 
-    return NextResponse.json({ config, assignment, policy, plan: planName, limits: { maxDevices }, deployment });
+    // ── Subscription entitlement block (PRD §46) ───────────────────────────
+    // Server-authoritative subscription state delivered to the Agent on every
+    // config sync. The Agent uses this to pause/resume collectors when the
+    // subscription transitions (e.g. PAUSED → ACTIVE on resume). The Agent
+    // must NEVER trust this value for authorization — the server enforces
+    // entitlement in validateAgentToken() on every request.
+    const entitlement = await checkAgentEntitlement(orgId);
+    const subscription = {
+      status: entitlement.subscriptionStatus,
+      planName: entitlement.planName,
+      allowed: entitlement.allowed,
+    };
+
+    return NextResponse.json({ config, assignment, policy, plan: planName, limits: { maxDevices }, deployment, subscription });
   } catch (error) {
     log.error('api.agent.config.', { error: String('Agent config error:') }, requestContext(req));
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });

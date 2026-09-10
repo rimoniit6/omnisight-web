@@ -39,6 +39,12 @@ export interface OrgSettingsSerialized {
   dbUser: string | null;
   hasDbPassword: boolean;
   dbSsl: boolean;
+  // Storage
+  storageDriver: string | null;
+  storageUrl: string | null;
+  hasStorageKey: boolean;
+  storageTestedAt: string | null;
+  storageTestStatus: string | null;
   // Test status
   aiTestedAt: string | null;
   aiTestStatus: string | null;
@@ -77,6 +83,11 @@ export function serializeOrgSettings(s: {
   dbUser: string | null;
   dbPassword: string | null;
   dbSsl: boolean;
+  storageDriver: string | null;
+  storageUrl: string | null;
+  storageKey: string | null;
+  storageTestedAt: Date | null;
+  storageTestStatus: string | null;
   aiTestedAt: Date | null;
   aiTestStatus: string | null;
   dbTestedAt: Date | null;
@@ -97,6 +108,11 @@ export function serializeOrgSettings(s: {
     dbUser: s.dbUser,
     hasDbPassword: Boolean(s.dbPassword),
     dbSsl: s.dbSsl,
+    storageDriver: s.storageDriver,
+    storageUrl: s.storageUrl,
+    hasStorageKey: Boolean(s.storageKey && isEncryptedSecret(s.storageKey) ? true : s.storageKey),
+    storageTestedAt: s.storageTestedAt ? s.storageTestedAt.toISOString() : null,
+    storageTestStatus: s.storageTestStatus,
     aiTestedAt: s.aiTestedAt ? s.aiTestedAt.toISOString() : null,
     aiTestStatus: s.aiTestStatus,
     dbTestedAt: s.dbTestedAt ? s.dbTestedAt.toISOString() : null,

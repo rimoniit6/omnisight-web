@@ -6,12 +6,17 @@
  *  LC-02  Package update + deactivate → 200
  *  LC-03  Package delete while referenced → 409 (archival, not destruction)
  *  LC-04  Manual sales: create org (PRIVATE+pending) → subscription → invoice
- *          verify with payment details → PAID/ACTIVE/active + audits
+ *          → Super Admin activates the PENDING subscription → ACTIVE/active +
+ *          audited (invoice stays PENDING — manual ledger, no verify action)
  *  LC-05  Subscription cancel → CANCELLED + pointer cleared + audited
  *  LC-06  License issue → revoke lifecycle + audited, key never in audit
- *  LC-07  Invoice verify/reject produce audit events
+ *  LC-07  Invalid subscription transitions are guarded (no verify/reject
+ *          workflow): CANCELLED → ACTIVE rejected, double-activate rejected
  *  LC-08  Pending org locked out of tenant APIs; activation restores access
  *  LC-09  SA metrics endpoint returns control-plane aggregates only
+ *  LC-10  Service Type at creation: MANAGED / CUSTOMER_DB / PRIVATE each
+ *          persist verbatim to Organization.deploymentMode (no silent fallback)
+ *  LC-11  Invalid deploymentMode is rejected; omitted uses the MANAGED default
  *
  * Run: npx tsx --test tests/control-plane-lifecycle.test.ts
  */
@@ -142,7 +147,7 @@ test('LC-03: referenced package cannot be deleted', async () => {
 });
 
 // LC-04: full manual sales flow
-test('LC-04: manual sales end-to-end (org → sub → verify → active)', async () => {
+test('LC-04: manual sales end-to-end (org → sub → invoice → SA activates)', async () => {
   const token = await saToken();
   const create = await import('../src/app/api/admin/organizations/create/route');
   const cRes = await create.POST(
@@ -170,29 +175,33 @@ test('LC-04: manual sales end-to-end (org → sub → verify → active)', async
   assert.ok(inv, 'pending invoice created');
   invoiceId = inv!.id;
 
-  const verify = await import('../src/app/api/admin/invoices/[invoiceId]/[action]/route');
-  const vRes = await verify.PUT(
-    req(`http://localhost:3000/api/admin/invoices/${invoiceId}/verify`, token, 'PUT', {
-      paymentMethod: 'Bank_Transfer',
-      transactionId: 'TXN-LC-001',
-    }),
-    { params: Promise.resolve({ invoiceId, action: 'verify' }) },
+  // Manual-sales activation: the single Super Admin confirms payment and
+  // activates the PENDING subscription directly (no separate payment-
+  // verification workflow, no invoice verify/reject action).
+  const activate = await import('../src/app/api/super-admin/subscriptions/[id]/route');
+  const aRes = await activate.PATCH(
+    req(`http://localhost:3000/api/super-admin/subscriptions/${subId}`, token, 'PATCH', { action: 'activate' }),
+    { params: Promise.resolve({ id: subId }) },
   );
-  assert.equal(vRes.status, 200);
+  assert.equal(aRes.status, 200);
 
   const after = await db.organization.findUnique({
     where: { id: orgId },
     select: { status: true, subscriptionId: true, subscription: { select: { status: true } } },
   });
-  assert.equal(after?.status, 'active', 'verify activates the org');
+  assert.equal(after?.status, 'active', 'activation makes the org active');
   assert.equal(after?.subscription?.status, 'ACTIVE');
-  const paidInv = await db.invoice.findUnique({ where: { id: invoiceId }, select: { status: true, paymentMethod: true, transactionId: true } });
-  assert.equal(paidInv?.status, 'PAID');
-  assert.equal(paidInv?.paymentMethod, 'Bank_Transfer');
-  assert.equal(paidInv?.transactionId, 'TXN-LC-001');
 
-  const audits = await db.auditLog.findMany({ where: { resource: 'invoice', resourceId: invoiceId } });
-  assert.ok(audits.length >= 1, 'payment verification audited');
+  // The manual-payment invoice stays PENDING — it is a ledger record, not a
+  // verification gate. No payment method/reference fields are set by the SA.
+  const invRow = await db.invoice.findUnique({ where: { id: invoiceId }, select: { status: true, paymentMethod: true } });
+  assert.equal(invRow?.status, 'PENDING', 'invoice ledger record stays PENDING');
+  assert.equal(invRow?.paymentMethod, null, 'no payment fields written by activation');
+
+  const audits = await db.auditLog.findMany({
+    where: { resource: 'subscription', resourceId: subId, description: { contains: 'activated' } },
+  });
+  assert.ok(audits.length >= 1, 'subscription activation audited');
 });
 
 // LC-05
@@ -240,23 +249,38 @@ test('LC-06: license issue and revoke without leaking the key into audit', async
 });
 
 // LC-07
-test('LC-07: invoice reject is audited and keeps subscription pending', async () => {
+test('LC-07: invalid subscription transitions are guarded (no verify/reject workflow)', async () => {
   const token = await saToken();
-  const sub = await db.subscription.create({ data: { organizationId: orgId, planId: packageId, status: 'PENDING' } });
-  const inv = await db.invoice.create({
-    data: { subscriptionId: sub.id, organizationId: orgId, invoiceNumber: `INV-2099-${Date.now()}`, amount: 100, currency: 'BDT', status: 'PENDING', dueDate: new Date() },
-  });
-  const act = await import('../src/app/api/admin/invoices/[invoiceId]/[action]/route');
-  const res = await act.PUT(
-    req(`http://localhost:3000/api/admin/invoices/${inv.id}/reject`, token, 'PUT', { reason: 'unverifiable reference' }),
-    { params: Promise.resolve({ invoiceId: inv.id, action: 'reject' }) },
+  const mod = await import('../src/app/api/super-admin/subscriptions/[id]/route');
+
+  // (a) A CANCELLED subscription (LC-05) can never jump to ACTIVE.
+  const cancelledRes = await mod.PATCH(
+    req(`http://localhost:3000/api/super-admin/subscriptions/${subId}`, token, 'PATCH', { action: 'activate' }),
+    { params: Promise.resolve({ id: subId }) },
   );
-  assert.equal(res.status, 200);
-  const audit = await db.auditLog.findFirst({ where: { resource: 'invoice', resourceId: inv.id, description: { contains: 'rejected' } } });
-  assert.ok(audit, 'rejection audited');
-  const kept = await db.subscription.findUnique({ where: { id: sub.id }, select: { status: true } });
-  assert.equal(kept?.status, 'PENDING');
-  await db.invoice.delete({ where: { id: inv.id } });
+  assert.equal(cancelledRes.status, 422, 'CANCELLED → ACTIVE must be rejected');
+  const stillCancelled = await db.subscription.findUnique({ where: { id: subId }, select: { status: true } });
+  assert.equal(stillCancelled?.status, 'CANCELLED');
+
+  // (b) Double activation of an ACTIVE subscription is rejected (409).
+  const sub = await db.subscription.create({ data: { organizationId: orgId, planId: packageId, status: 'PENDING' } });
+  const first = await mod.PATCH(
+    req(`http://localhost:3000/api/super-admin/subscriptions/${sub.id}`, token, 'PATCH', { action: 'activate' }),
+    { params: Promise.resolve({ id: sub.id }) },
+  );
+  assert.equal(first.status, 200);
+  const second = await mod.PATCH(
+    req(`http://localhost:3000/api/super-admin/subscriptions/${sub.id}`, token, 'PATCH', { action: 'activate' }),
+    { params: Promise.resolve({ id: sub.id }) },
+  );
+  assert.equal(second.status, 409, 'ACTIVE → ACTIVE must be rejected');
+  const audit = await db.auditLog.findFirst({
+    where: { resource: 'subscription', resourceId: sub.id, description: { contains: 'activated' } },
+  });
+  assert.ok(audit, 'activation audited');
+
+  // Clean up the throwaway subscription.
+  await db.organization.update({ where: { id: orgId }, data: { subscriptionId: null } });
   await db.subscription.delete({ where: { id: sub.id } });
 });
 
@@ -299,4 +323,65 @@ test('LC-09: SA metrics are control-plane aggregates only', async () => {
   assert.ok(typeof body.subscriptions.active === 'number');
   const serialized = JSON.stringify(body);
   assert.ok(!serialized.includes('secret-app'), 'no operational content in metrics');
+});
+
+// LC-10: Service Type selection at creation — all three modes persist verbatim.
+test('LC-10: service type persists verbatim (MANAGED / CUSTOMER_DB / PRIVATE, no silent fallback)', async () => {
+  const create = await import('../src/app/api/admin/organizations/create/route');
+  const token = await saToken();
+
+  const cases = [
+    { slug: 'lc-st-managed', mode: 'MANAGED' },
+    { slug: 'lc-st-customer', mode: 'CUSTOMER_DB' },
+    { slug: 'lc-st-private', mode: 'PRIVATE' },
+  ] as const;
+
+  for (const c of cases) {
+    const res = await create.POST(
+      req('http://localhost:3000/api/admin/organizations/create', token, 'POST', {
+        name: `ST ${c.mode}`,
+        slug: c.slug,
+        adminEmail: `admin@${c.slug}.local`,
+        deploymentMode: c.mode,
+      }),
+    );
+    assert.equal(res.status, 201, `${c.mode} creation must succeed`);
+    const body = await res.json();
+    assert.equal(body.organization.deploymentMode, c.mode, `${c.mode} must persist verbatim (no silent fallback to MANAGED)`);
+    const row = await db.organization.findUnique({
+      where: { id: body.organization.id },
+      select: { deploymentMode: true },
+    });
+    assert.equal(row?.deploymentMode, c.mode, `DB row for ${c.mode} must match`);
+  }
+});
+
+// LC-11: invalid deploymentMode rejected; omitted value uses the MANAGED default.
+test('LC-11: invalid deploymentMode is rejected; omitted defaults to MANAGED', async () => {
+  const create = await import('../src/app/api/admin/organizations/create/route');
+  const token = await saToken();
+
+  for (const bad of ['INVALID', 'SUPER_ADMIN', 'CUSTOM_DB', '', 1234, null]) {
+    const res = await create.POST(
+      req('http://localhost:3000/api/admin/organizations/create', token, 'POST', {
+        name: `ST Bad ${String(bad)}`,
+        slug: `lc-st-bad-${String(bad).toLowerCase().replace(/[^a-z0-9]/g, '') || 'empty'}`,
+        adminEmail: `bad-${Date.now()}-${String(bad).length}@lc.local`,
+        deploymentMode: bad,
+      }),
+    );
+    assert.equal(res.status, 422, `deploymentMode ${JSON.stringify(bad)} must be rejected`);
+  }
+
+  // Omitted field → the explicitly defined legacy default MANAGED.
+  const res = await create.POST(
+    req('http://localhost:3000/api/admin/organizations/create', token, 'POST', {
+      name: 'ST Default',
+      slug: 'lc-st-default',
+      adminEmail: 'admin@lc-st-default.local',
+    }),
+  );
+  assert.equal(res.status, 201);
+  const body = await res.json();
+  assert.equal(body.organization.deploymentMode, 'MANAGED', 'omitted deploymentMode uses the MANAGED default');
 });

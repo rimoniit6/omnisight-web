@@ -53,15 +53,28 @@ export const PAGE_MIN_ROLE: Record<PageType, NavMinRole> = {
   users: 'org_admin',
   security: 'org_admin',
   settings: 'org_admin',
-  // Super Admin pages — require exact super_admin role (not just org_admin+ hierarchy)
+  // Super Admin Control Center pages — require exact super_admin role
   'super-admin-organizations': 'super_admin',
   'super-admin-organization-detail': 'super_admin',
+  'sa-overview': 'super_admin',
+  // Reusable package catalog — standalone Super Admin configuration.
+  'sa-packages': 'super_admin',
+  // Full provisioning flow (org + package + admin + subscription + license)
+  // — platform-level, super_admin only.
+  'sa-create-organization': 'super_admin',
+  // Public landing page content editor — super_admin only.
+  'sa-landing': 'super_admin',
+  // Control-plane audit log viewer — super_admin only. Reached from Overview
+  // (Recent Activity → View Audit Logs); NOT a primary sidebar item.
+  'sa-audit': 'super_admin',
   // Branding: admin+ for org branding, super_admin for platform branding
   branding: 'admin',
-  // URL-routed external pages (rendered outside the SPA shell)
+  // URL-routed external page (rendered outside the SPA shell)
   billing: 'org_admin',
-  payments: 'super_admin',
-  leads: 'super_admin',
+  // Organization Admin data infrastructure configuration (DB + Storage)
+  'data-infrastructure': 'org_admin',
+  // Super Admin infrastructure change request queue
+  'sa-infra-requests': 'super_admin',
 };
 
 /**

@@ -1,0 +1,3751 @@
+# OmniSight
+
+# Master Product Requirements Document (PRD)
+
+**Document Type:** Master Product Requirements Document
+**Product:** OmniSight
+**Version:** 1.1
+**Status:** Product Definition / Source of Truth
+**Last Updated:** September 9, 2026
+
+---
+
+# 1. Document Purpose
+
+This document defines the complete product requirements, business rules, system boundaries, roles, service models, subscription model, deployment architecture, Universal Agent architecture, customer data architecture, infrastructure migration model, security requirements, audit requirements, and functional expectations for OmniSight.
+
+This document is the primary product-level source of truth for:
+
+```text
+E:\Live project\omnisight\omnisight-web
+
+E:\Live project\omnisight\omnisight-agent
+```
+
+The Master PRD must be read before making significant changes to:
+
+* Web application
+* Control Plane
+* API
+* Database
+* Storage
+* Authentication
+* Authorization
+* Agent
+* Agent Builder
+* Monitoring
+* Subscription
+* Package
+* Service Model
+* Customer infrastructure
+* Migration
+* Deployment
+* Security
+* Audit
+* UI/UX
+
+If an existing implementation conflicts with this PRD, the implementation must not be silently treated as correct.
+
+The conflict must be identified, documented, and resolved deliberately.
+
+---
+
+# 2. Product Overview
+
+OmniSight is a multi-organization workforce monitoring and operational intelligence platform.
+
+The platform consists of:
+
+1. OmniSight Web / Control Plane
+2. OmniSight API
+3. Super Admin Control Center
+4. Organization Administration
+5. Organization Users
+6. Subscription and Payment Management
+7. Service Model Management
+8. Universal OmniSight Agent
+9. Agent Provisioning / Builder
+10. Monitoring and operational data
+11. Organization data infrastructure
+12. Customer-controlled data infrastructure where applicable
+13. Audit and security controls
+
+OmniSight is operated by a single platform owner represented by the Super Admin.
+
+Customers are represented as Organizations.
+
+Each Organization has:
+
+* one active service model
+* one active subscription state
+* one purchased package/plan
+* one or more Organization users
+* potentially one or more Agents/devices
+* organization-specific data isolated from every other organization
+* one authoritative organization data destination
+
+---
+
+# 3. Core Product Hierarchy
+
+The canonical product hierarchy is:
+
+```text
+OmniSight Platform
+│
+└── Super Admin
+    │
+    ├── Organizations
+    │   │
+    │   ├── Service Model
+    │   │   ├── MANAGED
+    │   │   └── CUSTOMER_DB
+    │   │
+    │   ├── Subscription
+    │   │   ├── Package / Plan
+    │   │   ├── Payment
+    │   │   ├── Invoice
+    │   │   ├── Start Date
+    │   │   ├── End Date
+    │   │   └── Status
+    │   │
+    │   ├── Organization Admin
+    │   ├── Manager
+    │   ├── Viewer
+    │   ├── Employees
+    │   ├── Universal Agents / Devices
+    │   └── Organization Data
+    │
+    └── Platform Configuration
+        ├── Packages
+        ├── Pricing
+        ├── Landing Page
+        ├── Branding
+        ├── Business Settings
+        ├── Subscription Rules
+        ├── Platform Policies
+        └── Platform Audit
+```
+
+---
+
+# 4. Product Principles
+
+OmniSight must follow these principles.
+
+## 4.1 Super Admin Authority
+
+The Super Admin is the platform owner and highest authority.
+
+The Super Admin controls:
+
+* Organizations
+* Organization status
+* Organization service model
+* Packages/plans
+* Pricing
+* Subscriptions
+* Payments
+* Invoices
+* Subscription duration
+* Organization provisioning
+* Organization Admin provisioning
+* Agent provisioning
+* Agent issuance/revocation
+* Platform settings
+* Landing page business configuration
+* Branding
+* Platform-level policies
+* Platform audit information
+* Organization suspension/resumption
+* Customer infrastructure approval
+* Infrastructure migration approval
+* Service-model migration approval
+
+No Organization Admin can override Super Admin-owned platform, commercial, subscription, or deployment decisions.
+
+---
+
+# 5. Multi-Tenant Architecture
+
+OmniSight must be a strict multi-tenant system.
+
+Each customer organization is an independent tenant.
+
+Organization A must never be able to access:
+
+* Organization B users
+* Organization B employees
+* Organization B agents
+* Organization B screenshots
+* Organization B activity
+* Organization B locations
+* Organization B reports
+* Organization B projects
+* Organization B settings
+* Organization B subscription data
+* Organization B audit data
+* Organization B customer infrastructure configuration
+* Organization B storage objects
+* Organization B database records
+
+Tenant isolation must be enforced server-side.
+
+Client-side filtering is not considered sufficient security.
+
+Every organization-scoped request must establish organization context from authenticated server-side identity.
+
+The server must never trust a client-provided `organizationId` as the sole basis for authorization.
+
+---
+
+# 6. Platform Data vs Organization Data
+
+OmniSight must explicitly distinguish between:
+
+```text
+Platform Data
+```
+
+and:
+
+```text
+Organization Data
+```
+
+## 6.1 Platform Data
+
+Platform-owned data may include:
+
+* Super Admin identity
+* Organization registry
+* Platform configuration
+* Packages
+* Pricing
+* Global commercial configuration
+* Platform branding
+* Landing page configuration
+* Platform policies
+* Platform-level audit information
+* Global service configuration
+* Global Agent protocol information
+* Platform operational metadata
+
+Platform data remains under OmniSight platform control.
+
+## 6.2 Organization Data
+
+Organization-owned data may include:
+
+* Organization users
+* Employees
+* Agents
+* Devices
+* Activity
+* Locations
+* Screenshots
+* Monitoring records
+* Screenshot metadata
+* Organization operational settings
+* Organization policies
+* Organization reports
+* Organization-specific operational history
+
+Organization data must be isolated by tenant.
+
+The exact placement of organization data depends on the active Service Model.
+
+---
+
+# 7. User Roles
+
+## 7.1 Super Admin
+
+The Super Admin is the OmniSight platform owner.
+
+Capabilities include:
+
+* Create Organization
+* Edit Organization
+* Activate Organization
+* Pause Organization
+* Resume Organization
+* Manage subscription
+* Manage package
+* Record payment
+* Record invoice
+* Set subscription dates
+* Set service model
+* Provision Organization Admin
+* Manage organization users when necessary
+* View organization operational status
+* View Agent/device status
+* Configure platform policies
+* Configure landing page
+* Configure pricing
+* Configure branding
+* View platform audit logs
+* Manage platform settings
+* Build/generate Agent packages
+* Approve infrastructure changes
+* Reject infrastructure changes
+* Approve migration
+* Monitor migration
+* Perform controlled cutover
+* Initiate rollback where applicable
+* Revoke Agents
+
+Super Admin has cross-organization visibility.
+
+---
+
+# 8. Organization Roles
+
+Each organization may contain:
+
+```text
+ORGANIZATION_ADMIN
+MANAGER
+VIEWER
+EMPLOYEE
+```
+
+---
+
+# 9. Organization Admin
+
+The Organization Admin manages the customer's organization.
+
+Organization Admin may:
+
+* Manage organization users
+* Create employees/users according to allowed rules
+* Assign Manager role
+* Assign Viewer role
+* Manage organization-level operational settings
+* View organization subscription information
+* View service model
+* View package
+* View subscription duration
+* View subscription status
+* View relevant operational data
+* Manage organization-controlled features where permitted
+* Submit customer database configuration
+* Submit customer storage configuration
+* Request infrastructure change
+* View infrastructure validation status
+* View migration status
+
+Organization Admin must NOT:
+
+* independently change service model
+* independently activate a new service model
+* approve infrastructure migration
+* change package price
+* change subscription price
+* alter payment records
+* extend subscription without Super Admin authorization
+* change platform branding
+* change platform business configuration
+* access another organization
+* access another organization's database
+* access another organization's storage
+* bypass server-side permissions
+* bypass Super Admin approval
+
+---
+
+# 10. Manager
+
+Manager is an operational role.
+
+The exact feature permissions must be permission-driven rather than hard-coded throughout the UI.
+
+Typical capabilities may include:
+
+* View assigned employees
+* View activity
+* View monitoring information
+* View screenshots where permitted
+* View operational reports
+* Manage assigned operational resources
+* Perform allowed employee/project/task operations
+
+Manager must not automatically receive Organization Admin privileges.
+
+---
+
+# 11. Viewer
+
+Viewer is a read-only operational role.
+
+Viewer may access data explicitly permitted by the organization's permission policy.
+
+Viewer must not:
+
+* modify organization configuration
+* manage users
+* modify subscription
+* modify payment
+* change service model
+* modify platform configuration
+* perform privileged administrative actions
+
+---
+
+# 12. Employee
+
+Employee is an organization-scoped operational identity.
+
+Employee permissions must be explicitly defined by the permission model.
+
+Employee must never receive administrative privileges merely because an Employee record exists.
+
+Employee access must remain organization-scoped.
+
+---
+
+# 13. Service Models — V1 Active
+
+OmniSight V1 has exactly two official customer-facing service models:
+
+```text
+1. MANAGED
+2. CUSTOMER_DB
+```
+
+Human-readable names:
+
+```text
+OmniSight Managed
+Customer Database
+```
+
+Private/self-hosted deployment is NOT a V1 service model.
+
+Private deployment must not be:
+
+* selectable
+* exposed
+* offered
+* provisioned
+* generated by Agent Builder
+* exposed through customer-facing APIs
+* represented as an active V1 deployment option
+
+Future private/self-hosted architecture may be considered later.
+
+---
+
+# 14. Universal Agent Architecture
+
+OmniSight uses ONE Universal Agent architecture.
+
+There must not be separate production Agent variants such as:
+
+```text
+Managed Agent
+Customer DB Agent
+Private Agent
+```
+
+The canonical Agent is:
+
+```text
+Universal OmniSight Agent
+```
+
+The same Agent architecture must work with both V1 service models.
+
+The Agent is OmniSight-centric.
+
+The Agent primarily needs to know:
+
+* OmniSight Server/API URL
+* Agent protocol version
+* Agent version
+* secure device identity
+* secure enrollment/authentication credential
+* server-authorized runtime configuration
+
+The Agent must NOT contain customer infrastructure knowledge.
+
+The Agent must NOT contain:
+
+* customer database username/password
+* customer database connection secrets
+* customer database host credentials
+* customer storage access keys
+* customer storage secret keys
+* customer storage passwords
+* customer infrastructure credentials
+* hard-coded customer database endpoints
+* hard-coded customer storage endpoints
+
+The Agent communicates with OmniSight.
+
+OmniSight determines the organization's destination.
+
+---
+
+# 15. Universal Agent Data Flow
+
+The canonical architecture is:
+
+```text
+Universal Agent
+       ↓
+OmniSight API
+       ↓
+Authentication
+       ↓
+Organization Resolution
+       ↓
+Authorization / Entitlement
+       ↓
+Organization Data Resolver
+       ↓
+Correct Database / Storage
+```
+
+The Agent does not decide where organization data is stored.
+
+---
+
+# 16. Managed Data Flow
+
+For:
+
+```text
+deploymentMode = MANAGED
+```
+
+the expected architecture is:
+
+```text
+Universal Agent
+       ↓
+OmniSight API
+       ↓
+Organization Resolver
+       ↓
+OmniSight Database
+       +
+OmniSight Storage
+```
+
+OmniSight controls:
+
+* application hosting
+* API hosting
+* database
+* storage
+* infrastructure
+* monitoring
+* operational responsibility
+
+---
+
+# 17. Customer DB Data Flow
+
+For:
+
+```text
+deploymentMode = CUSTOMER_DB
+```
+
+the expected architecture is:
+
+```text
+Universal Agent
+       ↓
+OmniSight API
+       ↓
+Organization Resolver
+       ↓
+Customer Database
+       +
+Customer Storage
+```
+
+OmniSight still hosts:
+
+* application
+* API
+* control plane
+
+Customer controls:
+
+* primary organization database
+* customer organization storage
+* related infrastructure credentials
+* database availability
+* storage availability
+* database backup
+* storage operational policy
+
+The Universal Agent remains unchanged.
+
+---
+
+# 18. Customer DB + Customer Storage Model
+
+For the V1 Customer Database model, the architecture must treat customer database and customer storage as a coordinated customer-controlled data destination.
+
+The model is conceptually:
+
+```text
+CUSTOMER_DB
+    +
+CUSTOMER_STORAGE
+```
+
+Customer Database stores appropriate organization metadata and structured data.
+
+Customer Storage stores appropriate organization binary/file data.
+
+Examples of binary data:
+
+* Screenshots
+* Collected media
+* Other applicable monitoring files
+
+The implementation must not assume that relational database storage and binary object storage are the same system.
+
+---
+
+# 19. Customer Database Responsibility
+
+For Customer DB deployments, the customer is responsible for:
+
+* Database availability
+* Database infrastructure
+* Database credentials
+* Database backup policy
+* Database operational health
+* Database access control
+* Database capacity
+* Database maintenance according to the supported contract
+
+OmniSight must securely access the customer database only through the configured server-side infrastructure integration.
+
+Customer database credentials must never be exposed to:
+
+* Browser
+* Organization users
+* Agent
+* frontend JavaScript
+* audit logs
+* application logs
+* API responses
+
+unless a specific security architecture explicitly requires otherwise.
+
+---
+
+# 20. Customer Storage Responsibility
+
+For Customer DB deployments, Customer Storage is the authoritative binary storage destination for organization-owned sensitive files where applicable.
+
+The customer is responsible for:
+
+* storage availability
+* storage infrastructure
+* storage credentials
+* storage access policy
+* storage capacity
+* storage lifecycle/backup according to the supported contract
+
+Storage credentials must remain server-side and securely managed.
+
+They must never be delivered to the Universal Agent.
+
+---
+
+# 21. Server-Side Organization Resolver
+
+OmniSight must have a server-side mechanism responsible for determining where organization data belongs.
+
+Conceptually:
+
+```text
+Authenticated Request
+        ↓
+Organization Identity
+        ↓
+Organization Configuration
+        ↓
+Active Service Model
+        ↓
+Active Data Destination
+        ↓
+Database Resolver
+        +
+Storage Resolver
+```
+
+The resolver must be authoritative.
+
+Clients and Agents must not choose arbitrary destinations.
+
+---
+
+# 22. Service Model Immutability
+
+Every Organization has exactly one active service model.
+
+V1 active values:
+
+```text
+MANAGED
+CUSTOMER_DB
+```
+
+The service model must not be silently changed.
+
+A service-model change is a controlled high-risk operation.
+
+Any service-model change must:
+
+1. Require explicit Super Admin authorization.
+2. Validate compatibility.
+3. Identify migration requirements.
+4. Validate database requirements.
+5. Validate storage requirements.
+6. Validate Agent compatibility.
+7. Validate subscription compatibility.
+8. Record an audit event.
+9. Require explicit confirmation.
+10. Never occur as a side effect of an unrelated update.
+
+An organization status update must never accidentally modify deployment mode.
+
+---
+
+# 23. Universal Agent and Service-Model Independence
+
+Changing an organization's service model must not require a different Agent architecture.
+
+The intended model is:
+
+```text
+Same Universal Agent
+        ↓
+OmniSight API
+        ↓
+Server-side destination resolution
+        ↓
+Managed OR Customer-controlled destination
+```
+
+The Agent should not need customer infrastructure credentials after a service-model change.
+
+Where applicable, an Agent should continue operating after a successful server-side migration/cutover without requiring a new Agent build solely because the organization's database/storage destination changed.
+
+---
+
+# 24. Organization Infrastructure Configuration
+
+Customer infrastructure configuration is server-side configuration.
+
+It may include:
+
+## Database
+
+* Provider/type
+* Host
+* Port
+* Database name
+* Username
+* Password/secret
+* TLS/security settings
+* Schema version
+* Connection requirements
+
+## Storage
+
+* Provider/type
+* Endpoint
+* Bucket/container
+* Region
+* Access key
+* Secret key
+* TLS/security settings
+
+Secrets must be encrypted at rest using appropriate secret-management practices.
+
+---
+
+# 25. Infrastructure Configuration Security
+
+Customer infrastructure credentials must:
+
+* never be stored plaintext where avoidable
+* never be returned in normal API responses
+* never be displayed in frontend forms after initial submission
+* never be logged
+* never be stored in audit logs
+* never be included in Agent configuration
+* never be embedded into Agent binaries
+* never be committed to source control
+
+The implementation should prefer a dedicated secret-management mechanism where practical.
+
+---
+
+# 26. Organization Infrastructure Change Request
+
+An Organization Admin may request a change to the organization's customer database/storage destination.
+
+The request does NOT immediately activate the new destination.
+
+Expected flow:
+
+```text
+Organization Admin
+        ↓
+Submit Infrastructure Change
+        ↓
+Validation
+        ↓
+READY_FOR_APPROVAL
+        ↓
+Super Admin Review
+        ↓
+Approve / Reject
+```
+
+---
+
+# 27. Infrastructure Change State Machine
+
+The canonical state model is:
+
+```text
+CURRENT
+   ↓
+CHANGE_REQUESTED
+   ↓
+VALIDATING
+   ↓
+READY_FOR_APPROVAL
+   ↓
+APPROVED
+   ↓
+MIGRATING
+   ↓
+VERIFYING
+   ↓
+CUTOVER
+   ↓
+ACTIVE
+```
+
+Failure states must support safe recovery.
+
+Possible failure path:
+
+```text
+VALIDATING
+      ↓
+VALIDATION_FAILED
+      ↓
+CURRENT
+```
+
+Migration failure:
+
+```text
+MIGRATING
+      ↓
+MIGRATION_FAILED
+      ↓
+ROLLBACK
+      ↓
+CURRENT
+```
+
+Verification failure:
+
+```text
+VERIFYING
+      ↓
+VERIFICATION_FAILED
+      ↓
+ROLLBACK
+      ↓
+CURRENT
+```
+
+---
+
+# 28. Super Admin Infrastructure Approval
+
+Only Super Admin may approve the activation of a new organization data destination.
+
+Super Admin must be able to inspect:
+
+* Current service model
+* Current database destination
+* Current storage destination
+* Requested destination
+* Validation results
+* Schema compatibility
+* Storage compatibility
+* Migration readiness
+* Risk information
+* Migration status
+* Verification results
+
+Super Admin may:
+
+```text
+APPROVE
+REJECT
+```
+
+Approval must be audited.
+
+Rejection must be audited.
+
+---
+
+# 29. Infrastructure Validation
+
+Before approval, the system must validate the requested destination.
+
+Database validation may include:
+
+* Connectivity
+* Authentication
+* Read access
+* Write access
+* Required permissions
+* Database version
+* Schema compatibility
+* Required tables
+* Required indexes
+* Migration compatibility
+* Transaction capability where required
+
+Storage validation may include:
+
+* Connectivity
+* Authentication
+* Bucket/container availability
+* Write test
+* Read test
+* Permission validation
+* Endpoint validation
+* Region compatibility
+* Object naming compatibility
+
+Validation failures must prevent unsafe activation.
+
+---
+
+# 30. Migration Requirements
+
+Changing from Managed to Customer DB must migrate existing organization data where applicable.
+
+The system must NOT simply redirect future writes while leaving historical organization data behind unless an explicit business rule defines such behavior.
+
+Migration may include:
+
+* organization users
+* memberships
+* employees
+* Agents/devices
+* activity
+* locations
+* monitoring metadata
+* screenshot metadata
+* organization settings
+* applicable historical records
+
+Binary data may include:
+
+* screenshots
+* applicable collected files
+* other organization-owned media
+
+---
+
+# 31. Migration of Metadata and Binary Data
+
+The migration architecture must distinguish:
+
+```text
+Relational Metadata
+```
+
+from:
+
+```text
+Binary Files
+```
+
+Example:
+
+```text
+Screenshot Metadata
+        ↓
+Customer Database
+
+Screenshot Binary
+        ↓
+Customer Storage
+```
+
+A migration is not considered complete merely because database records were copied.
+
+Binary files must also be verified.
+
+---
+
+# 32. Migration Verification
+
+Before cutover, migration verification must validate where applicable:
+
+* record counts
+* relationships
+* organization ownership
+* employee associations
+* Agent associations
+* activity records
+* location records
+* screenshot metadata
+* binary files
+* file sizes
+* file hashes/checksums
+* storage keys
+* timestamps
+* required indexes/constraints
+* data integrity
+
+The exact verification mechanism may evolve, but migration must provide evidence that the destination is usable.
+
+---
+
+# 33. Cutover
+
+The new destination must not become authoritative until:
+
+1. Destination validation succeeds.
+2. Super Admin approves the migration.
+3. Migration succeeds.
+4. Verification succeeds.
+5. Cutover is explicitly executed.
+
+After cutover:
+
+```text
+Organization
+      ↓
+New Customer Database
+      +
+New Customer Storage
+```
+
+must become the authoritative destination for new organization data.
+
+---
+
+# 34. Rollback
+
+Migration must support controlled rollback where technically feasible.
+
+If migration or verification fails:
+
+```text
+New Destination
+      ↓
+Not Activated
+```
+
+The current working destination remains authoritative.
+
+After cutover, rollback may be allowed during a defined safety window if the architecture supports it.
+
+Rollback must be:
+
+* explicit
+* auditable
+* controlled
+* integrity-aware
+
+---
+
+# 35. Old Data Retention After Migration
+
+Old organization data must not be immediately deleted after migration.
+
+The previous destination should be retained for an appropriate verification/rollback period according to the defined operational policy.
+
+Only after successful verification and the applicable retention/rollback window may old organization data be retired.
+
+Data deletion must be auditable where required.
+
+---
+
+# 36. Migration Safety
+
+Infrastructure migration is a high-risk operation.
+
+The implementation should protect against:
+
+* partial migration
+* duplicate records
+* missing records
+* orphaned records
+* missing binary files
+* orphaned binary files
+* concurrent writes
+* inconsistent state
+* race conditions
+* interrupted migration
+* retry duplication
+* network failures
+* database failures
+* storage failures
+* cutover failure
+
+Migration operations should be idempotent where practical.
+
+---
+
+# 37. Package / Plan Model
+
+Service Model and Package/Plan are separate concepts.
+
+Example:
+
+```text
+Organization
+├── Service Model: MANAGED
+├── Package: PROFESSIONAL
+├── Subscription: ACTIVE
+├── Duration: 12 months
+└── Payment: PAID
+```
+
+A package defines commercial/product entitlement.
+
+A service model defines infrastructure/deployment/data-destination behavior.
+
+These concepts must not be conflated.
+
+---
+
+# 38. Package Management
+
+Super Admin must be able to manage packages/plans.
+
+A package may contain:
+
+* Name
+* Description
+* Price
+* Billing duration
+* Currency
+* Included capabilities
+* Limits
+* Organization eligibility
+* Active/inactive status
+* Display order
+* Landing-page visibility
+* Commercial metadata
+
+Package pricing must be configurable from Super Admin.
+
+Hard-coded public pricing must not be required.
+
+---
+
+# 39. Subscription Model
+
+Each Organization may have subscription information including:
+
+* Package/Plan
+* Service Model
+* Subscription status
+* Start date
+* End date
+* Duration
+* Payment status
+* Invoice information
+* Renewal information
+* Notes
+* Audit history
+
+Possible states include:
+
+```text
+PENDING
+ACTIVE
+PAUSED
+EXPIRED
+CANCELLED
+```
+
+The final enum may be refined during implementation, but state transitions must be explicit.
+
+---
+
+# 40. Manual Payment Model
+
+OmniSight initially uses manual payment processing.
+
+There is no requirement for an automated payment gateway in V1.
+
+The payment flow is:
+
+```text
+Customer
+   ↓
+Contacts OmniSight
+   ↓
+Selects Package + Service Model
+   ↓
+Manual Payment
+   ↓
+Super Admin Verifies Payment
+   ↓
+Super Admin Records Payment
+   ↓
+Subscription Activated
+   ↓
+Organization Provisioned
+```
+
+Payment records must be auditable.
+
+---
+
+# 41. Subscription Expiration
+
+Subscription expiration must be handled explicitly.
+
+When an organization reaches its subscription end date:
+
+* the organization becomes eligible for expiration handling
+* the platform must not silently delete organization data
+* access behavior follows subscription policy
+* Super Admin can pause/suspend the organization
+* Super Admin can renew/resume after payment
+
+Data must be retained according to retention policy.
+
+---
+
+# 42. Organization Pause / Resume
+
+Super Admin must be able to pause an organization.
+
+Example:
+
+```text
+ACTIVE
+  ↓
+PAUSED
+```
+
+Pausing must not delete:
+
+* Organization
+* Users
+* Employees
+* Agents
+* Screenshots
+* Activity
+* Historical records
+* Payment history
+
+unless a separate deletion operation is explicitly executed.
+
+Resume:
+
+```text
+PAUSED
+  ↓
+ACTIVE
+```
+
+Resume must be audited.
+
+---
+
+# 43. Organization Provisioning
+
+Organization creation is a Super Admin operation.
+
+Preferred flow:
+
+```text
+Create Organization
+       ↓
+Select Service Model
+       ↓
+Select Package
+       ↓
+Set Subscription
+       ↓
+Record Payment / Invoice
+       ↓
+Create Organization Admin
+       ↓
+Create Membership
+       ↓
+Activate Organization
+       ↓
+Prepare Agent Provisioning
+```
+
+For CUSTOMER_DB organizations, customer infrastructure configuration may occur after Organization Admin login.
+
+Provisioning must avoid partially-created organizations.
+
+Where practical, database operations must be transactional.
+
+---
+
+# 44. Organization Admin Credentials
+
+Super Admin provisions the initial Organization Admin account.
+
+Passwords must never be stored in plaintext.
+
+Credentials must follow secure authentication rules.
+
+A secure first-login password-change flow is strongly preferred.
+
+---
+
+# 45. Universal Agent
+
+The OmniSight Agent is the customer-side Universal service component.
+
+There is exactly one canonical Agent architecture for V1.
+
+The Agent must support both:
+
+```text
+MANAGED
+CUSTOMER_DB
+```
+
+without requiring separate customer infrastructure credentials.
+
+The Agent must respect:
+
+* Organization identity
+* Subscription state
+* Package entitlement
+* Enabled capabilities
+* Server-side policy
+* Device identity
+* Security policy
+* Agent compatibility
+
+---
+
+# 46. Agent Configuration
+
+The Agent's foundational configuration should contain only OmniSight-centric information.
+
+Examples:
+
+```text
+OmniSight API URL
+Protocol Version
+Agent Version
+Secure Enrollment / Device Identity
+```
+
+The Agent must not receive:
+
+```text
+Customer DB URL
+Customer DB username
+Customer DB password
+Customer Storage endpoint
+Customer Storage access key
+Customer Storage secret
+```
+
+---
+
+# 47. Agent Organization Binding
+
+An Agent must never be allowed to freely choose an organization at runtime.
+
+Organization binding must be authentication-backed and server-authoritative.
+
+The server must validate:
+
+* Agent identity
+* Organization identity
+* Credential/token
+* Device identity
+* Subscription eligibility
+* Service entitlement
+* Agent compatibility
+* Revocation state
+
+Changing a local organization identifier must not allow an Agent to become another organization's Agent.
+
+---
+
+# 48. Agent Enrollment
+
+The Agent must have a controlled enrollment/claiming mechanism.
+
+Conceptually:
+
+```text
+Agent
+   ↓
+OmniSight API
+   ↓
+Enrollment Validation
+   ↓
+Organization Binding
+   ↓
+Device Registration
+   ↓
+Secure Credential
+   ↓
+Active Agent
+```
+
+Enrollment must prevent unauthorized device registration.
+
+---
+
+# 49. Agent Capability Model
+
+Agent capabilities must be entitlement-aware.
+
+Potential capabilities include:
+
+* Screenshot
+* Location
+* Activity monitoring
+* Device information
+* Application inventory
+* Remote commands
+* Other approved monitoring capabilities
+
+Capabilities must not be enabled solely because a local UI toggle exists.
+
+The server remains authoritative.
+
+---
+
+# 50. Build-Time vs Runtime Entitlement
+
+OmniSight uses a hybrid model.
+
+## Build-Time
+
+Agent Builder may package configuration according to:
+
+* Organization
+* Service Model
+* Package
+* Required capabilities
+* Initial configuration
+
+## Runtime
+
+The server remains authoritative.
+
+The Agent must respect applicable:
+
+* Organization status
+* Subscription status
+* Package entitlement
+* Capability policy
+* Security state
+* Revocation
+* Compatibility requirements
+
+Modifying a local Agent package must not grant unauthorized server capabilities.
+
+---
+
+# 51. Agent Builder
+
+The Agent Builder is a Super Admin/local administrative tool.
+
+It must allow Super Admin to:
+
+1. Select Organization.
+2. Validate Organization status.
+3. Validate Package.
+4. Validate Service Model.
+5. Determine permitted capabilities.
+6. Generate organization-bound Agent configuration where applicable.
+7. Build the Universal Agent.
+8. Validate build output.
+9. Verify package integrity.
+10. Export deliverable.
+
+The Builder must not generate separate Managed/Customer Agent architectures.
+
+The Builder must not embed customer database/storage secrets.
+
+The Builder must fail safely when configuration is invalid.
+
+---
+
+# 52. Agent Runtime Configuration
+
+Runtime configuration must be server-authoritative.
+
+The Agent may receive:
+
+* monitoring policy
+* capability configuration
+* screenshot interval
+* location policy
+* command policy
+* update policy
+* retention-related local behavior
+* server endpoint information
+* protocol requirements
+
+The Agent must not use local configuration to bypass server policy.
+
+---
+
+# 53. Agent Heartbeat
+
+Agents must periodically communicate with the server.
+
+Heartbeat information may include:
+
+* Device identity
+* Agent version
+* Organization identity
+* Timestamp
+* Health status
+* Capabilities
+* Relevant configuration state
+* Protocol version
+
+Offline detection must be server-driven.
+
+---
+
+# 54. Agent Status
+
+Typical states:
+
+```text
+ONLINE
+OFFLINE
+UNKNOWN
+DISABLED
+REVOKED
+```
+
+Status must be derived from server-observed signals such as heartbeat/connection state.
+
+Client UI assumptions must not be treated as authoritative device status.
+
+---
+
+# 55. Agent Revocation
+
+Super Admin or authorized server-side controls must support Agent revocation.
+
+A revoked Agent must not continue using protected OmniSight capabilities.
+
+Revocation must be server-enforced.
+
+Revocation must be audited.
+
+---
+
+# 56. Agent Offline Behavior
+
+The Agent may temporarily operate offline according to server-defined policy.
+
+If local data is queued:
+
+* it should be protected using appropriate local encryption
+* local retention must be policy-controlled
+* upload must resume when connectivity returns
+* duplicate uploads must be prevented
+* unauthorized offline operation must not bypass entitlement policy
+
+---
+
+# 57. Agent Security
+
+Agent security must include where applicable:
+
+* secure transport
+* secure authentication
+* credential protection
+* local secret protection
+* local data encryption
+* integrity verification
+* version verification
+* revocation
+* secure update mechanism
+* safe logging
+* crash handling
+
+Agent logs must not expose customer infrastructure credentials.
+
+---
+
+# 58. Web ↔ Agent Contract
+
+The Web/control plane and Agent must share a documented contract.
+
+The contract must define:
+
+* Authentication
+* Enrollment/claiming
+* Organization binding
+* Device identity
+* Heartbeat
+* Configuration
+* Capabilities
+* Screenshot upload
+* Location
+* Commands
+* Version compatibility
+* Error codes
+* Revocation
+* Subscription state
+* Policy enforcement
+
+Any breaking contract change must be coordinated across:
+
+```text
+omnisight-web
++
+omnisight-agent
+```
+
+---
+
+# 59. Server-Side Agent Authorization
+
+Every Agent API request must validate as applicable:
+
+```text
+Authentication
+      ↓
+Agent Identity
+      ↓
+Organization Binding
+      ↓
+Agent Status
+      ↓
+Organization Status
+      ↓
+Subscription
+      ↓
+Entitlement
+      ↓
+Capability Policy
+      ↓
+Resource Authorization
+```
+
+The Agent must never be treated as a trusted authority.
+
+---
+
+# 60. Screenshot Pipeline
+
+Expected architecture:
+
+```text
+Agent
+ ↓
+OmniSight API
+ ↓
+Authentication
+ ↓
+Organization Resolution
+ ↓
+Entitlement / Policy Check
+ ↓
+Screenshot Metadata
+ ↓
+Correct Organization Database
+
+Screenshot Binary
+ ↓
+Correct Organization Storage
+```
+
+For Managed:
+
+```text
+Metadata → OmniSight DB
+Binary   → OmniSight Storage
+```
+
+For Customer DB:
+
+```text
+Metadata → Customer DB
+Binary   → Customer Storage
+```
+
+---
+
+# 61. Screenshot Metadata
+
+Screenshot metadata may include:
+
+* Screenshot ID
+* Organization ID
+* Employee ID
+* Device ID
+* Captured timestamp
+* Storage key
+* File size
+* Hash/checksum
+* Status
+* Applicable policy metadata
+
+The exact schema may evolve.
+
+---
+
+# 62. Screenshot Collection Policy
+
+Screenshot collection must be governed by:
+
+* Organization entitlement
+* Subscription
+* Service model
+* Screenshot policy
+* Privacy/consent policy
+* Collection interval
+* Agent status
+* Storage policy
+
+Server-side policy must be authoritative.
+
+The Agent must not arbitrarily choose a frequency that violates server policy.
+
+---
+
+# 63. Screenshot Retention
+
+Screenshot retention must be configurable according to applicable subscription/service policy.
+
+The system should support:
+
+* Retention duration
+* Automatic cleanup
+* Storage monitoring
+* Storage usage reporting
+* Safe deletion
+
+Deletion must be auditable where required.
+
+---
+
+# 64. Storage Architecture
+
+Monitoring products can generate large amounts of binary data.
+
+OmniSight must distinguish:
+
+```text
+Metadata
+```
+
+from:
+
+```text
+Binary Data
+```
+
+Relational databases should primarily store metadata and structured operational data.
+
+Object/file storage should be used for large binary files where appropriate.
+
+---
+
+# 65. Storage Access Security
+
+Organization storage access must be authorized server-side.
+
+The system must prevent:
+
+* cross-tenant file access
+* guessed storage-key access
+* unauthorized downloads
+* unauthorized deletion
+* unauthorized public access
+
+Signed URLs or equivalent controlled access mechanisms may be used where appropriate.
+
+Storage authorization must remain tenant-aware.
+
+---
+
+# 66. Live Activity
+
+Live Activity is an operational feature.
+
+It must provide near-real-time visibility where supported.
+
+The system must enforce:
+
+* Authentication
+* Organization isolation
+* Role permissions
+* Agent/device authorization
+* Connection security
+
+Real-time channels must never allow cross-organization subscription.
+
+---
+
+# 67. Organization Settings
+
+Organization users should be able to view:
+
+* Organization name
+* Organization status
+* Service Model
+* Package
+* Subscription duration
+* Subscription start date
+* Subscription end date
+* Subscription status
+* Relevant limits
+* Relevant enabled capabilities
+
+Super Admin-owned commercial/deployment fields must be read-only for Organization Admin.
+
+Organization Admin may have a dedicated:
+
+```text
+Data Infrastructure
+```
+
+area for submitting customer DB/storage configuration.
+
+---
+
+# 68. Customer Infrastructure UI
+
+Organization Admin may access:
+
+```text
+Settings
+    ↓
+Data Infrastructure
+```
+
+The UI may show:
+
+* Current Service Model
+* Current data destination status
+* Customer DB status
+* Customer Storage status
+* Configuration status
+* Validation status
+* Migration status
+* Approval status
+
+Sensitive credentials must not be displayed after submission.
+
+---
+
+# 69. Infrastructure Request UX
+
+The infrastructure change UI must clearly communicate:
+
+```text
+Submitting configuration does NOT immediately switch the organization's data destination.
+```
+
+The UI should show:
+
+```text
+Current
+Requested
+Validation
+Approval
+Migration
+Verification
+Cutover
+```
+
+This prevents users from assuming that entering credentials immediately changes production routing.
+
+---
+
+# 70. Super Admin Settings
+
+Super Admin settings may include:
+
+## Business
+
+* Company/platform information
+* Contact information
+* Support information
+
+## Pricing
+
+* Package prices
+* Package availability
+* Package descriptions
+
+## Landing Page
+
+* Hero content
+* Product description
+* Pricing
+* Features
+* Contact information
+* CTA configuration
+* Business information
+
+## Branding
+
+* Logo
+* Brand name
+* Colors
+* Assets
+* Other supported branding configuration
+
+Changes must be validated and audited where appropriate.
+
+---
+
+# 71. Landing Page
+
+OmniSight must provide a public marketing landing page.
+
+The landing page must communicate clearly:
+
+* What OmniSight is
+* Who it is for
+* Key capabilities
+* Service models
+* Packages/pricing
+* How to purchase
+* How manual payment works
+* How to contact OmniSight
+
+V1 customer-facing service models are exactly:
+
+```text
+OmniSight Managed
+Customer Database
+```
+
+Private deployment must not be shown as a V1 option.
+
+---
+
+# 72. Purchase Flow
+
+The public customer journey is:
+
+```text
+Landing Page
+    ↓
+Explore OmniSight
+    ↓
+Choose Package
+    ↓
+Choose Service Model
+    ↓
+Contact OmniSight
+    ↓
+Manual Payment
+    ↓
+Super Admin Verification
+    ↓
+Organization Provisioning
+```
+
+The initial implementation does not require automated checkout.
+
+---
+
+# 73. Service Model Selection UI
+
+When provisioning an organization, Super Admin must see exactly two V1 options.
+
+### OmniSight Managed
+
+> OmniSight hosts the application, database and storage. Best for customers who want a fully managed OmniSight service.
+
+### Customer Database
+
+> OmniSight hosts the application/API. The customer controls the organization's primary database and customer storage. Customer infrastructure is configured securely and becomes active only after validation, Super Admin approval, migration where applicable, verification, and controlled cutover.
+
+Private deployment must not be shown, selectable, or offered in V1.
+
+---
+
+# 74. Authorization
+
+Authorization must be enforced server-side.
+
+The UI may hide unavailable actions, but hiding a button is not authorization.
+
+Every privileged API route must independently verify:
+
+1. Authentication
+2. Role
+3. Organization context
+4. Resource ownership
+5. Permission
+6. Subscription eligibility where applicable
+7. Service-model eligibility where applicable
+
+---
+
+# 75. RBAC
+
+The canonical role hierarchy is:
+
+```text
+SUPER_ADMIN
+
+ORGANIZATION
+├── ORGANIZATION_ADMIN
+├── MANAGER
+├── VIEWER
+└── EMPLOYEE
+```
+
+Role names must be centralized.
+
+Permission logic must not be duplicated inconsistently across pages.
+
+---
+
+# 76. Audit Logging
+
+Important operations must generate audit records.
+
+Examples:
+
+* Organization created
+* Organization updated
+* Service Model selected
+* Service Model changed
+* Package changed
+* Subscription created
+* Subscription renewed
+* Subscription paused
+* Subscription resumed
+* Payment recorded
+* Invoice created
+* Organization Admin created
+* User created
+* User role changed
+* User removed
+* Agent issued
+* Agent revoked
+* Infrastructure change requested
+* Infrastructure validation completed
+* Infrastructure change approved
+* Infrastructure change rejected
+* Migration started
+* Migration completed
+* Migration failed
+* Cutover completed
+* Rollback executed
+* Security-sensitive settings changed
+
+Audit logs must identify:
+
+* Actor
+* Action
+* Target
+* Organization context
+* Timestamp
+* Relevant metadata
+* Result/status
+
+Secrets must never be stored inside audit logs.
+
+---
+
+# 77. Data Isolation
+
+Every organization-scoped resource must be evaluated for tenant isolation.
+
+Where applicable:
+
+```text
+organizationId
+```
+
+must be present and validated.
+
+The implementation must distinguish:
+
+```text
+Platform Scope
+Organization Scope
+User Scope
+Device Scope
+```
+
+Global unique constraints must only be used when the business rule truly requires global uniqueness.
+
+---
+
+# 78. Database Requirements
+
+The platform must support data required for:
+
+* Organizations
+* Users
+* Roles
+* Memberships
+* Employees
+* Agents/devices
+* Packages/plans
+* Subscriptions
+* Payments
+* Invoices
+* Audit logs
+* Organization settings
+* Platform settings
+* Monitoring data
+* Screenshot metadata
+* Activity data
+* Location data where applicable
+* Agent configuration metadata
+* Infrastructure configuration metadata
+* Migration state where applicable
+
+For CUSTOMER_DB organizations, organization-owned data must be routed to the configured customer database according to the approved data architecture.
+
+---
+
+# 79. Infrastructure Configuration Data
+
+Infrastructure configuration records must identify, where applicable:
+
+* Organization
+* Service Model
+* Database configuration reference
+* Storage configuration reference
+* Configuration version
+* Validation status
+* Approval status
+* Migration status
+* Active/inactive state
+* Created timestamp
+* Updated timestamp
+
+Sensitive credentials must be stored through secure secret handling.
+
+---
+
+# 80. API Requirements
+
+APIs must be organized around clear boundaries.
+
+Examples:
+
+```text
+/api/admin/*
+/api/organization/*
+/api/agent/*
+/api/auth/*
+/api/public/*
+```
+
+Every API must have:
+
+* Authentication requirement
+* Authorization requirement
+* Input validation
+* Output contract
+* Error contract
+* Tenant boundary
+* Audit requirement where applicable
+* Rate limiting where applicable
+
+Agent APIs must additionally enforce:
+
+* Agent authentication
+* Organization binding
+* Agent status
+* Subscription eligibility
+* Capability entitlement
+* Server-side policy
+
+---
+
+# 81. Organization Data Routing
+
+The API layer must resolve organization data destination server-side.
+
+Conceptually:
+
+```text
+Request
+  ↓
+Authenticated Identity
+  ↓
+Organization
+  ↓
+Active Service Model
+  ↓
+Active Destination
+  ↓
+Database Resolver / Storage Resolver
+  ↓
+Data Operation
+```
+
+No client-side implementation may override the active destination.
+
+---
+
+# 82. Error Handling
+
+Every production-critical page and API flow must provide meaningful error states.
+
+The UI must support where applicable:
+
+```text
+Loading
+Success
+Empty
+Error
+Retry
+Unauthorized
+Forbidden
+Expired
+Paused
+Unavailable
+Migration Pending
+Migration Failed
+Validation Failed
+Approval Pending
+```
+
+API failures must produce structured responses.
+
+Infrastructure failures must not expose secrets or raw sensitive connection information.
+
+---
+
+# 83. Subscription-Aware Access
+
+Access to paid functionality must consider:
+
+```text
+Authentication
+      ↓
+Role
+      ↓
+Organization
+      ↓
+Organization Status
+      ↓
+Subscription Status
+      ↓
+Package Entitlement
+      ↓
+Service Model
+      ↓
+Feature Policy
+```
+
+A user must not gain access merely because a frontend route exists.
+
+---
+
+# 84. Deployment Model and Feature Policy
+
+V1 active models:
+
+```text
+MANAGED
+    → OmniSight application
+    → OmniSight API
+    → OmniSight database
+    → OmniSight storage
+
+CUSTOMER_DB
+    → OmniSight application
+    → OmniSight API
+    → Customer database
+    → Customer storage
+```
+
+Private is not a V1 model.
+
+---
+
+# 85. Customer DB Operational Boundary
+
+For CUSTOMER_DB deployments, the production contract must explicitly define:
+
+* Which database OmniSight can access
+* Which storage OmniSight can access
+* How credentials are configured
+* How secrets are protected
+* Backup responsibility
+* Migration responsibility
+* Schema versioning
+* Storage compatibility
+* Database connectivity requirements
+* Storage connectivity requirements
+* Failure behavior
+* Support boundary
+* Monitoring responsibility
+* Retention responsibility
+* Rollback requirements
+
+These requirements must be documented before production rollout.
+
+---
+
+# 86. Organization Lifecycle
+
+Canonical lifecycle:
+
+```text
+PROVISIONING
+     ↓
+ACTIVE
+     ↓
+PAUSED
+     ↓
+ACTIVE
+     ↓
+EXPIRED
+     ↓
+RENEWED / ACTIVE
+```
+
+Service-model migration is a separate controlled lifecycle.
+
+Deletion is a separate destructive workflow.
+
+---
+
+# 87. Organization Deletion
+
+Deletion is a high-risk operation.
+
+The system must distinguish:
+
+### Directly deletable
+
+Resources with no dependent records may be deleted directly.
+
+### Dependency-bound
+
+Resources with dependencies must first have those dependencies handled.
+
+The system should warn Super Admin before destructive actions.
+
+No destructive cascade should occur silently.
+
+Customer infrastructure data must not be deleted merely because an organization is paused.
+
+---
+
+# 88. Seed Data
+
+Production seed data must be minimal.
+
+Only required platform bootstrap data should remain.
+
+Super Admin bootstrap data should come from secure environment/configuration where applicable.
+
+Customer organizations must not be created as permanent demo seed data unless explicitly required for development/testing.
+
+Development test data must not accidentally ship into production.
+
+---
+
+# 89. Email System
+
+Initial OmniSight sales and provisioning may use manual communication.
+
+Automated transactional email is not required for the initial manual-payment workflow.
+
+A future email system may support:
+
+* Organization created
+* Welcome email
+* Password setup
+* Subscription expiring
+* Subscription expired
+* Payment confirmation
+* Invoice
+* Agent instructions
+* Security notifications
+* Migration notifications
+
+A mock email compose implementation must not be represented as actual email delivery.
+
+---
+
+# 90. Web Repository Scope
+
+Repository:
+
+```text
+E:\Live project\omnisight\omnisight-web
+```
+
+The Web repository is responsible for:
+
+* Super Admin Panel
+* Organization Admin Panel
+* Organization user interfaces
+* Authentication
+* Authorization
+* API/control plane
+* Database integration
+* Customer infrastructure integration
+* Subscription management
+* Payment/invoice management
+* Platform configuration
+* Landing page
+* Branding
+* Audit UI
+* Agent management UI
+* Monitoring UI
+* Real-time UI
+* Migration management
+* Infrastructure validation
+* Infrastructure approval workflow
+
+---
+
+# 91. Agent Repository Scope
+
+Repository:
+
+```text
+E:\Live project\omnisight\omnisight-agent
+```
+
+The Agent repository is responsible for:
+
+* Universal Agent runtime
+* Device identity
+* Server communication
+* Enrollment
+* Heartbeat
+* Capability execution
+* Monitoring collection
+* Policy enforcement
+* Secure authentication
+* Configuration
+* Upload queue
+* Offline behavior
+* Agent lifecycle
+* Build/package generation
+* Agent security
+* Update/version management
+
+The Agent must never independently redefine business entitlement.
+
+Server-side authorization remains authoritative.
+
+---
+
+# 92. Version Compatibility
+
+The server must know the Agent version.
+
+The Agent should report:
+
+```text
+agentVersion
+protocolVersion
+capabilities
+deviceId
+organizationId
+```
+
+The server must be able to identify unsupported Agent versions.
+
+Agent upgrades must not silently break customer environments.
+
+---
+
+# 93. Observability
+
+The platform must provide sufficient observability for:
+
+* API errors
+* Authentication failures
+* Agent connection failures
+* Database failures
+* Storage failures
+* Subscription errors
+* Provisioning failures
+* Agent build failures
+* Real-time connection failures
+* Infrastructure validation failures
+* Migration failures
+* Cutover failures
+* Rollback failures
+
+Sensitive credentials and private data must not be logged.
+
+---
+
+# 94. Performance and Scalability
+
+OmniSight may process large volumes of:
+
+* Screenshots
+* Activity events
+* Device heartbeats
+* Location data
+* Audit records
+* Migration data
+
+The architecture must avoid unnecessary database growth.
+
+Where applicable, use:
+
+* Pagination
+* Indexing
+* Background processing
+* Object storage
+* Retention cleanup
+* Aggregation
+* Caching
+* Efficient queries
+* Queue-based processing
+
+Unbounded list endpoints are prohibited for production-scale data.
+
+---
+
+# 95. Pagination
+
+Large collections must use server-side pagination.
+
+Examples:
+
+* Organizations
+* Members
+* Employees
+* Agents
+* Screenshots
+* Activity
+* Locations
+* Audit logs
+* Payments
+* Invoices
+* Migration history
+
+The backend must enforce safe maximum page sizes.
+
+---
+
+# 96. Privacy
+
+Monitoring functionality must respect applicable privacy and consent requirements.
+
+The product must support policy-driven control over monitoring features.
+
+Examples:
+
+* Screenshot enabled/disabled
+* Location enabled/disabled
+* Monitoring enabled/disabled
+* Privacy/break mode where applicable
+
+The system must not silently collect data when applicable policy prohibits collection.
+
+---
+
+# 97. Data Retention
+
+Retention must be defined separately for:
+
+* Screenshots
+* Activity
+* Location
+* Audit logs
+* Device records
+* Payment records
+* Invoices
+* Subscription history
+* Migration artifacts
+* Temporary migration backups
+
+Financial/audit records generally require stronger retention guarantees than transient monitoring data.
+
+Retention policies must be documented and implemented explicitly.
+
+---
+
+# 98. Super Admin Dashboard
+
+The Super Admin dashboard should provide high-level operational visibility.
+
+Potential information:
+
+* Total organizations
+* Active organizations
+* Paused organizations
+* Expiring subscriptions
+* Expired subscriptions
+* Revenue/payment summary
+* Active Agents
+* Offline Agents
+* Storage usage
+* Screenshot volume
+* Recent audit events
+* Platform health
+* Infrastructure validation status
+* Migration status
+* Customer database health where observable
+* Customer storage health where observable
+
+Dashboard metrics must be database-driven.
+
+No random/mock production metrics are permitted.
+
+---
+
+# 99. Organization Dashboard
+
+Organization users should see only their organization's data.
+
+Dashboard may include:
+
+* Employee count
+* Active Agents
+* Online/offline devices
+* Activity summary
+* Screenshot summary
+* Location summary where enabled
+* Subscription status
+* Package
+* Service Model
+* Alerts
+* Operational metrics
+
+---
+
+# 100. UI/UX Requirements
+
+The UI must clearly distinguish:
+
+* Platform administration
+* Organization administration
+* Operational monitoring
+* Subscription information
+* Service Model
+* Package
+* Customer infrastructure
+* Migration state
+
+Critical actions must have:
+
+* Confirmation
+* Clear consequences
+* Permission checks
+* Error feedback
+* Success feedback
+
+Infrastructure migration and destructive actions require additional confirmation.
+
+---
+
+# 101. No Silent State Changes
+
+The following must never happen silently:
+
+* Service Model changes
+* Package changes
+* Subscription status changes
+* Organization status changes
+* Role changes
+* Agent revocation
+* Data deletion
+* Storage deletion
+* Security setting changes
+* Infrastructure changes
+* Migration
+* Cutover
+* Rollback
+
+Every important state transition must be intentional and auditable.
+
+---
+
+# 102. Source-of-Truth Rules
+
+When implementing OmniSight, follow this priority:
+
+```text
+1. Master PRD
+2. Feature-specific PRD
+3. Web ↔ Agent Contract
+4. Database Contract
+5. Infrastructure/Data Destination Contract
+6. Security Rules
+7. Existing Implementation
+8. AI/Developer Assumption
+```
+
+If two requirements conflict, the higher-level authoritative requirement wins.
+
+If the PRD itself is ambiguous, the developer/AI must not invent behavior silently.
+
+---
+
+# 103. AI Coding Agent Rules
+
+Any AI coding agent working on OmniSight must follow these rules.
+
+## Rule 1 — Do Not Guess
+
+Never invent:
+
+* Business rules
+* Permissions
+* Subscription behavior
+* Service model behavior
+* Database ownership
+* Storage ownership
+* API contracts
+* Agent capabilities
+* Migration behavior
+
+when the requirement is undefined.
+
+## Rule 2 — Inspect Before Editing
+
+Before modifying code:
+
+1. Inspect relevant files.
+2. Inspect database schema.
+3. Inspect existing API.
+4. Inspect authentication.
+5. Inspect authorization.
+6. Inspect related UI.
+7. Inspect Agent contract.
+8. Inspect infrastructure routing.
+9. Inspect migrations.
+10. Identify dependencies.
+
+## Rule 3 — Preserve Existing Functionality
+
+Do not break unrelated working functionality.
+
+## Rule 4 — Security First
+
+Never weaken:
+
+* RBAC
+* tenant isolation
+* authentication
+* CSRF
+* rate limiting
+* validation
+* audit controls
+* Agent authentication
+
+to make a feature easier to implement.
+
+## Rule 5 — No Client-Only Security
+
+A client-side permission check is never sufficient.
+
+## Rule 6 — No Mock Production Data
+
+Production functionality must use real data.
+
+Do not use:
+
+```text
+Math.random()
+fake arrays
+placeholder production records
+hardcoded organization data
+fake payment data
+fake Agent status
+```
+
+unless explicitly part of a development/test environment.
+
+## Rule 7 — Database Changes Require Impact Analysis
+
+Before changing schema:
+
+* Identify dependencies.
+* Identify migrations.
+* Identify existing data.
+* Identify indexes.
+* Identify constraints.
+* Identify API impact.
+* Identify Agent impact.
+* Identify tenant-isolation impact.
+* Identify migration impact.
+
+## Rule 8 — API Changes Require Contract Review
+
+Any change to an API used by the Agent requires Web ↔ Agent contract review.
+
+## Rule 9 — Destructive Operations Must Be Safe
+
+Never introduce silent destructive cascades without explicit requirement.
+
+## Rule 10 — Customer Infrastructure Secrets
+
+Never place customer database/storage secrets inside:
+
+* Agent
+* frontend
+* browser
+* public API responses
+* source code
+* logs
+* audit records
+* Agent Builder output
+
+## Rule 11 — Verify
+
+After implementation, run applicable:
+
+* Typecheck
+* Lint
+* Unit tests
+* Integration tests
+* Build
+* API tests
+* Agent tests
+* Security checks
+* Migration checks
+
+---
+
+# 104. Definition of Done
+
+A feature is not complete merely because its UI exists.
+
+A feature is complete only when applicable layers are implemented:
+
+```text
+UI
+ ↓
+Client logic
+ ↓
+API
+ ↓
+Authentication
+ ↓
+Authorization
+ ↓
+Tenant isolation
+ ↓
+Business logic
+ ↓
+Database
+ ↓
+Storage where applicable
+ ↓
+Audit
+ ↓
+Error handling
+ ↓
+Tests
+```
+
+For infrastructure features:
+
+```text
+UI
+ ↓
+API
+ ↓
+Authentication
+ ↓
+Authorization
+ ↓
+Secret Management
+ ↓
+Validation
+ ↓
+Approval
+ ↓
+Migration
+ ↓
+Verification
+ ↓
+Cutover
+ ↓
+Rollback handling
+ ↓
+Audit
+ ↓
+Tests
+```
+
+For Agent-related features:
+
+```text
+Web
+ ↓
+API Contract
+ ↓
+Authentication
+ ↓
+Entitlement
+ ↓
+Organization Binding
+ ↓
+Universal Agent
+ ↓
+Runtime behavior
+ ↓
+Server verification
+ ↓
+Tests
+```
+
+---
+
+# 105. Testing Requirements
+
+Testing must cover:
+
+## Authentication
+
+* Valid login
+* Invalid login
+* Expired session
+* Logout
+* Rate limiting
+
+## Authorization
+
+* Super Admin access
+* Organization Admin access
+* Manager access
+* Viewer access
+* Employee access
+* Forbidden access
+
+## Tenant Isolation
+
+* Organization A cannot access Organization B
+* Cross-tenant API manipulation fails
+* Cross-tenant Agent access fails
+* Cross-tenant storage access fails
+* Cross-tenant audit access fails
+
+## Subscription
+
+* Active
+* Paused
+* Expired
+* Renewal
+* Payment recording
+
+## Service Models
+
+* Managed
+* Customer DB
+* Invalid transitions
+* Unauthorized changes
+* Super Admin approval
+* Customer infrastructure validation
+
+## Infrastructure
+
+* Database connectivity validation
+* Storage connectivity validation
+* Invalid credentials
+* Permission failures
+* Migration failure
+* Verification failure
+* Cutover
+* Rollback
+
+## Agent
+
+* Authentication
+* Enrollment
+* Organization binding
+* Heartbeat
+* Capability policy
+* Revocation
+* Subscription enforcement
+* Version compatibility
+* Offline behavior
+
+## Data
+
+* Pagination
+* Retention
+* Storage
+* Audit
+* Migration integrity
+* Screenshot metadata
+* Screenshot binary integrity
+
+---
+
+# 106. Production Readiness
+
+Before declaring OmniSight production-ready, verify:
+
+## Security
+
+* No committed secrets
+* Authentication hardened
+* RBAC verified
+* Tenant isolation verified
+* CSRF verified where applicable
+* Rate limiting verified
+* File validation verified
+* Agent authentication verified
+* Customer credentials protected
+
+## Database
+
+* Production migration tested
+* Required indexes present
+* Constraints verified
+* Backup strategy defined
+* Customer DB compatibility verified
+
+## Storage
+
+* Storage access verified
+* Tenant isolation verified
+* Retention verified
+* Binary integrity verified
+* Customer Storage integration verified
+
+## Subscription
+
+* Manual payment flow tested
+* Invoice flow tested
+* Expiration tested
+* Pause/resume tested
+
+## Service Models
+
+* Managed tested
+* Customer DB tested
+* Customer Storage tested
+* Unauthorized service-model change blocked
+* Infrastructure approval tested
+
+## Migration
+
+* Validation tested
+* Migration tested
+* Verification tested
+* Cutover tested
+* Rollback tested
+* Data integrity verified
+
+## Agent
+
+* Universal Agent build verified
+* Organization binding verified
+* Runtime entitlement verified
+* Revocation verified
+* Offline handling verified
+* Version compatibility verified
+* No customer infrastructure secrets embedded
+
+## UI
+
+* Loading states
+* Empty states
+* Error states
+* Retry states
+* Permission states
+* Pagination
+* Migration states
+* Validation states
+* Approval states
+
+## Operations
+
+* Logs
+* Monitoring
+* Storage monitoring
+* Database monitoring
+* Agent monitoring
+* Audit logs
+* Migration monitoring
+
+---
+
+# 107. Initial V1 Commercial Flow
+
+The canonical V1 customer acquisition flow is:
+
+```text
+PUBLIC LANDING PAGE
+        ↓
+CUSTOMER SELECTS
+        ↓
+PACKAGE
++
+SERVICE MODEL
+        ↓
+CONTACT OMNISIGHT
+        ↓
+MANUAL PAYMENT
+        ↓
+SUPER ADMIN
+        ↓
+VERIFY PAYMENT
+        ↓
+CREATE ORGANIZATION
+        ↓
+SELECT PACKAGE
+        ↓
+SELECT SERVICE MODEL
+        ↓
+SET DURATION
+        ↓
+RECORD PAYMENT
+        ↓
+CREATE ORGANIZATION ADMIN
+        ↓
+ACTIVATE ORGANIZATION
+        ↓
+PREPARE UNIVERSAL AGENT
+        ↓
+DELIVER AGENT
+        ↓
+CUSTOMER INSTALLS
+        ↓
+AGENT CONNECTS
+        ↓
+SERVER AUTHENTICATES AGENT
+        ↓
+DEVICE BECOMES VISIBLE
+        ↓
+CUSTOMER USES OMNISIGHT
+```
+
+---
+
+# 108. V1 Customer DB Setup Flow
+
+For Customer Database organizations:
+
+```text
+Organization Activated
+        ↓
+Organization Admin Login
+        ↓
+Open Data Infrastructure
+        ↓
+Submit Customer DB
++
+Customer Storage Configuration
+        ↓
+System Validation
+        ↓
+READY_FOR_APPROVAL
+        ↓
+Super Admin Review
+        ↓
+APPROVED
+        ↓
+Migration if required
+        ↓
+Verification
+        ↓
+Controlled Cutover
+        ↓
+Customer DB + Customer Storage ACTIVE
+```
+
+---
+
+# 109. V1 Scope
+
+The V1 product must prioritize:
+
+1. Super Admin
+2. Organization management
+3. Organization Admin
+4. Manager
+5. Viewer
+6. Employee
+7. OmniSight Managed service
+8. Customer Database service
+9. Customer Storage integration
+10. Package management
+11. Manual payment
+12. Subscription management
+13. Organization pause/resume
+14. Universal Agent provisioning
+15. Agent organization binding
+16. Monitoring
+17. Screenshot management
+18. Device status
+19. Live activity
+20. Audit logging
+21. Landing page
+22. Branding
+23. Security
+24. Tenant isolation
+25. Storage/retention
+26. Customer infrastructure configuration
+27. Infrastructure validation
+28. Super Admin approval
+29. Migration
+30. Verification
+31. Controlled cutover
+32. Rollback handling
+
+Private service is explicitly excluded from V1.
+
+---
+
+# 110. Explicit Non-Goals for Initial V1
+
+Unless separately approved, V1 does not require:
+
+* Automated payment gateway
+* Automated customer checkout
+* Fully automated sales onboarding
+* Automated email sales workflow
+* SSO
+* Enterprise identity federation
+* Complex billing automation
+* Automatic service-model migration without controlled approval
+* Private/self-hosted deployment
+
+These may be future roadmap features.
+
+---
+
+# 111. Critical Business Rules
+
+The following rules are authoritative.
+
+### Rule A
+
+There is exactly one Super Admin authority.
+
+### Rule B
+
+Every customer is represented by an Organization.
+
+### Rule C
+
+Every Organization has exactly one active Service Model.
+
+### Rule D
+
+V1 active Service Models are:
+
+```text
+MANAGED
+CUSTOMER_DB
+```
+
+Private is not active in V1.
+
+### Rule E
+
+Service Model and Package are different concepts.
+
+### Rule F
+
+Super Admin controls the Organization's commercial subscription.
+
+### Rule G
+
+Organization Admin cannot independently modify Super Admin-owned subscription terms.
+
+### Rule H
+
+Manual payment is the initial payment method.
+
+### Rule I
+
+Super Admin can pause and resume organizations.
+
+### Rule J
+
+Agent capability must be server-authorized.
+
+### Rule K
+
+Tenant isolation is mandatory.
+
+### Rule L
+
+Important state changes must be audited.
+
+### Rule M
+
+No silent service-model changes.
+
+### Rule N
+
+No silent destructive deletion.
+
+### Rule O
+
+Production functionality must not depend on fake/random data.
+
+### Rule P
+
+There is one Universal OmniSight Agent architecture.
+
+### Rule Q
+
+The Universal Agent must remain OmniSight-centric.
+
+### Rule R
+
+The Universal Agent must not contain customer database/storage credentials.
+
+### Rule S
+
+Organization data destination must be resolved server-side.
+
+### Rule T
+
+Customer DB deployments use customer-controlled database and customer-controlled storage for applicable organization-owned data.
+
+### Rule U
+
+An Organization Admin may request infrastructure changes but cannot activate them independently.
+
+### Rule V
+
+Super Admin approval is required before an infrastructure change becomes active.
+
+### Rule W
+
+Infrastructure changes must be validated before activation.
+
+### Rule X
+
+Where existing organization data is affected by a service-model migration, that data must be migrated and verified before cutover.
+
+### Rule Y
+
+Migration must provide controlled failure handling and rollback where technically feasible.
+
+### Rule Z
+
+Platform/global data remains platform-owned and must not be indiscriminately moved into customer infrastructure.
+
+---
+
+# 112. Future Extension Model
+
+The architecture should allow future additions without changing the fundamental hierarchy.
+
+Possible future additions:
+
+```text
+More Packages
+More Feature Entitlements
+Automated Billing
+Payment Gateway
+Email Automation
+2FA
+SSO
+Advanced Analytics
+AI Intelligence
+Additional Agent Platforms
+Additional Storage Providers
+Additional Database Providers
+Additional Deployment Models
+Private / Self-Hosted Enterprise
+```
+
+Future functionality must extend the existing model rather than bypass it.
+
+---
+
+# 113. Future Private Deployment
+
+Private/self-hosted deployment is a future consideration only.
+
+If introduced in a future version, it must receive a separate approved architecture and contract.
+
+It must NOT be treated as a hidden V1 feature.
+
+Future Private architecture may eventually require:
+
+* Application deployment
+* API deployment
+* Database setup
+* Storage setup
+* Environment configuration
+* Network requirements
+* Reverse proxy
+* TLS
+* Backup
+* Upgrade process
+* License validation
+* Support/update mechanism
+
+This section does not authorize Private deployment in V1.
+
+---
+
+# 114. Final Product Architecture — V1
+
+The intended OmniSight V1 architecture is:
+
+```text
+                             OMNISIGHT
+                                 │
+               ┌─────────────────┴──────────────────┐
+               │                                    │
+         SUPER ADMIN                           PUBLIC LANDING
+               │
+       ┌───────┼──────────┐
+       │       │          │
+ Organizations Packages Settings
+       │
+       ├───────────────────────────────┐
+       │                               │
+ Service Model                    Subscription
+       │                               │
+   ┌───┴───────────┐              ┌────┴─────┐
+   │               │              │          │
+ MANAGED       CUSTOMER_DB     Payment    Invoice
+   │               │
+   │               │
+   │         Customer DB
+   │               +
+   │         Customer Storage
+   │
+   └──────────┬──────────────┘
+              │
+       Organization
+              │
+      ┌───────┼───────────────┐
+      │       │               │
+    Admin   Manager         Viewer
+      │
+  Employees
+      │
+Universal Agents
+      │
+OmniSight API
+      │
+Server-side Organization Resolver
+      │
+ ┌────┴──────────────────────┐
+ │                           │
+Managed Destination     Customer Destination
+ │                           │
+OmniSight DB             Customer DB
+     +                         +
+OmniSight Storage        Customer Storage
+```
+
+---
+
+# 115. Final Universal Agent Architecture
+
+The canonical Agent architecture is:
+
+```text
+                  UNIVERSAL OMNISIGHT AGENT
+                              │
+              ┌───────────────┼────────────────┐
+              │               │                │
+        Device Identity   Secure Auth       Config
+              │               │                │
+              └───────────────┼────────────────┘
+                              │
+                        OmniSight API
+                              │
+                  Server-side Organization
+                         Resolution
+                              │
+                 ┌────────────┴────────────┐
+                 │                         │
+              MANAGED                  CUSTOMER_DB
+                 │                         │
+          OmniSight DB              Customer DB
+                 │                         │
+          OmniSight Storage        Customer Storage
+```
+
+The Agent never directly decides between these destinations.
+
+The Agent never receives customer database/storage credentials.
+
+The Agent only communicates with OmniSight.
+
+---
+
+# 116. Final Customer Infrastructure Migration Architecture
+
+The canonical migration architecture is:
+
+```text
+CURRENT DESTINATION
+        │
+        ↓
+CHANGE REQUEST
+        │
+        ↓
+VALIDATION
+        │
+        ↓
+SUPER ADMIN APPROVAL
+        │
+        ↓
+DATA MIGRATION
+        │
+        ├── Structured Data → Customer DB
+        │
+        └── Binary Data → Customer Storage
+        │
+        ↓
+VERIFICATION
+        │
+        ↓
+CONTROLLED CUTOVER
+        │
+        ↓
+NEW ACTIVE DESTINATION
+        │
+        ↓
+SAFETY / ROLLBACK WINDOW
+        │
+        ↓
+OLD DESTINATION RETIREMENT
+```
+
+The old destination must not be destroyed before successful verification and the applicable safety/retention period.
+
+---
+
+# 117. Final Web ↔ Agent Relationship
+
+The relationship between Web/Control Plane and Agent is:
+
+```text
+Web / Control Plane
+        │
+        ├── Organization
+        ├── Subscription
+        ├── Package
+        ├── Entitlement
+        ├── Policy
+        ├── Agent Identity
+        ├── Device Identity
+        └── Data Destination
+                 │
+                 ↓
+             OmniSight API
+                 │
+                 ↓
+        Universal OmniSight Agent
+```
+
+The Agent is an execution component.
+
+The server is the authority.
+
+---
+
+# 118. Final Product Statement — V1
+
+OmniSight is a Super Admin-controlled multi-organization SaaS/service platform.
+
+The commercial model is based on:
+
+```text
+Customer
+    ↓
+Organization
+    ↓
+Service Model
+    ↓
+Package
+    ↓
+Subscription
+    ↓
+Manual Payment
+    ↓
+Organization Users
+    ↓
+Universal OmniSight Agent
+    ↓
+OmniSight API
+    ↓
+Server-side Data Destination Resolution
+    ↓
+Monitoring & Operational Data
+```
+
+The two official V1 OmniSight Service Models are:
+
+```text
+1. OmniSight Managed
+2. Customer Database
+```
+
+For Customer Database organizations, the intended sensitive-data architecture is:
+
+```text
+Customer Database
++
+Customer Storage
+```
+
+Private/self-hosted deployment is NOT part of V1 and must not be exposed in:
+
+* UI
+* APIs
+* Agent Builder
+* provisioning
+* customer workflows
+* V1 documentation presented as an active option
+
+The OmniSight Agent architecture is Universal.
+
+There is one Universal OmniSight Agent.
+
+The Agent is OmniSight-centric and communicates with the OmniSight API.
+
+The Agent must not contain customer database or customer storage credentials.
+
+The Agent must not directly select or connect to a customer database or customer storage system.
+
+OmniSight's server-side organization resolver determines the correct data destination.
+
+For Managed organizations:
+
+```text
+OmniSight API
+    ↓
+OmniSight DB
++
+OmniSight Storage
+```
+
+For Customer Database organizations:
+
+```text
+OmniSight API
+    ↓
+Customer DB
++
+Customer Storage
+```
+
+Organization infrastructure changes are controlled operations.
+
+An Organization Admin may submit a database/storage change request.
+
+The requested destination must be validated.
+
+Super Admin approval is mandatory.
+
+Where existing organization data is affected, migration must be performed before cutover.
+
+Migration must be verified.
+
+Only after successful verification may the new destination become active.
+
+Rollback must be supported where technically feasible.
+
+The previous destination must not be immediately deleted after migration.
+
+Platform/global data remains platform-owned.
+
+Organization-owned operational data follows the organization's active service-model data destination.
+
+The Super Admin is the final authority over:
+
+* platform configuration
+* organizations
+* service models
+* packages
+* subscriptions
+* payments
+* Agent provisioning
+* infrastructure approval
+* migration approval
+* platform policies
+
+Organization Admins operate their own organizations but cannot override platform-owned commercial or deployment decisions.
+
+The system must enforce:
+
+* security
+* tenant isolation
+* explicit state transitions
+* auditable operations
+* subscription-aware access
+* server-authoritative Agent capabilities
+* server-authoritative organization binding
+* secure infrastructure credential management
+* controlled data migration
+* verification
+* safe cutover
+* rollback
+* privacy-aware monitoring
+* production-grade reliability
+
+This document is the Master Product Definition and must be used as the baseline for all future OmniSight implementation work.
+
+---
+
+# 119. Master PRD Authority Statement
+
+This version supersedes conflicting earlier architectural assumptions regarding:
+
+* separate Agent variants
+* Agent-controlled customer infrastructure
+* Agent-held customer DB credentials
+* Agent-held customer storage credentials
+* direct Agent-to-customer-database connections
+* direct Agent-to-customer-storage connections
+* uncontrolled service-model changes
+* immediate infrastructure switching
+* unverified data migration
+* V1 Private deployment
+
+The authoritative V1 architecture is:
+
+```text
+ONE UNIVERSAL AGENT
+        ↓
+OMNISIGHT API
+        ↓
+SERVER-SIDE ORGANIZATION RESOLUTION
+        ↓
+MANAGED OR CUSTOMER-CONTROLLED DATA DESTINATION
+```
+
+This architecture is the canonical OmniSight V1 implementation direction.

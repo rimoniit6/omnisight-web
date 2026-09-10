@@ -443,25 +443,25 @@ test('P4A-33/34/35: offboarding, device revocation and org suspension instantly 
   );
 
   // P4A-35: suspend the organization.
-  await db.organization.update({ where: { id: orgA.org.id }, data: { status: 'suspended' } });
+  await db.organization.update({ where: { id: orgA.org.id }, data: { status: 'paused' } });
   assert.equal(
     (await beatApi.POST(req(orgA.tok, { method: 'POST', body: { timestamp: new Date().toISOString() } }))).status,
     401,
-    'suspended org agent ops blocked'
+    'paused org agent ops blocked'
   );
   assert.equal(
     (await shotApi.POST(await uploadShotReq(orgA.tok, {}, false))).status,
     401,
-    'suspended org upload blocked'
+    'paused org upload blocked'
   );
-  // Web admin operational read is also blocked while suspended.
+  // Web admin operational read is also blocked while paused.
   const shot = await db.screenshot.findFirst({ where: { organizationId: orgA.org.id } });
   if (shot) {
     const adminRead = await imageApi.GET(
       req(adminAToken, { url: `http://localhost:3000/api/screenshots/${shot.id}/image` }),
       params(shot.id)
     );
-    assert.equal(adminRead.status, 403, 'suspended org admin cannot read operational data');
+    assert.equal(adminRead.status, 403, 'paused org admin cannot read operational data');
   }
   await db.organization.update({ where: { id: orgA.org.id }, data: { status: 'active' } });
   assert.equal(

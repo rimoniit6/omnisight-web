@@ -1,7 +1,10 @@
-import { NextRequest } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { db as prisma } from '@/lib/db';
 import { requireDbVerifiedRole, requireSuperAdmin, apiError, apiSuccess, authError, parseJsonBody, BodyParseError } from '@/lib/api';
 import { isDeploymentMode, validateDeploymentModeChange, type DeploymentMode } from '@/lib/deployment-mode';
+import { getOrganizationDeleteImpact } from '@/lib/delete-impact';
+import { deleteScreenshot, isNotFound } from '@/lib/storage';
+import { log, requestContext } from '@/lib/logger';
 
 /**
  * GET /api/super-admin/organizations/[id]
@@ -47,6 +50,23 @@ export async function GET(
           plan: {
             select: { id: true, name: true, priceMonthly: true, priceYearly: true, currency: true, maxDevices: true, retentionDays: true },
           },
+          // Manual payment ledger — the newest invoice on this subscription.
+          invoices: {
+            orderBy: { createdAt: 'desc' },
+            take: 1,
+            select: {
+              id: true,
+              invoiceNumber: true,
+              amount: true,
+              currency: true,
+              status: true,
+              paidAt: true,
+              paymentMethod: true,
+              transactionId: true,
+              dueDate: true,
+              notes: true,
+            },
+          },
         },
       },
       licenseKey: {
@@ -90,7 +110,7 @@ export async function GET(
  *
  * Control-plane mutations. Super Admin only (DB-verified).
  * Body: {
- *   status?: 'pending' | 'active' | 'suspended' | 'archived',
+ *   status?: 'pending' | 'active' | 'paused' | 'archived',
  *   deploymentMode?: 'MANAGED' | 'CUSTOMER_DB' | 'PRIVATE',
  *   confirmDataResidency?: boolean  // required for CUSTOMER_DB/PRIVATE -> MANAGED
  * }
@@ -123,11 +143,11 @@ export async function PATCH(
   const deploymentMode = body.deploymentMode as string | undefined;
   const confirmDataResidency = body.confirmDataResidency === true;
 
-  if (status !== undefined && !['pending', 'active', 'suspended', 'archived'].includes(status)) {
-    return apiError('Invalid status. Must be: pending, active, suspended, or archived', 422);
+  if (status !== undefined && !['pending', 'active', 'paused', 'archived'].includes(status)) {
+    return apiError('Invalid status. Must be: pending, active, paused, or archived', 422);
   }
-  if (deploymentMode !== undefined && !isDeploymentMode(deploymentMode)) {
-    return apiError('Invalid deploymentMode. Must be: MANAGED, CUSTOMER_DB, or PRIVATE', 422);
+  if (deploymentMode !== undefined && (!isDeploymentMode(deploymentMode) || deploymentMode === 'PRIVATE')) {
+    return apiError('Invalid deploymentMode. Must be: MANAGED or CUSTOMER_DB', 422);
   }
   if (status === undefined && deploymentMode === undefined) {
     return apiError('Nothing to update. Provide status and/or deploymentMode', 422);
@@ -180,4 +200,119 @@ export async function PATCH(
   });
 
   return apiSuccess(updated);
+}
+
+/**
+ * DELETE /api/super-admin/organizations/[id]
+ *
+ * Full tenant deletion (Super Admin only, DB-verified). This is the ONLY
+ * route that performs a hard cascade across an entire tenant, so it is
+ * deliberately strict:
+ *   1. The caller must first review the impact via the GET .../delete-impact
+ *      endpoint (same engine, live counts).
+ *   2. The DELETE itself REQUIRES `{ confirmed: true }` in the body — anything
+ *      else returns 409 with a fresh impact summary (never a fake success).
+ *   3. The destination counts are recomputed INSIDE the same transaction, so a
+ *      concurrent change between preview and confirm can never be hidden.
+ *   4. AppUser accounts and audit-log history intentionally SURVIVE
+ *      (memberships cascade; audit rows fall back to organizationId NULL).
+ *   5. Screenshot object files are removed best-effort after the DB commit.
+ */
+export async function DELETE(
+  req: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  try {
+    const adminResult = await requireDbVerifiedRole(req, { requireSuperAdmin: true });
+    if (!adminResult.ok) return authError(adminResult);
+    const admin = adminResult;
+
+    const { id } = await params;
+
+    const organization = await prisma.organization.findUnique({ where: { id } });
+    if (!organization) {
+      return apiError('Organization not found', 404);
+    }
+
+    let body: Record<string, unknown>;
+    try {
+      body = await parseJsonBody(req);
+    } catch {
+      return apiError('A JSON body with confirmed:true is required to delete an organization', 400);
+    }
+
+    if (body.confirmed !== true) {
+      const impact = await getOrganizationDeleteImpact(id);
+      return NextResponse.json(
+        {
+          error: 'Organization deletion requires explicit confirmation.',
+          message: `Sending confirmed:true will PERMANENTLY DELETE ${impact.totalImpacted} rows across ${impact.rows.length} table(s) for "${organization.name}". User accounts and audit history survive.`,
+          impact,
+        },
+        { status: 409 }
+      );
+    }
+
+    // Snapshot the impact + screenshot artifacts BEFORE the transaction so the
+    // returned summary is truthful and the storage cleanup has the paths.
+    const impact = await getOrganizationDeleteImpact(id);
+    const screenshotArtifacts = await prisma.screenshot.findMany({
+      where: { organizationId: id },
+      select: { filePath: true, thumbnailPath: true },
+    });
+
+    await prisma.$transaction(async (tx) => {
+      // Leave no live web/agent session pointing at a deleted tenant.
+      await tx.userSession.updateMany({
+        where: { OR: [{ organizationId: id }, { activeOrganizationId: id }], revokedAt: null },
+        data: { revokedAt: new Date() },
+      });
+
+      // Audit the deletion BEFORE removing the row: the audit entry survives
+      // with organizationId falling back to NULL (compliance requirement).
+      await tx.auditLog.create({
+        data: {
+          action: 'delete',
+          resource: 'organization',
+          resourceId: id,
+          description: `Organization "${organization.name}" (${organization.slug}) permanently deleted by Super Admin ${admin.email}. Impact: ${impact.totalImpacted} rows across ${impact.rows.length} table(s). Memberships for user accounts and prior audit history are preserved.`,
+          userId: admin.userId,
+          organizationId: id,
+        },
+      });
+
+      await tx.organization.delete({ where: { id } });
+    });
+
+    // Best-effort storage cleanup for the deleted screenshot rows. Original +
+    // thumbnail objects are removed through the active storage driver; a
+    // missing object is treated as already deleted.
+    let filesRemoved = 0;
+    for (const { filePath, thumbnailPath } of screenshotArtifacts) {
+      for (const artifactPath of [thumbnailPath, filePath].filter((p): p is string => Boolean(p))) {
+        try {
+          await deleteScreenshot(id, artifactPath);
+          filesRemoved++;
+        } catch (error) {
+          if (!isNotFound(error)) log.warn('sa.orgs.delete.storage', { error: String(error), organizationId: id });
+        }
+      }
+    }
+
+    log.info('sa.orgs.delete', { organizationId: id, totalImpacted: impact.totalImpacted, filesRemoved });
+
+    return apiSuccess({
+      deleted: true,
+      organizationId: id,
+      impact,
+      filesRemoved,
+      preserved: {
+        appUserAccounts: true,
+        auditHistory: true,
+      },
+    });
+  } catch (error) {
+    log.error('sa.orgs.delete', { error: String(error) }, requestContext(req));
+    return apiError('Failed to delete organization', 500);
+  }
 }

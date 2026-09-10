@@ -6,6 +6,8 @@
 
 // True when this instance is deployed as a self-hosted/on-prem build.
 // Cloud (default): license checks are bypassed entirely.
+// V1 note: SELF_HOSTED env flag controls platform deployment mode; it is not
+// related to the V1-deprecated 'PRIVATE' customer-facing organization mode.
 export const isSelfHosted = process.env.SELF_HOSTED === 'true';
 
 // Returns the configured license key, or null when not set / cloud mode.

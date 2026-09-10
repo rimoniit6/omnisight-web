@@ -103,9 +103,11 @@ test('ROLE-07: Org Admin cannot assign super_admin', async () => {
 test('ROLE-08: Users page exists in sidebar navigation', async () => {
   const { readFileSync } = await import('fs');
   const { resolve } = await import('path');
-  const sidebarSrc = readFileSync(resolve(__dirname, '../src/components/layout/app-sidebar.tsx'), 'utf8');
-  assert.ok(sidebarSrc.includes("page: 'users'"), 'Sidebar must have users page');
-  assert.ok(sidebarSrc.includes('Users & Members'), 'Sidebar must label it Users & Members');
+  // Navigation structure lives in the shared sidebar data module consumed by
+  // both the desktop and mobile shells (single source of truth).
+  const navSrc = readFileSync(resolve(__dirname, '../src/lib/sidebar-nav.ts'), 'utf8');
+  assert.ok(navSrc.includes("page: 'users'"), 'Sidebar must have users page');
+  assert.ok(navSrc.includes('Users & Members'), 'Sidebar must label it Users & Members');
 });
 
 // ─── Test 9: Users page exists in mobile sidebar ─────────────────────────
@@ -113,8 +115,10 @@ test('ROLE-08: Users page exists in sidebar navigation', async () => {
 test('ROLE-09: Users page exists in mobile sidebar', async () => {
   const { readFileSync } = await import('fs');
   const { resolve } = await import('path');
-  const mobileSrc = readFileSync(resolve(__dirname, '../src/components/layout/mobile-sidebar.tsx'), 'utf8');
-  assert.ok(mobileSrc.includes("page: 'users'"), 'Mobile sidebar must have users page');
+  // The mobile drawer consumes the same shared data module as the desktop
+  // sidebar — one definition, asserted once.
+  const navSrc = readFileSync(resolve(__dirname, '../src/lib/sidebar-nav.ts'), 'utf8');
+  assert.ok(navSrc.includes("page: 'users'"), 'Mobile sidebar must have users page');
 });
 
 // ─── Test 10: Users page is registered in page.tsx ───────────────────────

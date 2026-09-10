@@ -180,10 +180,10 @@ test('SA-02: Super Admin can create organization', async () => {
 
 test('SA-03: Super Admin can suspend organization', async () => {
   const api = await import('../src/app/api/super-admin/organizations/[id]/route');
-  const res = await api.PATCH(req(superAdminToken, { method: 'PATCH', body: { status: 'suspended' }, url: `http://localhost:3000/api/super-admin/organizations/${orgA.id}` }), { params: Promise.resolve({ id: orgA.id }) });
+  const res = await api.PATCH(req(superAdminToken, { method: 'PATCH', body: { status: 'paused' }, url: `http://localhost:3000/api/super-admin/organizations/${orgA.id}` }), { params: Promise.resolve({ id: orgA.id }) });
   const body = await res.json();
   assert.equal(res.status, 200, `Expected 200, got ${res.status}: ${JSON.stringify(body)}`);
-  assert.equal(body.status, 'suspended');
+  assert.equal(body.status, 'paused');
   // Restore
   await db.organization.update({ where: { id: orgA.id }, data: { status: 'active' } });
 });
@@ -192,7 +192,7 @@ test('SA-03: Super Admin can suspend organization', async () => {
 
 test('SA-04: Super Admin can reactivate organization', async () => {
   // Suspend first
-  await db.organization.update({ where: { id: orgA.id }, data: { status: 'suspended' } });
+  await db.organization.update({ where: { id: orgA.id }, data: { status: 'paused' } });
   const api = await import('../src/app/api/super-admin/organizations/[id]/route');
   const res = await api.PATCH(req(superAdminToken, { method: 'PATCH', body: { status: 'active' }, url: `http://localhost:3000/api/super-admin/organizations/${orgA.id}` }), { params: Promise.resolve({ id: orgA.id }) });
   const body = await res.json();
@@ -266,7 +266,7 @@ test('SA-10: Org Admin cannot list organizations via super-admin', async () => {
 
 test('SA-10b: Org Admin cannot suspend organization', async () => {
   const api = await import('../src/app/api/super-admin/organizations/[id]/route');
-  const res = await api.PATCH(req(adminAToken, { method: 'PATCH', body: { status: 'suspended' }, url: `http://localhost:3000/api/super-admin/organizations/${orgA.id}` }), { params: Promise.resolve({ id: orgA.id }) });
+  const res = await api.PATCH(req(adminAToken, { method: 'PATCH', body: { status: 'paused' }, url: `http://localhost:3000/api/super-admin/organizations/${orgA.id}` }), { params: Promise.resolve({ id: orgA.id }) });
   assert.ok(res.status === 401 || res.status === 403, `Org Admin must be rejected from suspend, got ${res.status}`);
 });
 

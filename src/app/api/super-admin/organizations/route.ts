@@ -10,7 +10,7 @@ import { requireSuperAdmin, requireDbVerifiedRole, apiError, apiSuccess, authErr
  *
  * Query params:
  *   ?search=         — search by name or slug (case-insensitive)
- *   ?status=         — filter by status (active, pending, suspended, archived)
+ *   ?status=         — filter by status (active, pending, paused, archived)
  *   ?deploymentMode= — filter by mode (MANAGED, CUSTOMER_DB, PRIVATE)
  *   ?page=           — page number (default: 1)
  *   ?pageSize=       — results per page (default: 20, max: 200)
@@ -38,7 +38,7 @@ export async function GET(req: NextRequest) {
       { slug: { contains: search, mode: 'insensitive' } },
     ];
   }
-  if (status && ['active', 'pending', 'suspended', 'archived'].includes(status)) {
+  if (status && ['active', 'pending', 'paused', 'archived'].includes(status)) {
     where.status = status;
   }
   if (deploymentMode && ['MANAGED', 'CUSTOMER_DB', 'PRIVATE'].includes(deploymentMode)) {
@@ -65,6 +65,12 @@ export async function GET(req: NextRequest) {
             startDate: true,
             endDate: true,
             plan: { select: { id: true, name: true, priceMonthly: true, currency: true } },
+            // Manual-payment ledger — newest invoice only (list view).
+            invoices: {
+              orderBy: { createdAt: 'desc' },
+              take: 1,
+              select: { id: true, status: true, amount: true, currency: true, paymentMethod: true },
+            },
           },
         },
         licenseKey: {

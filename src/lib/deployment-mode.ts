@@ -16,16 +16,44 @@ import { db } from '@/lib/db';
 
 export type DeploymentMode = 'MANAGED' | 'CUSTOMER_DB' | 'PRIVATE';
 
+/**
+ * All deployment modes recognized by the schema (including deprecated ones).
+ * Use V1_ACTIVE_MODES for customer-facing logic.
+ */
 export const DEPLOYMENT_MODES: readonly DeploymentMode[] = [
   'MANAGED',
   'CUSTOMER_DB',
   'PRIVATE',
 ] as const;
 
+/**
+ * V1 active customer-facing deployment modes. PRIVATE is deprecated in V1 —
+ * it remains in the schema for backward compatibility but MUST NOT be
+ * selectable in any V1 customer-facing workflow, UI, or Agent Builder.
+ *
+ * Future enterprise/self-hosted architecture may re-introduce PRIVATE in a
+ * later version, but it is OUT OF SCOPE for V1.
+ */
+export const V1_ACTIVE_MODES: readonly DeploymentMode[] = [
+  'MANAGED',
+  'CUSTOMER_DB',
+] as const;
+
 export function isDeploymentMode(value: unknown): value is DeploymentMode {
   return (
     typeof value === 'string' &&
     (DEPLOYMENT_MODES as readonly string[]).includes(value)
+  );
+}
+
+/**
+ * True when the mode is an active V1 customer-facing mode.
+ * PRIVATE returns false — it is deprecated for V1.
+ */
+export function isV1ActiveMode(value: unknown): value is DeploymentMode {
+  return (
+    typeof value === 'string' &&
+    (V1_ACTIVE_MODES as readonly string[]).includes(value)
   );
 }
 

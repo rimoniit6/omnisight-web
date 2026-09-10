@@ -240,7 +240,11 @@ test('C: removing Org A membership denies Org A but Org B still works', async ()
   );
   assert.equal(delRes.status, 200, 'membership removal must succeed');
 
-  // Existing Org A session (tokenA still has activeOrganizationId=orgA) must now be denied
+  // Existing Org A session (tokenA still has activeOrganizationId=orgA) must now be denied.
+  // Revocation is implemented as SERVER-SIDE SESSION REVOCATION (delete-impact DI-11):
+  // the DELETE API kills the org-bound UserSession row, so the stale token is a dead
+  // session -> 401 (S-04), not a valid-session 403. D/E below pin the 403 path for the
+  // still-valid-session case (suspended/archived orgs).
   const employeesApi = await import('../src/app/api/employees/route');
   const denied = await employeesApi.GET(
     new NextRequest('http://localhost:3000/api/employees', {
@@ -248,7 +252,7 @@ test('C: removing Org A membership denies Org A but Org B still works', async ()
       headers: { authorization: `Bearer ${tokenA}` },
     })
   );
-  assert.equal(denied.status, 403, 'removed membership must revoke Org A access');
+  assert.equal(denied.status, 401, 'removed membership must revoke Org A access (session revoked -> 401)');
 
   // Org B still works (re-login to get a token whose active org resolves to Org B)
   const { token: tokenB, status } = await login('removemember@test.local', 'Remove123');
@@ -277,25 +281,25 @@ test('D: suspending an org blocks an already-authenticated web-admin session', a
 
   // Super admin suspends Org A
   const suspendApi = await import('../src/app/api/super-admin/organizations/[id]/route');
-  const suspRes = await suspendApi.PATCH(
+  const pauseRes = await suspendApi.PATCH(
     new NextRequest(`http://localhost:3000/api/super-admin/organizations/${orgA.id}`, {
       method: 'PATCH',
       headers: { 'content-type': 'application/json', authorization: `Bearer ${await signTestJWT(superAdmin.id, superAdmin.email, 'super_admin', orgA.id)}` },
-      body: JSON.stringify({ status: 'suspended' }),
+      body: JSON.stringify({ status: 'paused' }),
     }),
     { params: Promise.resolve({ id: orgA.id }) }
   );
-  assert.equal(suspRes.status, 200);
+  assert.equal(pauseRes.status, 200);
 
   // Existing session must now be denied
   const after = await employeesApi.GET(new NextRequest('http://localhost:3000/api/employees', { method: 'GET', headers: { authorization: `Bearer ${token}` } }));
-  assert.equal(after.status, 403, 'suspended org must block existing web-admin session');
+  assert.equal(after.status, 403, 'paused org must block existing web-admin session');
 
-  // Super admin can still manage the suspended org
+  // Super admin can still manage the paused org
   const listRes = await (await import('../src/app/api/super-admin/organizations/route')).GET(
     new NextRequest('http://localhost:3000/api/super-admin/organizations', { method: 'GET', headers: { authorization: `Bearer ${await signTestJWT(superAdmin.id, superAdmin.email, 'super_admin', orgA.id)}` } })
   );
-  assert.equal(listRes.status, 200, 'super admin can still list orgs while one is suspended');
+  assert.equal(listRes.status, 200, 'super admin can still list orgs while one is paused');
 });
 
 // ─── E. Archive blocks existing web-admin sessions ──────────────────────────
@@ -517,11 +521,11 @@ test('K: refresh-token role matches active org membership, not other org', async
 
 // ─── L. Suspended organization rejects refresh ──────────────────────────────
 
-test('L: refresh-token rejects when organization is suspended', async () => {
-  // Create a fresh org we can suspend for this test
-  const suspendOrg = await db.organization.create({ data: { name: 'Suspend Test Org', slug: `suspend-test-${Date.now()}`, timezone: 'UTC' } });
-  const user = await makeUser('refresh-suspend@test.local', 'admin', 'RefreshSusp123', suspendOrg.id);
-  await db.organizationMembership.create({ data: { userId: user.id, organizationId: suspendOrg.id, role: 'admin', status: 'ACTIVE' } });
+test('L: refresh-token rejects when organization is paused', async () => {
+  // Create a fresh org we can pause for this test
+  const pauseOrg = await db.organization.create({ data: { name: 'Pause Test Org', slug: `pause-test-${Date.now()}`, timezone: 'UTC' } });
+  const user = await makeUser('refresh-suspend@test.local', 'admin', 'RefreshSusp123', pauseOrg.id);
+  await db.organizationMembership.create({ data: { userId: user.id, organizationId: pauseOrg.id, role: 'admin', status: 'ACTIVE' } });
 
   const { token } = await login('refresh-suspend@test.local', 'RefreshSusp123');
 
@@ -537,15 +541,15 @@ test('L: refresh-token rejects when organization is suspended', async () => {
 
   // Super Admin suspends the org
   const suspendApi = await import('../src/app/api/super-admin/organizations/[id]/route');
-  const suspRes = await suspendApi.PATCH(
-    new NextRequest(`http://localhost:3000/api/super-admin/organizations/${suspendOrg.id}`, {
+  const pauseRes = await suspendApi.PATCH(
+    new NextRequest(`http://localhost:3000/api/super-admin/organizations/${pauseOrg.id}`, {
       method: 'PATCH',
-      headers: { 'content-type': 'application/json', authorization: `Bearer ${await signTestJWT(superAdmin.id, superAdmin.email, 'super_admin', suspendOrg.id)}` },
-      body: JSON.stringify({ status: 'suspended' }),
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${await signTestJWT(superAdmin.id, superAdmin.email, 'super_admin', pauseOrg.id)}` },
+      body: JSON.stringify({ status: 'paused' }),
     }),
-    { params: Promise.resolve({ id: suspendOrg.id }) }
+    { params: Promise.resolve({ id: pauseOrg.id }) }
   );
-  assert.equal(suspRes.status, 200);
+  assert.equal(pauseRes.status, 200);
 
   // Refresh must now be rejected (org is suspended)
   const after = await refreshApi.POST(
@@ -554,5 +558,5 @@ test('L: refresh-token rejects when organization is suspended', async () => {
       headers: { authorization: `Bearer ${token}` },
     })
   );
-  assert.ok(after.status === 403 || after.status === 401, 'suspended org refresh must be rejected');
+  assert.ok(after.status === 403 || after.status === 401, 'paused org refresh must be rejected');
 });

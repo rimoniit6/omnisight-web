@@ -2,6 +2,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { authError, requireSessionOrg, requireAdminOrg } from '@/lib/api';
+import { getDepartmentDeleteImpact } from '@/lib/delete-impact';
+import { getClientIp } from '@/lib/agent/auth';
 import { log, requestContext } from '@/lib/logger';
 
 export async function GET(
@@ -82,13 +84,30 @@ export async function DELETE(
     const { id } = await params;
     const existing = await db.department.findFirst({
       where: { id, organizationId: admin.organizationId },
-      select: { id: true },
+      select: { id: true, name: true },
     });
     if (!existing) return NextResponse.json({ error: 'Department not found' }, { status: 404 });
 
-    await db.employee.updateMany({ where: { departmentId: id }, data: { departmentId: null } });
-    await db.department.delete({ where: { id } });
-    return NextResponse.json({ success: true });
+    // Impact preview (informational): employees and projects are preserved —
+    // their department pointer is cleared via SetNull, never the rows deleted.
+    const impact = await getDepartmentDeleteImpact(id, admin.organizationId);
+
+    await db.$transaction(async (tx) => {
+      await tx.employee.updateMany({ where: { departmentId: id }, data: { departmentId: null } });
+      await tx.department.delete({ where: { id } });
+      await tx.auditLog.create({
+        data: {
+          action: 'delete',
+          resource: 'department',
+          resourceId: id,
+          description: `Department "${existing.name}" deleted; ${impact.totalImpacted} record(s) reassigned to no department (nothing deleted).`,
+          userId: admin.userId,
+          ipAddress: getClientIp(req),
+          organizationId: admin.organizationId,
+        },
+      });
+    });
+    return NextResponse.json({ success: true, impact });
   } catch (error) {
     log.error('api.departments.id.', { error: String('Department DELETE error:') }, requestContext(req));
     return NextResponse.json({ error: 'Failed to delete department' }, { status: 500 });
