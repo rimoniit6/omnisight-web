@@ -7,14 +7,13 @@ import { log, requestContext } from '@/lib/logger';
 // Public pricing catalog — no authentication required.
 // Returns only active plans, with the features JSON normalized to an array.
 //
-// V1 additive extension (backward compatible — every legacy field is kept):
+// V1 additive extension:
 //   pricing: [{ deploymentMode, billingPeriod, basePrice, currency,
-//               includedDevices, additionalDevicePrice, unlimitedDevices }]
-//   offerName / offerDiscount — the winning active offer for that plan
+//               includedDevices, additionalDevicePrice }]
+//   offerName / offerIsFree — the winning active offer for that plan
 //   (resolved by the single pricing resolver's deterministic rules).
-// Consumers that ignore the new fields keep working unchanged. Legacy
-// self-hosted plans (isSelfHosted) are still listed for the legacy /pricing
-// page's "Self-Hosted / Enterprise" section, but carry no V1 pricing rows.
+// Both deployment modes use device-based entitlement (includedDevices +
+// additionalDevicePrice). There are no "unlimited devices" in V1.
 
 export async function GET(req: NextRequest) {
   try {
@@ -43,45 +42,60 @@ export async function GET(req: NextRequest) {
             billingPeriod: r.billingPeriod as 'MONTHLY' | 'YEARLY',
             basePrice: r.basePrice,
             currency: r.currency,
-            includedDevices: r.deploymentMode === 'CUSTOMER_DB' ? null : r.includedDevices,
-            additionalDevicePrice: r.deploymentMode === 'CUSTOMER_DB' ? null : r.additionalDevicePrice,
-            unlimitedDevices: r.deploymentMode === 'CUSTOMER_DB',
+            includedDevices: r.includedDevices,
+            additionalDevicePrice: r.additionalDevicePrice,
           }));
 
-        // Best offer for display (same precedence family as the resolver:
-        // largest effective discount against the plan's monthly/yearly price).
+        // Best offer for display — uses the highest V1 basePrice across all
+        // configured rows as the reference, never legacy Plan columns.
+        // When no V1 pricing exists, no offer comparison is performed.
         const candidates = matchingOffers.filter(
           (o) => (o.planId === null || o.planId === p.id),
         );
         const effective = (o: typeof candidates[number], base: number) =>
           o.isFree ? base : o.discountType === 'PERCENTAGE' ? (Math.min(o.discountValue, 100) / 100) * base : Math.min(o.discountValue, base);
-        let best = candidates[0] ?? null;
+        let best: (typeof candidates)[number] | null = candidates[0] ?? null;
         let bestAmount = -1;
-        const refBase = Math.max(p.priceMonthly, p.priceYearly ?? 0, 1);
-        for (const o of candidates) {
-          const amount = effective(o, refBase);
-          if (amount > bestAmount) {
-            best = o;
-            bestAmount = amount;
+        const v1Prices = rows.filter((r) => r.basePrice > 0).map((r) => r.basePrice);
+        const refBase = v1Prices.length > 0 ? Math.max(...v1Prices) : 0;
+        let regularPrice = 0;
+        let finalPrice = 0;
+        let discountAmount = 0;
+        if (refBase > 0) {
+          for (const o of candidates) {
+            const amount = effective(o, refBase);
+            if (amount > bestAmount) {
+              best = o;
+              bestAmount = amount;
+            }
           }
+          regularPrice = refBase;
+          if (best) {
+            discountAmount = effective(best, refBase);
+            finalPrice = Math.max(0, refBase - discountAmount);
+          } else {
+            finalPrice = refBase;
+          }
+        } else {
+          best = null; // no configured pricing → no offer display
         }
 
         return {
-          // ── Legacy contract (unchanged) ──
           id: p.id,
           name: p.name,
           description: p.description,
-          priceMonthly: p.priceMonthly,
-          priceYearly: p.priceYearly,
           currency: p.currency,
-          maxDevices: p.maxDevices,
-          retentionDays: p.retentionDays,
           features: parsePlanFeatures(p.features),
           isSelfHosted: p.isSelfHosted,
-          // ── V1 additive fields ──
+          // ── V1 fields (source of truth) ──
           pricing: rows,
+          hasActivePricing: rows.some((r) => r.basePrice > 0),
           offerName: best?.name ?? null,
           offerIsFree: best?.isFree ?? false,
+          // ── Display fields for Landing Page (strikethrough + discount) ──
+          regularPrice,
+          finalPrice,
+          discountAmount,
         };
       }),
     });

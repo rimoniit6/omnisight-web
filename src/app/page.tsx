@@ -49,14 +49,14 @@ const UsersPage = dynamic(() => import('@/components/users/users-page').then(m =
 const SuperAdminOrganizationsPage = dynamic(() => import('@/components/super-admin/super-admin-organizations-page').then(m => ({ default: m.SuperAdminOrganizationsPage })), { ssr: false });
 const SuperAdminOrganizationDetailPage = dynamic(() => import('@/components/super-admin/super-admin-organization-detail-page').then(m => ({ default: m.SuperAdminOrganizationDetailPage })), { ssr: false });
 const SuperAdminOverviewPage = dynamic(() => import('@/components/super-admin/sa-overview-page').then(m => ({ default: m.SuperAdminOverviewPage })), { ssr: false });
-const SuperAdminPackagesPage = dynamic(() => import('@/components/super-admin/sa-billing-pages').then(m => ({ default: m.SuperAdminPackagesPage })), { ssr: false });
+const SuperAdminPackagesPricingPage = dynamic(() => import('@/components/super-admin/sa-packages-pricing').then(m => ({ default: m.SuperAdminPackagesPricingPage })), { ssr: false });
 const SuperAdminCreateOrganizationPage = dynamic(() => import('@/components/super-admin/sa-create-organization-page').then(m => ({ default: m.SuperAdminCreateOrganizationPage })), { ssr: false });
 const SuperAdminLandingPage = dynamic(() => import('@/components/super-admin/sa-landing-page').then(m => ({ default: m.SuperAdminLandingPage })), { ssr: false });
 const SuperAdminAuditPage = dynamic(() => import('@/components/super-admin/sa-audit-page').then(m => ({ default: m.SuperAdminAuditPage })), { ssr: false });
 const BrandingPage = dynamic(() => import('@/components/branding/branding-page').then(m => ({ default: m.BrandingPage })), { ssr: false });
 const DataInfrastructurePage = dynamic(() => import('@/components/data-infrastructure/data-infrastructure-page').then(m => ({ default: m.DataInfrastructurePage })), { ssr: false });
 const SaInfraRequestsPage = dynamic(() => import('@/components/super-admin/sa-infra-requests-page').then(m => ({ default: m.SaInfraRequestsPage })), { ssr: false });
-const SaPricingPage = dynamic(() => import('@/components/super-admin/sa-pricing-pages').then(m => ({ default: m.SuperAdminPricingPage })), { ssr: false });
+
 const SaPurchaseRequestsPage = dynamic(() => import('@/components/super-admin/sa-pricing-pages').then(m => ({ default: m.SuperAdminPurchaseRequestsPage })), { ssr: false });
 
 const pageComponents: Record<string, React.ComponentType> = {
@@ -92,14 +92,13 @@ const pageComponents: Record<string, React.ComponentType> = {
   'super-admin-organizations': SuperAdminOrganizationsPage,
   'super-admin-organization-detail': SuperAdminOrganizationDetailPage,
   'sa-overview': SuperAdminOverviewPage,
-  'sa-packages': SuperAdminPackagesPage,
+  'sa-packages-pricing': SuperAdminPackagesPricingPage,
   'sa-create-organization': SuperAdminCreateOrganizationPage,
   'sa-landing': SuperAdminLandingPage,
   'sa-audit': SuperAdminAuditPage,
   branding: BrandingPage,
   'data-infrastructure': DataInfrastructurePage,
   'sa-infra-requests': SaInfraRequestsPage,
-  'sa-pricing': SaPricingPage,
   'sa-purchase-requests': SaPurchaseRequestsPage,
 };
 

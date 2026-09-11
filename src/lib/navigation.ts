@@ -57,8 +57,8 @@ export const PAGE_MIN_ROLE: Record<PageType, NavMinRole> = {
   'super-admin-organizations': 'super_admin',
   'super-admin-organization-detail': 'super_admin',
   'sa-overview': 'super_admin',
-  // Reusable package catalog — standalone Super Admin configuration.
-  'sa-packages': 'super_admin',
+  // Unified packages & pricing configuration — super_admin only.
+  'sa-packages-pricing': 'super_admin',
   // Full provisioning flow (org + package + admin + subscription + license)
   // — platform-level, super_admin only.
   'sa-create-organization': 'super_admin',
@@ -75,8 +75,7 @@ export const PAGE_MIN_ROLE: Record<PageType, NavMinRole> = {
   'data-infrastructure': 'org_admin',
   // Super Admin infrastructure change request queue
   'sa-infra-requests': 'super_admin',
-  // V1 commercial configuration + purchase review queue — super_admin only.
-  'sa-pricing': 'super_admin',
+  // V1 purchase review queue — super_admin only.
   'sa-purchase-requests': 'super_admin',
 };
 

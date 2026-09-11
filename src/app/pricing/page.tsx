@@ -15,16 +15,11 @@ interface Plan {
   id: string;
   name: string;
   description: string | null;
-  priceMonthly: number;
-  priceYearly: number | null;
   currency: string;
-  maxDevices: number;
-  retentionDays: number;
   features: string[];
   isSelfHosted: boolean;
-  // V1 additive pricing rows from /api/plans — the SAME PlanPricing source
-  // used by the landing PricingSection and the checkout purchase flow.
-  pricing?: Array<{
+  /** V1 pricing rows from PlanPricing (Super Admin config). */
+  pricing: Array<{
     deploymentMode: 'MANAGED' | 'CUSTOMER_DB';
     billingPeriod: 'MONTHLY' | 'YEARLY';
     basePrice: number;
@@ -33,6 +28,8 @@ interface Plan {
     additionalDevicePrice: number | null;
     unlimitedDevices: boolean;
   }>;
+  /** True when at least one PlanPricing row has basePrice > 0. */
+  hasActivePricing: boolean;
 }
 
 const FEATURE_LABELS: Record<string, string> = {
@@ -67,12 +64,10 @@ export default function PricingPage() {
   const paid = plans.filter((p) => !p.isSelfHosted);
 
   const goToPlan = (plan: Plan) => {
-    const isFree = plan.priceMonthly === 0 && !plan.isSelfHosted;
-    // B-1 fix: paid plans enter the V1 public Purchase Request flow — the
-    // same destination as the landing pricing section's CTA. Free keeps the
-    // self-serve trial path into the app.
+    // V1: free plan has no active pricing (hasActivePricing === false)
+    const isFree = !plan.hasActivePricing && !plan.isSelfHosted;
     if (isFree) {
-      router.push('/login');
+      router.push('/contact?plan=Free');
     } else {
       router.push(`/checkout?planId=${plan.id}`);
     }
@@ -125,16 +120,13 @@ export default function PricingPage() {
         ) : (
           <div className="grid md:grid-cols-3 gap-6">
             {paid.map((plan) => {
-              // B-1 fix: display prices come from the V1 PlanPricing rows
-              // (same source as landing + checkout). Legacy plan columns are
-              // only a last-resort fallback when Super Admin has not configured
-              // V1 pricing for the plan — identical to the landing
-              // PricingSection behavior, so the two pages can never diverge
-              // once pricing is configured.
-              const managed = plan.pricing?.find((r) => r.deploymentMode === 'MANAGED' && r.billingPeriod === period);
-              const customerDb = plan.pricing?.find((r) => r.deploymentMode === 'CUSTOMER_DB' && r.billingPeriod === period);
-              const price = managed?.basePrice ?? customerDb?.basePrice ?? (period === 'YEARLY' && plan.priceYearly != null ? plan.priceYearly : plan.priceMonthly);
-              const currency = managed?.currency ?? customerDb?.currency ?? plan.currency;
+              // V1: prices come exclusively from PlanPricing rows (Super Admin config).
+              // No legacy Plan.priceMonthly/priceYearly fallback.
+              const managed = plan.pricing.find((r) => r.deploymentMode === 'MANAGED' && r.billingPeriod === period);
+              const customerDb = plan.pricing.find((r) => r.deploymentMode === 'CUSTOMER_DB' && r.billingPeriod === period);
+              const configured = managed && managed.basePrice > 0;
+              const price = managed?.basePrice ?? 0;
+              const currency = managed?.currency ?? plan.currency;
               const recommended = plan.name.toLowerCase().includes('business') || plan.name.toLowerCase().includes('pro');
               return (
                 <Card key={plan.id} className={recommended ? 'border-primary shadow-lg' : ''}>
@@ -149,12 +141,20 @@ export default function PricingPage() {
                   </CardHeader>
                   <CardContent>
                     <div className="mb-4">
-                      <span className="text-3xl font-bold">
-                        {currency} {price.toLocaleString()}
-                      </span>
-                      <span className="text-muted-foreground text-sm">
-                        {period === 'YEARLY' ? '/ year' : '/ month'}
-                      </span>
+                      {configured ? (
+                        <>
+                          <span className="text-3xl font-bold">
+                            {currency} {price.toLocaleString()}
+                          </span>
+                          <span className="text-muted-foreground text-sm">
+                            {period === 'YEARLY' ? '/ year' : '/ month'}
+                          </span>
+                        </>
+                      ) : (
+                        <span className="text-3xl font-bold text-muted-foreground">
+                          Contact us
+                        </span>
+                      )}
                     </div>
                     <ul className="space-y-2 text-sm">
                       <li className="flex items-center gap-2">
@@ -165,13 +165,9 @@ export default function PricingPage() {
                             : 'Unlimited devices'
                           : customerDb
                             ? 'Unlimited devices'
-                            : `${plan.maxDevices <= 0 ? 'Unlimited' : plan.maxDevices} devices`}
+                            : 'Contact us for details'}
                       </li>
-                      <li className="flex items-center gap-2">
-                        <Check className="w-4 h-4 text-primary" />
-                        {plan.retentionDays <= 0 ? 'Unlimited' : `${plan.retentionDays}-day`} retention
-                      </li>
-                      {customerDb && (
+                      {customerDb && customerDb.basePrice > 0 && (
                         <li className="flex items-center gap-2">
                           <Check className="w-4 h-4 text-primary" />
                           Customer Database: {customerDb.currency} {customerDb.basePrice.toLocaleString()}/{period === 'YEARLY' ? 'yr' : 'mo'} · unlimited devices
@@ -187,7 +183,7 @@ export default function PricingPage() {
                   </CardContent>
                   <CardFooter>
                     <Button className="w-full" onClick={() => goToPlan(plan)}>
-                      {plan.priceMonthly === 0 && !plan.isSelfHosted ? 'Start Free Trial' : 'Request Pricing'}
+                      {!plan.hasActivePricing && !plan.isSelfHosted ? 'Get 7 Days Free Access' : 'Request Pricing'}
                     </Button>
                   </CardFooter>
                 </Card>

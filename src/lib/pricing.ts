@@ -8,9 +8,8 @@
 //
 // Precedence rules (deterministic, never ambiguous):
 //   1. A PlanPricing row that is active for the exact (plan, mode, period)
-//      is authoritative. Without one the resolver falls back to the legacy
-//      Plan columns (priceMonthly/priceYearly, maxDevices) so pre-V1 data
-//      and existing consumers keep working.
+//      is authoritative. Without one the resolver throws (legacy Plan
+//      columns are NOT used as fallback).
 //   2. At most ONE offer is applied. When several active+valid offers match,
 //      the winner is the one with the LARGEST effective discount (percentage
 //      offers valued against the base amount, fixed offers by absolute
@@ -18,14 +17,9 @@
 //   3. Final price is clamped at >= 0 (an offer can never produce a negative
 //      price). isFree offers resolve to 0.
 //
-// Managed vs Customer Database:
-//   - MANAGED: deviceQuantity is priced — devices beyond includedDevices are
-//     charged at additionalDevicePrice each.
-//   - CUSTOMER_DB: device quantity NEVER affects the price; the entitlement
-//     is unlimitedDevices = true. No cap is ever derived for CUSTOMER_DB.
-//
-// PRIVATE is a legacy self-hosted path: the resolver refuses it (no V1
-// commercial pricing exists for it, by design).
+// Both deployment modes (MANAGED and CUSTOMER_DB) use device-based
+// entitlement: includedDevices + additionalDevicePrice per extra device.
+// There are no "unlimited devices" in the V1 commercial model.
 
 import { db } from '@/lib/db';
 import type { Prisma } from '@prisma/client';
@@ -58,12 +52,11 @@ export interface PriceBreakdown {
   billingPeriod: PricingBillingPeriod;
   currency: string;
   basePrice: number;
-  deviceQuantity: number | null; // Managed only; null = Customer Database
-  includedDevices: number | null;
-  additionalDevicePrice: number | null;
+  deviceQuantity: number;
+  includedDevices: number;
+  additionalDevicePrice: number;
   extraDevices: number;
   deviceCharge: number;
-  unlimitedDevices: boolean;
   offerId: string | null;
   offerName: string | null;
   discountAmount: number;
@@ -144,7 +137,7 @@ export interface ResolvePriceArgs {
   planId: string;
   deploymentMode: PricingDeploymentMode;
   billingPeriod: PricingBillingPeriod;
-  /** Managed device quantity. Ignored (and stored null) for CUSTOMER_DB. */
+  /** Device quantity for both MANAGED and CUSTOMER_DB deployments. */
   deviceQuantity?: number | null;
   /** Explicit offer pin (Super Admin preview). Otherwise auto-selected. */
   offerId?: string | null;
@@ -178,50 +171,35 @@ export async function resolvePrice(args: ResolvePriceArgs): Promise<PriceBreakdo
 
   let basePrice: number;
   let currency: string;
-  let includedDevices: number | null;
-  let additionalDevicePrice: number | null;
-  let unlimitedDevices: boolean;
+  let includedDevices: number;
+  let additionalDevicePrice: number;
   let pricingSource: PriceBreakdown['pricingSource'];
 
   if (pricing && pricing.isActive) {
     basePrice = pricing.basePrice;
-    currency = pricing.currency || plan.currency || 'BDT';
+    currency = pricing.currency || plan.currency;
     pricingSource = 'PRICING_CONFIG';
-    if (deploymentMode === 'CUSTOMER_DB') {
-      includedDevices = null;
-      additionalDevicePrice = null;
-      unlimitedDevices = true;
-    } else {
-      includedDevices = pricing.includedDevices;
-      additionalDevicePrice = pricing.additionalDevicePrice;
-      unlimitedDevices = false;
-    }
+    includedDevices = pricing.includedDevices;
+    additionalDevicePrice = pricing.additionalDevicePrice;
   } else {
-    // Legacy fallback — keeps pre-V1 plans working through the same formula.
-    basePrice = billingPeriod === 'YEARLY' && plan.priceYearly != null ? plan.priceYearly : plan.priceMonthly;
-    currency = plan.currency || 'BDT';
-    pricingSource = 'LEGACY_PLAN';
-    if (deploymentMode === 'CUSTOMER_DB') {
-      includedDevices = null;
-      additionalDevicePrice = null;
-      unlimitedDevices = true;
-    } else {
-      includedDevices = plan.maxDevices;
-      additionalDevicePrice = 0;
-      unlimitedDevices = plan.maxDevices <= 0;
-    }
+    // No active PlanPricing row for this (plan, mode, period).
+    // This is a configuration error — Super Admin must configure pricing
+    // via Packages & Pricing before this plan can be used commercially.
+    throw new Error(
+      `PRICING_NOT_CONFIGURED: No active PlanPricing row for plan=${planId} mode=${deploymentMode} period=${billingPeriod}. ` +
+      `Configure this in Super Admin → Packages & Pricing.`
+    );
   }
 
-  // Device pricing — MANAGED only. CUSTOMER_DB quantity never affects price.
-  const requestedQty = deploymentMode === 'MANAGED' ? Math.max(0, Math.floor(args.deviceQuantity ?? 0)) : null;
+  // Device pricing — both MANAGED and CUSTOMER_DB use device-based entitlement.
+  const requestedQty = Math.max(0, Math.floor(args.deviceQuantity ?? 0));
   let deviceQuantity = requestedQty;
   let deviceCharge = 0;
   let extraDevices = 0;
-  if (deploymentMode === 'MANAGED' && requestedQty !== null && !unlimitedDevices && includedDevices !== null) {
+  if (includedDevices !== null) {
     extraDevices = Math.max(0, requestedQty - includedDevices);
-    deviceCharge = round2(extraDevices * (additionalDevicePrice ?? 0));
+    deviceCharge = round2(extraDevices * additionalDevicePrice);
   }
-  if (deploymentMode === 'CUSTOMER_DB') deviceQuantity = null; // always unlimited
 
   const baseAmount = round2(basePrice + deviceCharge);
 
@@ -260,7 +238,6 @@ export async function resolvePrice(args: ResolvePriceArgs): Promise<PriceBreakdo
     additionalDevicePrice,
     extraDevices,
     deviceCharge,
-    unlimitedDevices,
     offerId: offer?.id ?? null,
     offerName: offer?.name ?? null,
     discountAmount: round2(discountAmount),

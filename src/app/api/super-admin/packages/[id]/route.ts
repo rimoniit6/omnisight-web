@@ -117,9 +117,19 @@ export async function DELETE(
     select: { id: true, name: true, _count: { select: { subscriptions: true, licenseKeys: true } } },
   });
   if (!plan) return apiError('Package not found', 404);
-  if (plan._count.subscriptions > 0 || plan._count.licenseKeys > 0) {
+
+  // Check PurchaseRequest references (historical commercial records).
+  const purchaseRequestCount = await prisma.purchaseRequest.count({ where: { planId: id } });
+
+  const reasons: string[] = [];
+  if (plan._count.subscriptions > 0) reasons.push(`${plan._count.subscriptions} subscription(s)`);
+  if (plan._count.licenseKeys > 0) reasons.push(`${plan._count.licenseKeys} license(s)`);
+  if (purchaseRequestCount > 0) reasons.push(`${purchaseRequestCount} purchase request(s)`);
+
+  if (reasons.length > 0) {
     return apiError(
-      `Package "${plan.name}" is referenced by ${plan._count.subscriptions} subscription(s) and ${plan._count.licenseKeys} license(s). Deactivate it (isActive=false) instead of deleting.`,
+      `Plan "${plan.name}" cannot be deleted — it is referenced by ${reasons.join(', ')}. ` +
+      `Deactivate it (isActive=false) instead to preserve historical records.`,
       409,
     );
   }
@@ -130,7 +140,7 @@ export async function DELETE(
       action: 'delete',
       resource: 'package',
       resourceId: id,
-      description: `Super admin (${admin.email}) deleted unreferenced package "${plan.name}"`,
+      description: `Super admin (${admin.email}) deleted unreferenced plan "${plan.name}"`,
       userId: admin.userId,
       organizationId: null,
     },

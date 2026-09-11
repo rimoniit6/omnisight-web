@@ -3,41 +3,185 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { motion, useReducedMotion } from 'framer-motion';
-import { ArrowRight, Check, Sparkles } from 'lucide-react';
+import { ArrowRight, Check, Database, Server, Sparkles } from 'lucide-react';
 import { Reveal, SectionHeading, GlowButton, useLandingContent } from './shared';
 
-// ─── Pricing — driven by the live plan catalog (same /api/plans contract ───
-// V1: renders per-deployment-mode pricing from the SAME server resolver
-// pipeline that the purchase flow uses (rows come from the PlanPricing
-// configuration via /api/plans; the client never computes prices). Monthly/
-// yearly toggle, Managed device terms, Customer Database unlimited, and the
-// winning offer are all database-driven.
+// ─── Pricing — V1 deployment-mode-aware pricing section ────────────────────
+// Two deployment modes: OmniSight Managed and Customer Database.
+// Pricing rows come from PlanPricing via /api/plans (Super Admin config).
+// The client NEVER computes or hardcodes prices — if a PlanPricing row has
+// basePrice=0, the section shows "Contact us for pricing" instead.
+//
+// Both modes use device-based entitlement (includedDevices + additionalDevicePrice).
+// There are no "unlimited devices" in the V1 commercial model.
+
 interface PublicPlan {
   id: string;
   name: string;
   description: string | null;
-  priceMonthly: number;
   currency: string;
-  maxDevices: number;
-  retentionDays: number;
   features: string[];
   isSelfHosted: boolean;
-  // V1 additive fields (absent when no pricing config exists yet)
-  pricing?: Array<{
+  /** V1 pricing rows from PlanPricing (Super Admin config). */
+  pricing: Array<{
     deploymentMode: 'MANAGED' | 'CUSTOMER_DB';
     billingPeriod: 'MONTHLY' | 'YEARLY';
     basePrice: number;
     currency: string;
-    includedDevices: number | null;
-    additionalDevicePrice: number | null;
-    unlimitedDevices: boolean;
+    includedDevices: number;
+    additionalDevicePrice: number;
   }>;
+  /** True when at least one PlanPricing row has basePrice > 0. */
+  hasActivePricing: boolean;
   offerName?: string | null;
   offerIsFree?: boolean;
+  /** Regular price (highest configured V1 base price) before any offer discount. */
+  regularPrice: number;
+  /** Final price after applying the best active offer discount. Equals regularPrice when no offer. */
+  finalPrice: number;
+  /** Discount amount applied by the winning offer. 0 when no offer. */
+  discountAmount: number;
 }
 
 const CURRENCY_SYMBOL: Record<string, string> = { BDT: '৳', USD: '$', EUR: '€' };
 
+/** A PlanPricing row with basePrice > 0 is considered "configured". */
+function isConfigured(row: { basePrice: number } | undefined): row is { basePrice: number } {
+  return row != null && row.basePrice > 0;
+}
+
+function fmtSymbol(currency: string) {
+  return CURRENCY_SYMBOL[currency] ?? `${currency} `;
+}
+
+// ─── Managed plan card ──────────────────────────────────────────────────────
+function ManagedPlanCard({
+  plan,
+  period,
+  index,
+}: {
+  plan: PublicPlan;
+  period: 'MONTHLY' | 'YEARLY';
+  index: number;
+}) {
+  const managed = plan.pricing.find(
+    (r) => r.deploymentMode === 'MANAGED' && r.billingPeriod === period,
+  );
+  // Currency comes from the V1 pricing row; fallback to plan-level currency.
+  const cur = fmtSymbol(managed?.currency ?? plan.currency);
+  const configured = isConfigured(managed);
+
+  return (
+    <Reveal delay={index * 0.1} className="h-full">
+      <motion.div
+        whileHover={{ scale: 1.02, y: -4 }}
+        transition={{ type: 'spring', stiffness: 320, damping: 24 }}
+        className="glass-panel flex h-full flex-col rounded-2xl p-7"
+      >
+        <p className="tech-font text-[12px] font-bold uppercase tracking-[0.22em] text-cyan-300">
+          {plan.name}
+        </p>
+
+        {plan.offerName && (
+          <span className="mt-2 inline-flex w-fit items-center rounded-full border border-emerald-300/40 bg-emerald-300/10 px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-[0.12em] text-emerald-300">
+            {plan.offerIsFree ? 'Free offer' : `Offer: ${plan.offerName}`}
+          </span>
+        )}
+
+        {configured ? (
+          <>
+            {plan.discountAmount > 0 && plan.regularPrice > 0 ? (
+              <>
+                <p className="mt-4 text-4xl font-semibold tracking-tight text-white">
+                  {cur}
+                  {plan.finalPrice.toLocaleString()}
+                  <span className="ml-1 text-sm font-normal text-white/40">/ month</span>
+                </p>
+                <p className="mt-1 text-sm text-white/40">
+                  <span className="line-through decoration-rose-400/60">{cur}{plan.regularPrice.toLocaleString()}</span>
+                  <span className="ml-2 font-medium text-emerald-300">
+                    Save {Math.round((plan.discountAmount / plan.regularPrice) * 100)}%
+                  </span>
+                </p>
+              </>
+            ) : (
+              <p className="mt-4 text-4xl font-semibold tracking-tight text-white">
+                {cur}
+                {managed!.basePrice.toLocaleString()}
+                <span className="ml-1 text-sm font-normal text-white/40">/ month</span>
+              </p>
+            )}
+            <p className="mt-1 text-[11.5px] text-white/40">
+              {period === 'YEARLY' ? 'Billed yearly' : 'Billed monthly'}
+              {` · ${managed!.includedDevices} devices included`}
+              {managed!.additionalDevicePrice
+                ? ` · +${cur}${managed!.additionalDevicePrice.toLocaleString()}/extra device`
+                : ''}
+            </p>
+          </>
+        ) : (
+          <p className="mt-4 text-lg font-medium text-white/50">Contact us for pricing</p>
+        )}
+
+        <p className="mt-2 min-h-[40px] text-[13px] leading-relaxed text-white/50">
+          {plan.description || 'Scoped for your organization\u2019s needs.'}
+        </p>
+
+        <div className="mt-6">
+          <GlowButton
+            href={`/checkout?planId=${plan.id}`}
+            variant={plan.name === 'Pro' ? 'primary' : 'outline'}
+            className="w-full"
+          >
+            {configured ? 'Request Pricing' : 'Contact Sales'}
+          </GlowButton>
+        </div>
+      </motion.div>
+    </Reveal>
+  );
+}
+
+// ─── Customer Database pricing row ──────────────────────────────────────────
+function CustomerDbPricing({
+  plan,
+  period,
+}: {
+  plan: PublicPlan;
+  period: 'MONTHLY' | 'YEARLY';
+}) {
+  const row = plan.pricing.find(
+    (r) => r.deploymentMode === 'CUSTOMER_DB' && r.billingPeriod === period,
+  );
+  // Currency comes from the V1 pricing row; fallback to plan-level currency.
+  const cur = fmtSymbol(row?.currency ?? plan.currency);
+  const configured = isConfigured(row);
+
+  return (
+    <div className="flex items-center justify-between rounded-xl border border-white/10 bg-white/[0.03] px-5 py-4">
+      <div>
+        <p className="text-[14px] font-semibold text-white">{plan.name}</p>
+        <p className="mt-0.5 text-[12px] text-white/40">
+          {configured
+            ? `${row!.includedDevices} devices included${row!.additionalDevicePrice ? ` · +${cur}${row!.additionalDevicePrice.toLocaleString()}/extra` : ''}`
+            : 'Not configured'}
+        </p>
+      </div>
+      {configured ? (
+        <p className="text-right text-[15px] font-semibold text-white">
+          {cur}
+          {row!.basePrice.toLocaleString()}
+          <span className="ml-1 text-[12px] font-normal text-white/40">
+            / {period === 'YEARLY' ? 'yr' : 'mo'}
+          </span>
+        </p>
+      ) : (
+        <p className="text-[13px] text-white/40">Not configured</p>
+      )}
+    </div>
+  );
+}
+
+// ─── Main pricing section ───────────────────────────────────────────────────
 export function PricingSection() {
   const { data } = useQuery<{ plans: PublicPlan[] }>({
     queryKey: ['landing-plans'],
@@ -50,7 +194,29 @@ export function PricingSection() {
   });
 
   const [period, setPeriod] = useState<'MONTHLY' | 'YEARLY'>('MONTHLY');
-  const plans = (data?.plans ?? []).filter((p) => !p.isSelfHosted).slice(0, 3);
+  const allPlans = (data?.plans ?? []).filter((p) => !p.isSelfHosted);
+
+  // ── V1-driven classification (no legacy priceMonthly) ─────────────────
+  // A plan is "free" when it has NO active V1 pricing rows (basePrice > 0).
+  // A plan is "paid" when at least one MANAGED row has basePrice > 0.
+  // This ensures the landing page is a VIEW of Super Admin config, not a
+  // second place where commercial values are defined.
+  const freePlan = allPlans.find((p) => !p.hasActivePricing);
+  const paidPlans = allPlans.filter((p) =>
+    p.pricing.some((r) => r.deploymentMode === 'MANAGED' && r.basePrice > 0),
+  );
+
+  // Customer Database: plans that have at least one CUSTOMER_DB row
+  const customerDbPlans = allPlans.filter((p) =>
+    p.pricing.some((r) => r.deploymentMode === 'CUSTOMER_DB'),
+  );
+
+  // Check if any Customer Database pricing is actually configured
+  const hasCustomerDbPricing = customerDbPlans.some((p) =>
+    p.pricing.some(
+      (r) => r.deploymentMode === 'CUSTOMER_DB' && r.basePrice > 0,
+    ),
+  );
 
   return (
     <section id="pricing" className="mx-auto max-w-7xl px-4 py-24 sm:px-6 lg:px-8">
@@ -58,17 +224,20 @@ export function PricingSection() {
         copyKey="pricing"
         eyebrow="Pricing"
         title="Choose the way your organization works."
-        subtitle="Every plan starts with a conversation. Select a package, talk to OmniSight, and our team handles provisioning — no online checkout."
+        subtitle="Two deployment modes. Pick the one that fits your infrastructure — then choose a plan."
       />
 
-      <div className="mx-auto mb-10 flex justify-center">
+      {/* Monthly / Yearly toggle */}
+      <div className="mx-auto mb-14 flex justify-center">
         <div className="tech-font inline-flex rounded-full border border-white/10 bg-white/5 p-1">
           {(['MONTHLY', 'YEARLY'] as const).map((p) => (
             <button
               key={p}
               onClick={() => setPeriod(p)}
               className={`rounded-full px-4 py-1.5 text-[11px] font-bold uppercase tracking-[0.14em] transition-colors ${
-                period === p ? 'bg-cyan-300/20 text-cyan-200' : 'text-white/50 hover:text-white/80'
+                period === p
+                  ? 'bg-cyan-300/20 text-cyan-200'
+                  : 'text-white/50 hover:text-white/80'
               }`}
             >
               {p === 'MONTHLY' ? 'Monthly' : 'Yearly'}
@@ -77,82 +246,163 @@ export function PricingSection() {
         </div>
       </div>
 
-      <div className="mt-14 grid gap-5 md:grid-cols-3">
-        {plans.map((plan, i) => {
-          const symbol = CURRENCY_SYMBOL[plan.currency] ?? `${plan.currency} `;
-          const isFree = plan.priceMonthly === 0;
-          // V1 pricing rows for this plan + period (server-resolved values).
-          const managed = plan.pricing?.find((r) => r.deploymentMode === 'MANAGED' && r.billingPeriod === period);
-          const customerDb = plan.pricing?.find((r) => r.deploymentMode === 'CUSTOMER_DB' && r.billingPeriod === period);
-          const features =
-            plan.features.length > 0
-              ? plan.features
-              : [
-                  `Up to ${plan.maxDevices < 0 ? 'unlimited' : plan.maxDevices} devices`,
-                  `Retention: ${plan.retentionDays === 0 ? 'unlimited' : `${plan.retentionDays} days`}`,
-                  'Real-time monitoring',
-                  'AI-powered insights',
-                ];
-          return (
-            <Reveal key={plan.id} delay={i * 0.1} className="h-full">
-              <motion.div
-                whileHover={{ scale: 1.02, y: -4 }}
-                transition={{ type: 'spring', stiffness: 320, damping: 24 }}
-                className="glass-panel flex h-full flex-col rounded-2xl p-7"
-              >
-                <p className="tech-font text-[12px] font-bold uppercase tracking-[0.22em] text-cyan-300">
-                  {plan.name}
-                </p>
-                {plan.offerName && (
-                  <span className="mt-2 inline-flex w-fit items-center rounded-full border border-emerald-300/40 bg-emerald-300/10 px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-[0.12em] text-emerald-300">
-                    {plan.offerIsFree ? 'Free offer' : `Offer: ${plan.offerName}`}
-                  </span>
-                )}
-                <p className="mt-4 text-4xl font-semibold tracking-tight text-white">
-                  {symbol}
-                  {(managed?.basePrice ?? plan.priceMonthly).toLocaleString()}
-                  <span className="ml-1 text-sm font-normal text-white/40">/ month</span>
-                </p>
-                <p className="mt-1 text-[11.5px] text-white/40">
-                  OmniSight Managed · {period === 'YEARLY' ? 'billed yearly' : 'billed monthly'}
-                  {managed && !managed.unlimitedDevices && managed.includedDevices != null
-                    ? ` · ${managed.includedDevices} devices included${managed.additionalDevicePrice ? ` · +${symbol}${managed.additionalDevicePrice}/extra device` : ''}`
-                    : ''}
-                </p>
-                {customerDb && (
-                  <p className="mt-1 text-[11.5px] text-white/40">
-                    Customer Database: {symbol}
-                    {customerDb.basePrice.toLocaleString()}/{period === 'YEARLY' ? 'yr' : 'mo'} · unlimited devices
-                  </p>
-                )}
-                <p className="mt-2 min-h-[40px] text-[13px] leading-relaxed text-white/50">
-                  {plan.description || 'Scoped for your organization’s needs.'}
-                </p>
-                <ul className="mt-5 flex-1 space-y-2.5 border-t border-white/10 pt-5">
-                  {features.slice(0, 5).map((f) => (
-                    <li key={f} className="flex items-start gap-2.5 text-[13px] text-white/65">
-                      <Check size={15} className="mt-0.5 shrink-0 text-cyan-300" aria-hidden />
-                      {f}
-                    </li>
-                  ))}
-                </ul>
-                <div className="mt-6">
-                  <GlowButton href={`/checkout?planId=${plan.id}`} variant={plan.name === 'Pro' ? 'primary' : 'outline'} className="w-full">
-                    {isFree ? 'Get Started' : 'Request Pricing'}
-                  </GlowButton>
-                </div>
-              </motion.div>
-            </Reveal>
-          );
-        })}
+      {/* ── OMNISIGHT MANAGED ──────────────────────────────────────────── */}
+      <Reveal>
+        <div className="mb-6 flex items-center gap-3">
+          <span className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-white/10 bg-white/5 text-cyan-300">
+            <Server size={16} />
+          </span>
+          <div>
+            <h3 className="tech-font text-[14px] font-bold uppercase tracking-[0.18em] text-white">
+              OmniSight Managed
+            </h3>
+            <p className="text-[12.5px] text-white/40">
+              We host the platform, database, and storage. Zero infrastructure setup.
+            </p>
+          </div>
+        </div>
+      </Reveal>
+
+      <div className="grid gap-5 md:grid-cols-3">
+        {/* Free Access — 7 Days (OmniSight Managed only) */}
+        {freePlan && (
+          <Reveal delay={0} className="h-full">
+            <motion.div
+              whileHover={{ scale: 1.02, y: -4 }}
+              transition={{ type: 'spring', stiffness: 320, damping: 24 }}
+              className="glass-panel flex h-full flex-col rounded-2xl p-7"
+            >
+              <p className="tech-font text-[12px] font-bold uppercase tracking-[0.22em] text-emerald-300">
+                Free Access — 7 Days
+              </p>
+              <p className="mt-4 text-4xl font-semibold tracking-tight text-white">
+                Free
+              </p>
+              <p className="mt-1 text-[11.5px] text-white/40">
+                7-day trial · No credit card required
+              </p>
+              <p className="mt-2 min-h-[40px] text-[13px] leading-relaxed text-white/50">
+                Try OmniSight with full features for 7 days. Submit a
+                request and our team provisions your environment.
+              </p>
+              <ul className="mt-5 flex-1 space-y-2.5 border-t border-white/10 pt-5">
+                <li className="flex items-start gap-2.5 text-[13px] text-white/65">
+                  <Check size={15} className="mt-0.5 shrink-0 text-emerald-300" aria-hidden />
+                  7 days full access
+                </li>
+                <li className="flex items-start gap-2.5 text-[13px] text-white/65">
+                  <Check size={15} className="mt-0.5 shrink-0 text-emerald-300" aria-hidden />
+                  No credit card required
+                </li>
+                <li className="flex items-start gap-2.5 text-[13px] text-white/65">
+                  <Check size={15} className="mt-0.5 shrink-0 text-emerald-300" aria-hidden />
+                  Super Admin approval &amp; provisioning
+                </li>
+              </ul>
+              <div className="mt-6">
+                <GlowButton href="/contact?plan=Free" variant="outline" className="w-full">
+                  Get 7 Days Free Access
+                </GlowButton>
+              </div>
+            </motion.div>
+          </Reveal>
+        )}
+
+        {/* Pro and Business paid cards */}
+        {paidPlans.map((plan, i) => (
+          <ManagedPlanCard
+            key={plan.id}
+            plan={plan}
+            period={period}
+            index={i + 1}
+          />
+        ))}
       </div>
 
       <Reveal className="mx-auto mt-8 max-w-2xl text-center">
         <p className="text-[12.5px] leading-relaxed text-white/40">
-          Select a package → Contact OmniSight → Manual payment →
+          Select a plan → Contact OmniSight → Manual payment →
           Organization provisioning → Receive credentials → First login.
         </p>
       </Reveal>
+
+      {/* ── CUSTOMER DATABASE ──────────────────────────────────────────── */}
+      {customerDbPlans.length > 0 && (
+        <>
+          <Reveal className="mt-20">
+            <div className="mb-6 flex items-center gap-3">
+              <span className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-white/10 bg-white/5 text-cyan-300">
+                <Database size={16} />
+              </span>
+              <div>
+                <h3 className="tech-font text-[14px] font-bold uppercase tracking-[0.18em] text-white">
+                  Customer Database
+                </h3>
+                <p className="text-[12.5px] text-white/40">
+                  Your data infrastructure. Our application. Unlimited devices.
+                </p>
+              </div>
+            </div>
+          </Reveal>
+
+          <Reveal delay={0.05}>
+            <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+              {customerDbPlans.map((plan) => (
+                <CustomerDbPricing
+                  key={plan.id}
+                  plan={plan}
+                  period={period}
+                />
+              ))}
+
+              {hasCustomerDbPricing ? (
+                <div className="flex items-center rounded-xl border border-white/10 bg-white/[0.03] px-5 py-4">
+                  <div>
+                    <p className="text-[13px] font-semibold text-white">
+                      All Customer Database plans include
+                    </p>
+                    <ul className="mt-2 space-y-1.5">
+                      <li className="flex items-center gap-2 text-[12px] text-white/50">
+                        <span className="h-1 w-1 rounded-full bg-cyan-300" aria-hidden />
+                        Unlimited devices — no per-device charges
+                      </li>
+                      <li className="flex items-center gap-2 text-[12px] text-white/50">
+                        <span className="h-1 w-1 rounded-full bg-cyan-300" aria-hidden />
+                        Customer-controlled primary database
+                      </li>
+                      <li className="flex items-center gap-2 text-[12px] text-white/50">
+                        <span className="h-1 w-1 rounded-full bg-cyan-300" aria-hidden />
+                        OmniSight-managed application layer
+                      </li>
+                    </ul>
+                  </div>
+                </div>
+              ) : (
+                <div className="flex items-center rounded-xl border border-dashed border-white/15 px-5 py-4">
+                  <div>
+                    <p className="text-[13px] font-medium text-white/50">
+                      Customer Database pricing not yet configured
+                    </p>
+                    <p className="mt-1 text-[12px] text-white/35">
+                      Contact us for a custom quote.
+                    </p>
+                    <GlowButton href="/contact" variant="outline" className="mt-3 !px-4 !py-1.5 !text-[11px]">
+                      Contact Sales
+                    </GlowButton>
+                  </div>
+                </div>
+              )}
+            </div>
+          </Reveal>
+
+          <Reveal className="mx-auto mt-6 max-w-2xl text-center">
+            <p className="text-[12.5px] leading-relaxed text-white/40">
+              Customer Database deployments use your organization&apos;s primary database.
+              Pricing is per plan — device count never affects the price.
+            </p>
+          </Reveal>
+        </>
+      )}
     </section>
   );
 }

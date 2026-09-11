@@ -40,9 +40,8 @@ interface Breakdown {
   finalPrice: number;
   currency: string;
   offerName: string | null;
-  unlimitedDevices: boolean;
-  includedDevices: number | null;
-  additionalDevicePrice: number | null;
+  includedDevices: number;
+  additionalDevicePrice: number;
   pricingSource: string;
 }
 
@@ -56,7 +55,7 @@ function PurchaseRequestInner() {
   const [planId, setPlanId] = useState(planIdParam);
   const [mode, setMode] = useState<Mode>('MANAGED');
   const [period, setPeriod] = useState<Period>('MONTHLY');
-  const [deviceQuantity, setDeviceQuantity] = useState('25');
+  const [deviceQuantity, setDeviceQuantity] = useState('');
   const [companyName, setCompanyName] = useState('');
   const [contactName, setContactName] = useState('');
   const [contactEmail, setContactEmail] = useState('');
@@ -85,7 +84,7 @@ function PurchaseRequestInner() {
   }, [plan, plans]);
 
   const previewQ = useQuery<{ breakdown: Breakdown }>({
-    queryKey: ['purchase-preview', planId, mode, period, mode === 'MANAGED' ? deviceQuantity : 'x'],
+    queryKey: ['purchase-preview', planId, mode, period, deviceQuantity],
     enabled: Boolean(plan),
     queryFn: async () => {
       const res = await fetch('/api/pricing/preview', {
@@ -95,7 +94,7 @@ function PurchaseRequestInner() {
           planId,
           deploymentMode: mode,
           billingPeriod: period,
-          deviceQuantity: mode === 'MANAGED' ? Math.max(1, Math.floor(Number(deviceQuantity) || 1)) : undefined,
+          deviceQuantity: Math.max(1, Math.floor(Number(deviceQuantity) || 1)),
         }),
       });
       if (!res.ok) throw new Error('preview');
@@ -108,8 +107,8 @@ function PurchaseRequestInner() {
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!plan) return;
-    if (mode === 'MANAGED' && (!Number(deviceQuantity) || Number(deviceQuantity) < 1)) {
-      toast.error('Enter a device quantity of 1 or more for Managed deployments');
+    if (!Number(deviceQuantity) || Number(deviceQuantity) < 1) {
+      toast.error('Enter a device quantity of 1 or more');
       return;
     }
     setSubmitting(true);
@@ -126,7 +125,7 @@ function PurchaseRequestInner() {
           planId,
           deploymentMode: mode,
           billingPeriod: period,
-          deviceQuantity: mode === 'MANAGED' ? Math.max(1, Math.floor(Number(deviceQuantity) || 1)) : undefined,
+          deviceQuantity: Math.max(1, Math.floor(Number(deviceQuantity) || 1)),
         }),
       });
       const json = await res.json().catch(() => ({}));
@@ -238,7 +237,7 @@ function PurchaseRequestInner() {
                 <label className={`cursor-pointer rounded-xl border p-4 transition-colors ${mode === 'CUSTOMER_DB' ? 'border-primary bg-primary/5 ring-1 ring-primary/30' : 'hover:bg-muted/40'}`}>
                   <input type="radio" name="mode" className="sr-only" checked={mode === 'CUSTOMER_DB'} onChange={() => setMode('CUSTOMER_DB')} />
                   <p className="font-semibold">Customer Database</p>
-                  <p className="mt-1 text-xs text-muted-foreground">Your primary database — unlimited devices, priced by period only.</p>
+                  <p className="mt-1 text-xs text-muted-foreground">Your primary database — priced by period + device quantity.</p>
                 </label>
               </CardContent>
             </Card>
@@ -246,7 +245,7 @@ function PurchaseRequestInner() {
             {/* Period + devices */}
             <Card>
               <CardHeader>
-                <CardTitle>3. Billing Period{mode === 'MANAGED' ? ' & Devices' : ''}</CardTitle>
+                <CardTitle>3. Billing Period & Devices</CardTitle>
               </CardHeader>
               <CardContent className="space-y-4">
                 <Tabs value={period} onValueChange={(v) => setPeriod(v as Period)}>
@@ -255,28 +254,22 @@ function PurchaseRequestInner() {
                     <TabsTrigger value="YEARLY">Yearly</TabsTrigger>
                   </TabsList>
                 </Tabs>
-                {mode === 'MANAGED' ? (
-                  <div className="space-y-2 max-w-xs">
-                    <Label htmlFor="devices">Device quantity</Label>
-                    <Input
-                      id="devices"
-                      type="number"
-                      min={1}
-                      step={1}
-                      value={deviceQuantity}
-                      onChange={(e) => setDeviceQuantity(e.target.value)}
-                    />
-                    {breakdown && (
-                      <p className="text-xs text-muted-foreground">
-                        {breakdown.includedDevices} devices included · +{breakdown.currency} {breakdown.additionalDevicePrice} per additional device
-                      </p>
-                    )}
-                  </div>
-                ) : (
-                  <p className="rounded-lg bg-muted/40 p-3 text-sm text-muted-foreground">
-                    Customer Database deployments include <strong>unlimited devices</strong> — device count never affects the price.
-                  </p>
-                )}
+                <div className="space-y-2 max-w-xs">
+                  <Label htmlFor="devices">Device quantity</Label>
+                  <Input
+                    id="devices"
+                    type="number"
+                    min={1}
+                    step={1}
+                    value={deviceQuantity}
+                    onChange={(e) => setDeviceQuantity(e.target.value)}
+                  />
+                  {breakdown && (
+                    <p className="text-xs text-muted-foreground">
+                      {breakdown.includedDevices} devices included · +{breakdown.currency} {breakdown.additionalDevicePrice} per additional device
+                    </p>
+                  )}
+                </div>
               </CardContent>
             </Card>
 
@@ -312,7 +305,7 @@ function PurchaseRequestInner() {
                       <span>{breakdown.currency} {breakdown.finalPrice.toLocaleString()}</span>
                     </div>
                     <p className="text-xs text-muted-foreground">
-                      {breakdown.unlimitedDevices ? 'Unlimited devices included.' : `${breakdown.includedDevices} devices included in base price.`}
+                      {`${breakdown.includedDevices} devices included in base price.`}
                     </p>
                   </>
                 ) : (

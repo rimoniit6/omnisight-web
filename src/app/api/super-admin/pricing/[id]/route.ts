@@ -4,6 +4,8 @@ import { requireDbVerifiedRole, apiError, apiSuccess, authError, parseJsonBody, 
 
 // PATCH /api/super-admin/pricing/[id] — update / activate / deactivate one
 // PlanPricing row (Super Admin only). Audited.
+// DELETE — remove an unreferenced pricing row. Blocked if any PurchaseRequest
+// references the same (plan, mode, period).
 
 export async function PATCH(
   req: NextRequest,
@@ -44,17 +46,11 @@ export async function PATCH(
   if (body.includedDevices !== undefined) {
     const n = Number(body.includedDevices);
     if (!Number.isInteger(n) || n < 0) return apiError('includedDevices must be a non-negative integer', 422);
-    if (existing.deploymentMode === 'CUSTOMER_DB') {
-      return apiError('Customer Database pricing is always unlimited devices — includedDevices does not apply', 422);
-    }
     data.includedDevices = n;
   }
   if (body.additionalDevicePrice !== undefined) {
     const n = Number(body.additionalDevicePrice);
     if (!Number.isFinite(n) || n < 0) return apiError('additionalDevicePrice must be a non-negative number', 422);
-    if (existing.deploymentMode === 'CUSTOMER_DB') {
-      return apiError('Customer Database pricing never charges per device — additionalDevicePrice does not apply', 422);
-    }
     data.additionalDevicePrice = n;
   }
   if (body.isActive !== undefined) {
@@ -79,4 +75,54 @@ export async function PATCH(
   });
 
   return apiSuccess(row);
+}
+
+// DELETE /api/super-admin/pricing/[id] — delete a PlanPricing row.
+// Blocked if any PurchaseRequest references the same (plan, mode, period).
+export async function DELETE(
+  req: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  const admin = await requireDbVerifiedRole(req, { requireSuperAdmin: true });
+  if (!admin.ok) return authError(admin);
+
+  const { id } = await params;
+
+  const existing = await db.planPricing.findUnique({
+    where: { id },
+    include: { plan: { select: { id: true, name: true } } },
+  });
+  if (!existing) return apiError('Pricing row not found', 404);
+
+  // Check if any PurchaseRequest references this (plan, mode, period).
+  const refCount = await db.purchaseRequest.count({
+    where: {
+      planId: existing.planId,
+      deploymentMode: existing.deploymentMode,
+      billingPeriod: existing.billingPeriod,
+    },
+  });
+  if (refCount > 0) {
+    return apiError(
+      `This pricing configuration is referenced by ${refCount} purchase request(s). ` +
+      `Deactivate it (isActive=false) instead of deleting to preserve historical records.`,
+      409,
+    );
+  }
+
+  await db.$transaction(async (tx) => {
+    await tx.planPricing.delete({ where: { id } });
+    await tx.auditLog.create({
+      data: {
+        action: 'delete',
+        resource: 'plan_pricing',
+        resourceId: id,
+        description: `Super admin (${admin.email}) deleted pricing for "${existing.plan.name}" (${existing.deploymentMode}/${existing.billingPeriod})`,
+        userId: admin.userId,
+        organizationId: null,
+      },
+    });
+  });
+
+  return apiSuccess({ deleted: true });
 }

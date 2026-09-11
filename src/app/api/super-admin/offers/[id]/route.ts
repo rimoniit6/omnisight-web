@@ -6,6 +6,8 @@ import { requireDbVerifiedRole, apiError, apiSuccess, authError, parseJsonBody, 
 // offer (Super Admin only). Audited. Scope fields (plan/mode/period) are
 // editable; the resolver re-validates scopes at price time, so edits here
 // affect only FUTURE calculations — existing snapshots are immutable.
+// DELETE — remove an offer. PurchaseRequests that referenced it keep their
+// offerId set to null (onDelete: SetNull in schema).
 
 export async function PATCH(
   req: NextRequest,
@@ -115,4 +117,36 @@ export async function PATCH(
   });
 
   return apiSuccess(offer);
+}
+
+// DELETE /api/super-admin/offers/[id] — delete an offer.
+// PurchaseRequests that referenced this offer keep their offerId (SetNull on
+// delete in schema), so historical records are never broken.
+export async function DELETE(
+  req: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  const admin = await requireDbVerifiedRole(req, { requireSuperAdmin: true });
+  if (!admin.ok) return authError(admin);
+
+  const { id } = await params;
+
+  const existing = await db.offer.findUnique({ where: { id }, select: { id: true, name: true } });
+  if (!existing) return apiError('Offer not found', 404);
+
+  await db.$transaction(async (tx) => {
+    await tx.offer.delete({ where: { id } });
+    await tx.auditLog.create({
+      data: {
+        action: 'delete',
+        resource: 'offer',
+        resourceId: id,
+        description: `Super admin (${admin.email}) deleted offer "${existing.name}"`,
+        userId: admin.userId,
+        organizationId: null,
+      },
+    });
+  });
+
+  return apiSuccess({ deleted: true });
 }

@@ -44,7 +44,6 @@ import {
   Globe,
   ServerCog,
   ClipboardList,
-  BadgeDollarSign,
   ShoppingBag,
 } from 'lucide-react';
 import type { PageType } from '@/lib/store';
@@ -192,18 +191,17 @@ export const navGroups: NavGroup[] = [
     ],
   },
   // The Super Admin surface is intentionally Organizations-centric. Overview
-  // + Organizations drive the manual sales flow; Packages is the standalone
-  // reusable-catalog configuration; Landing Page manages public content.
-  // Subscriptions / manual payments / licenses are managed from each
-  // Organization (org detail) — no standalone menus.
+  // + Organizations drive the manual sales flow; Packages & Pricing unifies
+  // the plan catalog, V1 pricing, and promotional offers; Landing Page
+  // manages public content. Subscriptions / manual payments / licenses are
+  // managed from each Organization (org detail) — no standalone menus.
   {
     id: 'control-center',
     section: 'Control Center',
     items: [
       { page: 'sa-overview', label: 'Overview', icon: Crown },
       { page: 'super-admin-organizations', label: 'Organizations', icon: Building2 },
-      { page: 'sa-packages', label: 'Packages', icon: Package },
-      { page: 'sa-pricing', label: 'Pricing & Offers', icon: BadgeDollarSign },
+      { page: 'sa-packages-pricing', label: 'Packages & Pricing', icon: Package },
       { page: 'sa-purchase-requests', label: 'Purchase Requests', icon: ShoppingBag },
       { page: 'sa-infra-requests', label: 'Infrastructure Requests', icon: ClipboardList },
       { page: 'sa-landing', label: 'Landing Page', icon: Globe },

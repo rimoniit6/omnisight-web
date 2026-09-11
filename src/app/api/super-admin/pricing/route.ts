@@ -7,10 +7,9 @@ import { log, requestContext } from '@/lib/logger';
 // Super Admin commercial pricing configuration (V1).
 //
 // PlanPricing is control-plane data: plan × deploymentMode × billingPeriod →
-// base price + Managed device entitlement terms. Only MANAGED / CUSTOMER_DB
-// are accepted — PRIVATE is a legacy self-hosted path and must never receive
-// V1 pricing rows. The legacy Plan columns remain untouched for backward
-// compatibility; an active PlanPricing row is authoritative for V1 behavior.
+// base price + device entitlement terms. Both MANAGED and CUSTOMER_DB
+// require includedDevices + additionalDevicePrice. There are no "unlimited
+// devices" in the V1 commercial model.
 
 function validateBody(body: Record<string, unknown>) {
   const errors: string[] = [];
@@ -29,8 +28,8 @@ function validateBody(body: Record<string, unknown>) {
   const currency = typeof body.currency === 'string' && body.currency.trim() ? body.currency.trim().slice(0, 8) : 'BDT';
 
   const includedDevices = body.includedDevices === undefined || body.includedDevices === null ? null : Number(body.includedDevices);
-  if (includedDevices !== null && (!Number.isInteger(includedDevices) || includedDevices < 0)) {
-    errors.push('includedDevices must be a non-negative integer');
+  if (includedDevices === null || !Number.isInteger(includedDevices) || includedDevices < 0) {
+    errors.push('includedDevices is required and must be a non-negative integer for both MANAGED and CUSTOMER_DB');
   }
   const additionalDevicePrice = body.additionalDevicePrice === undefined || body.additionalDevicePrice === null ? 0 : Number(body.additionalDevicePrice);
   if (!Number.isFinite(additionalDevicePrice) || additionalDevicePrice < 0) {
@@ -84,13 +83,8 @@ export async function POST(req: NextRequest) {
   const plan = await db.plan.findUnique({ where: { id: data.planId }, select: { id: true, name: true } });
   if (!plan) return apiError('Plan not found', 404);
 
-  const includedDevices =
-    data.deploymentMode === 'CUSTOMER_DB'
-      ? 0 // ignored for Customer Database — devices are always unlimited
-      : (data.includedDevices ?? 0);
-  if (data.deploymentMode === 'MANAGED' && data.includedDevices === null) {
-    return apiError('includedDevices is required for MANAGED pricing', 422);
-  }
+  const includedDevices = data.includedDevices ?? 0;
+  const additionalDevicePrice = data.additionalDevicePrice ?? 0;
 
   const row = await db.planPricing.upsert({
     where: {
@@ -124,7 +118,7 @@ export async function POST(req: NextRequest) {
       action: 'create',
       resource: 'plan_pricing',
       resourceId: row.id,
-      description: `Super admin (${admin.email}) configured ${data.billingPeriod} pricing for "${plan.name}" (${data.deploymentMode}): ${data.currency} ${data.basePrice}${data.deploymentMode === 'MANAGED' ? `, included ${includedDevices} devices @ ${data.additionalDevicePrice}/extra` : ', unlimited devices'}`,
+      description: `Super admin (${admin.email}) configured ${data.billingPeriod} pricing for "${plan.name}" (${data.deploymentMode}): ${data.currency} ${data.basePrice}, included ${includedDevices} devices @ ${additionalDevicePrice}/extra`,
       userId: admin.userId,
       organizationId: null,
     },

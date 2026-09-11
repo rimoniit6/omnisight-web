@@ -33,7 +33,7 @@ export type PageType =
   | 'super-admin-organizations'
   | 'super-admin-organization-detail'
   | 'sa-overview'
-  | 'sa-packages'
+  | 'sa-packages-pricing'
   | 'sa-create-organization'
   | 'sa-landing'
   | 'sa-audit'
@@ -41,7 +41,6 @@ export type PageType =
   | 'billing'
   | 'data-infrastructure'
   | 'sa-infra-requests'
-  | 'sa-pricing'
   | 'sa-purchase-requests';
 
 function getInitialTourState(): boolean {
