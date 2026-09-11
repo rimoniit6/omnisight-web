@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { authError, requireSessionOrg } from '@/lib/api';
+import { authError, requireSessionOrg, getPrismaForOrg } from '@/lib/api';
 import { log, requestContext } from '@/lib/logger';
 
 // GET /api/screenshots — paginated list with filters
@@ -15,6 +14,7 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ data: [], total: 0, page: 1, pageSize: 24, totalPages: 0 });
     }
     const orgId = scope.organizationId;
+    const orgData = (await getPrismaForOrg(orgId)).client;
 
     const { searchParams } = new URL(req.url);
     const employeeId = searchParams.get('employeeId') || undefined;
@@ -46,7 +46,7 @@ export async function GET(req: NextRequest) {
     }
 
     const [screenshots, total] = await Promise.all([
-      db.screenshot.findMany({
+      orgData.screenshot.findMany({
         where,
         include: {
           employee: {
@@ -58,7 +58,7 @@ export async function GET(req: NextRequest) {
         skip: (page - 1) * pageSize,
         take: pageSize,
       }),
-      db.screenshot.count({ where }),
+      orgData.screenshot.count({ where }),
     ]);
 
     return NextResponse.json({

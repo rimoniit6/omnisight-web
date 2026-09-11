@@ -3,7 +3,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { format, subMonths, endOfMonth, getDay } from 'date-fns';
-import { authError, authenticateRequest, getSessionOrg } from '@/lib/api';
+import { authError, authenticateRequest, getSessionOrg, getPrismaForOrg } from '@/lib/api';
 import { hasRolePermission } from '@/lib/auth';
 import { excludeInternalAgentActivities } from '@/lib/agent-process';
 import { log, requestContext } from '@/lib/logger';
@@ -26,9 +26,10 @@ export async function GET(req: NextRequest) {
     if (!org) {
       return NextResponse.json({ error: 'No organization found' }, { status: 404 });
     }
+    const orgData = (await getPrismaForOrg(org.id)).client;
 
     // Fetch departments with employee counts and manager info
-    const departments = await db.department.findMany({
+    const departments = await orgData.department.findMany({
       where: { organizationId: org.id },
       include: {
         manager: { select: { id: true, firstName: true, lastName: true, avatar: true } },
@@ -38,7 +39,7 @@ export async function GET(req: NextRequest) {
     });
 
     // Get all employees for headcount
-    const allEmployees = await db.employee.findMany({
+    const allEmployees = await orgData.employee.findMany({
       where: { organizationId: org.id },
       include: { department: { select: { name: true } } },
       orderBy: { joinDate: 'desc' },
@@ -85,7 +86,7 @@ export async function GET(req: NextRequest) {
     // monitoring agent never skews team comparison data. SECURITY: the
     // activity set is ALWAYS scoped to the caller's organization via the
     // employee relation — a global scan here would leak foreign departments.
-    const activities = excludeInternalAgentActivities(await db.activity.findMany({
+    const activities = excludeInternalAgentActivities(await orgData.activity.findMany({
       where: { employee: { organizationId: org.id } },
       include: {
         employee: {

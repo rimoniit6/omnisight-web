@@ -9,7 +9,14 @@
  */
 
 import { db } from '@/lib/db';
+import { getPrismaForOrg } from '@/lib/org-db';
 import { log } from '@/lib/logger';
+
+// ROUTING NOTE: PlatformBranding is PLATFORM-OWNED (never in MIGRATION_TABLES)
+// and stays on the platform DB. OrganizationBranding IS org-owned (copied at
+// activation) — the org-override read resolves the org's own client so
+// post-cutover branding edits are served from the org DB, never the stale
+// platform copy.
 
 // ─── Built-in Defaults (fallback of last resort) ───────────────────────────
 
@@ -182,7 +189,8 @@ async function getPlatformBranding(): Promise<{
 // ─── Core: Get Organization Branding ────────────────────────────────────────
 
 async function getOrganizationBranding(
-  organizationId: string
+  organizationId: string,
+  data: import('@prisma/client').PrismaClient = db
 ): Promise<{
   brandName?: string | null;
   logoUrl?: string | null;
@@ -200,7 +208,7 @@ async function getOrganizationBranding(
   if (cached) return cached;
 
   try {
-    const row = await db.organizationBranding.findUnique({
+    const row = await data.organizationBranding.findUnique({
       where: { organizationId },
     });
     if (!row) return null;
@@ -240,8 +248,10 @@ export async function getEffectiveBranding(
   const cached = getCachedBranding(cacheKey);
   if (cached) return cached;
 
+  // OrganizationBranding is org-owned — read the override from the org client.
+  const orgData = organizationId ? (await getPrismaForOrg(organizationId)).client : null;
   const platform = await getPlatformBranding();
-  const org = organizationId ? await getOrganizationBranding(organizationId) : null;
+  const org = organizationId ? await getOrganizationBranding(organizationId, orgData ?? db) : null;
 
   const effective: EffectiveBranding = {
     brandName:
@@ -295,7 +305,9 @@ export async function getRawPlatformBranding() {
 // ─── Public: Get Raw Org Branding (for admin UI) ────────────────────────────
 
 export async function getRawOrganizationBranding(organizationId: string) {
-  const row = await db.organizationBranding.findUnique({
+  // OrganizationBranding is org-owned (copied at activation) — resolve the org client.
+  const orgData = (await getPrismaForOrg(organizationId)).client;
+  const row = await orgData.organizationBranding.findUnique({
     where: { organizationId },
   });
   return row;

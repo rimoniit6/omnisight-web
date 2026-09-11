@@ -56,6 +56,8 @@ const SuperAdminAuditPage = dynamic(() => import('@/components/super-admin/sa-au
 const BrandingPage = dynamic(() => import('@/components/branding/branding-page').then(m => ({ default: m.BrandingPage })), { ssr: false });
 const DataInfrastructurePage = dynamic(() => import('@/components/data-infrastructure/data-infrastructure-page').then(m => ({ default: m.DataInfrastructurePage })), { ssr: false });
 const SaInfraRequestsPage = dynamic(() => import('@/components/super-admin/sa-infra-requests-page').then(m => ({ default: m.SaInfraRequestsPage })), { ssr: false });
+const SaPricingPage = dynamic(() => import('@/components/super-admin/sa-pricing-pages').then(m => ({ default: m.SuperAdminPricingPage })), { ssr: false });
+const SaPurchaseRequestsPage = dynamic(() => import('@/components/super-admin/sa-pricing-pages').then(m => ({ default: m.SuperAdminPurchaseRequestsPage })), { ssr: false });
 
 const pageComponents: Record<string, React.ComponentType> = {
   dashboard: DashboardPage,
@@ -97,6 +99,8 @@ const pageComponents: Record<string, React.ComponentType> = {
   branding: BrandingPage,
   'data-infrastructure': DataInfrastructurePage,
   'sa-infra-requests': SaInfraRequestsPage,
+  'sa-pricing': SaPricingPage,
+  'sa-purchase-requests': SaPurchaseRequestsPage,
 };
 
 function AppLayout() {

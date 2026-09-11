@@ -1,7 +1,7 @@
 'use server';
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
-import { authError, requireSessionOrg, requireAdminOrg } from '@/lib/api';
+import { authError, requireSessionOrg, requireAdminOrg, getPrismaForOrg } from '@/lib/api';
 import { log, requestContext } from '@/lib/logger';
 
 export async function GET(req: NextRequest) {
@@ -35,6 +35,7 @@ export async function POST(req: NextRequest) {
     // Admin-only mutation; org from session.
     const admin = await requireAdminOrg(req);
     if (!admin.ok) return authError(admin);
+    const orgData = (await getPrismaForOrg(admin.organizationId)).client;
 
     const body = await req.json();
     const { name, description, managerId } = body;
@@ -42,7 +43,7 @@ export async function POST(req: NextRequest) {
 
     // Cross-org validation: managerId must belong to the caller's org.
     if (managerId) {
-      const manager = await db.employee.findFirst({
+      const manager = await orgData.employee.findFirst({
         where: { id: managerId, organizationId: admin.organizationId },
         select: { id: true },
       });
@@ -51,7 +52,7 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    const department = await db.department.create({
+    const department = await orgData.department.create({
       data: { name, description, managerId: managerId || null, organizationId: admin.organizationId },
       include: { _count: { select: { employees: true } } },
     });

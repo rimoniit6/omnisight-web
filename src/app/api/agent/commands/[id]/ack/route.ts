@@ -31,6 +31,9 @@ export async function POST(
     }
     const employee = authResult.employee;
     const deviceId = authResult.deviceId;
+    // ORG DATA BOUNDARY: AgentCommand + org-scoped AuditLog are org-owned and
+    // COPY to the org DB at cutover — route through the org data client.
+    const orgData = authResult.orgData ?? db;
 
     const { id } = await params;
 
@@ -44,7 +47,7 @@ export async function POST(
         ? body.error.slice(0, 200)
         : null;
 
-    const command = await db.agentCommand.findUnique({ where: { id } });
+    const command = await orgData.agentCommand.findUnique({ where: { id } });
     // Conceal foreign / nonexistent commands as 404.
     if (!command || command.deviceId !== deviceId || command.organizationId !== employee.organizationId) {
       return NextResponse.json({ error: 'Command not found' }, { status: 404 });
@@ -62,7 +65,7 @@ export async function POST(
     }
 
     const terminalStatus = result === 'acknowledged' ? 'ACKNOWLEDGED' : 'FAILED';
-    const updated = await db.$transaction(async (tx) => {
+    const updated = await orgData.$transaction(async (tx) => {
       const claimed = await tx.agentCommand.updateMany({
         where: { id: command.id, deviceId, status: 'DELIVERED' },
         data: { status: terminalStatus, acknowledgedAt: new Date() },

@@ -466,8 +466,8 @@ test('SACC-B3: sidebar exposes exactly Overview / Organizations / Packages / Lan
   const saItems = visibleGroupsFor('super_admin', false).flatMap((g) => g.items);
   assert.deepEqual(
     saItems.map((i) => i.page),
-    ['sa-overview', 'super-admin-organizations', 'sa-packages', 'sa-infra-requests', 'sa-landing'],
-    'org-less super_admin sidebar = Overview / Organizations / Packages / Infrastructure Requests / Landing Page',
+    ['sa-overview', 'super-admin-organizations', 'sa-packages', 'sa-pricing', 'sa-purchase-requests', 'sa-infra-requests', 'sa-landing'],
+    'org-less super_admin sidebar = Overview / Organizations / Packages / Pricing & Offers / Purchase Requests / Infrastructure Requests / Landing Page',
   );
 
   // Both shells must consume the shared module (they may never drift).

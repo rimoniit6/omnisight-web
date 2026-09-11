@@ -112,8 +112,8 @@ before(async () => {
   validation = v;
   wsInvalidation = ws;
 
-  const orgArow = await db.organization.create({ data: { name: 'Org A', slug: 'org-a-notif' } });
-  const orgBrow = await db.organization.create({ data: { name: 'Org B', slug: 'org-b-notif' } });
+  const orgArow = await db.organization.create({ data: { name: 'Org A', slug: 'org-a-notif', trialEndsAt: new Date(Date.now() + 30 * 24 * 3600 * 1000) } });
+  const orgBrow = await db.organization.create({ data: { name: 'Org B', slug: 'org-b-notif', trialEndsAt: new Date(Date.now() + 30 * 24 * 3600 * 1000) } });
   orgA = { id: orgArow.id };
   orgB = { id: orgBrow.id };
   const empArow = await db.employee.create({

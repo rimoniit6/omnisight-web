@@ -1,7 +1,7 @@
 'use server';
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
-import { authError, requireSessionOrg } from '@/lib/api';
+import { authError, requireSessionOrg, getPrismaForOrg } from '@/lib/api';
 import { parseISO, startOfDay, subDays } from 'date-fns';
 import { log, requestContext } from '@/lib/logger';
 
@@ -61,9 +61,10 @@ export async function GET(
   try {
     const scope = await requireSessionOrg(request, { allowGlobal: true });
     if (!scope.ok) return authError(scope);
+    const orgData = scope.organizationId ? (await getPrismaForOrg(scope.organizationId)).client : db;
 
     // Org-scoped employee lookup — foreign/nonexistent ids are concealed as 404.
-    const employee = await db.employee.findFirst({
+    const employee = await orgData.employee.findFirst({
       where: { id, ...(scope.organizationId ? { organizationId: scope.organizationId } : {}) },
       select: { id: true },
     });
@@ -94,24 +95,24 @@ export async function GET(
     };
 
     const [rows, total, summaryAgg, dayAgg, appAgg] = await Promise.all([
-      db.keyboardActivity.findMany({
+      orgData.keyboardActivity.findMany({
         where,
         orderBy: { intervalStart: 'desc' },
         skip: (page - 1) * pageSize,
         take: pageSize,
       }),
-      db.keyboardActivity.count({ where }),
-      db.keyboardActivity.aggregate({
+      orgData.keyboardActivity.count({ where }),
+      orgData.keyboardActivity.aggregate({
         where,
         _sum: { keystrokeCount: true, activeTypingSeconds: true },
         _count: { id: true },
       }),
-      db.keyboardActivity.groupBy({
+      orgData.keyboardActivity.groupBy({
         by: ['intervalStart'],
         where,
         _sum: { keystrokeCount: true, activeTypingSeconds: true },
       }),
-      db.keyboardActivity.groupBy({
+      orgData.keyboardActivity.groupBy({
         by: ['application'],
         where: { ...where, application: { not: null } },
         _sum: { keystrokeCount: true, activeTypingSeconds: true },

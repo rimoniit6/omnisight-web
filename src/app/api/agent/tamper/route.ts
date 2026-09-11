@@ -59,7 +59,12 @@ export async function POST(req: NextRequest) {
     const employeeId = authResult.employee!.id;
     const employeeName = `${authResult.employee!.firstName} ${authResult.employee!.lastName}`;
 
-    const alert = await db.$transaction(async (tx) => {
+    // Org data client resolved by agent authentication: Alert / Notification /
+    // AuditLog are org-owned and COPY to the org's own DB at activation, so the
+    // transaction must land there — never on the platform DB after cutover.
+    const orgData = authResult.orgData ?? db;
+
+    const alert = await orgData.$transaction(async (tx) => {
       // Create alert (N-7 validated severity, structured employee linkage).
       const created = await createOrgAlert(tx, {
         title: `Tamper: ${type.replace(/_/g, ' ')}`,

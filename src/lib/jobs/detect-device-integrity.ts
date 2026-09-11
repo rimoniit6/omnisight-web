@@ -30,6 +30,7 @@
 // TPM-backed attestation it is security theater, and the server remains the
 // authority.
 import { db } from '@/lib/db';
+import { getPrismaForOrg } from '@/lib/org-db';
 import { persistAnomaly } from '@/lib/anomalies/service';
 import { claimJob, finishJob } from './run';
 
@@ -61,7 +62,10 @@ export async function runDeviceIntegrityJob(): Promise<DeviceIntegrityResult> {
 
     for (const org of orgs) {
       try {
-        const staleDevices = await db.device.findMany({
+        // Org data client: Device/Anomaly/Alert/Notification are org-owned
+        // (copied at activation) — resolve per org, never share across orgs.
+        const orgData = (await getPrismaForOrg(org.id)).client;
+        const staleDevices = await orgData.device.findMany({
           where: {
             organizationId: org.id,
             status: 'online', // WAS reporting → went silent
@@ -87,7 +91,7 @@ export async function runDeviceIntegrityJob(): Promise<DeviceIntegrityResult> {
 
         for (const d of staleDevices) {
           const dedupeKey = `${org.id}:${d.id}:device_missing:${day}`;
-          const existing = await db.anomaly.findUnique({ where: { dedupeKey }, select: { id: true } });
+          const existing = await orgData.anomaly.findUnique({ where: { dedupeKey }, select: { id: true } });
           if (existing) continue;
 
           const minutesAgo = d.lastHeartbeat
@@ -115,7 +119,8 @@ export async function runDeviceIntegrityJob(): Promise<DeviceIntegrityResult> {
               },
             },
             org.id,
-            dedupeKey
+            dedupeKey,
+            orgData
           );
           if (created) result.anomaliesCreated += 1;
         }

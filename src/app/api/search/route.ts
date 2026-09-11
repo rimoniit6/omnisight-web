@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { authError, requireSessionOrg } from '@/lib/api';
+import { authError, getPrismaForOrg, requireSessionOrg } from '@/lib/api';
 import { log, requestContext } from '@/lib/logger';
 
 function emptySearch() {
@@ -16,6 +15,7 @@ export async function GET(request: NextRequest) {
     if (!scope.ok) return authError(scope);
     if (!scope.organizationId) return emptySearch();
     const orgId = scope.organizationId;
+    const orgData = (await getPrismaForOrg(orgId)).client;
 
     const q = request.nextUrl.searchParams.get('q')?.trim();
 
@@ -28,7 +28,7 @@ export async function GET(request: NextRequest) {
     // re-filter is needed (removed P3-3: the old SQLite-era re-filter was
     // redundant and could drift from the DB predicate).
     const [employees, departments, devices] = await Promise.all([
-      db.employee.findMany({
+      orgData.employee.findMany({
         where: {
           organizationId: orgId,
           status: { not: 'archived' },
@@ -49,7 +49,7 @@ export async function GET(request: NextRequest) {
         take: 8,
         orderBy: { firstName: 'asc' },
       }),
-      db.department.findMany({
+      orgData.department.findMany({
         where: {
           organizationId: orgId,
           name: { contains: q, mode: 'insensitive' },
@@ -63,7 +63,7 @@ export async function GET(request: NextRequest) {
         take: 5,
         orderBy: { name: 'asc' },
       }),
-      db.device.findMany({
+      orgData.device.findMany({
         where: {
           organizationId: orgId,
           OR: [

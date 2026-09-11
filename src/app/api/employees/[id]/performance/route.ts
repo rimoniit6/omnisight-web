@@ -3,7 +3,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { format, subDays, startOfDay, getDay } from 'date-fns';
-import { authError, requireSessionOrg } from '@/lib/api';
+import { authError, requireSessionOrg, getPrismaForOrg } from '@/lib/api';
 import { excludeInternalAgentActivities } from '@/lib/agent-process';
 import { log, requestContext } from '@/lib/logger';
 
@@ -13,8 +13,9 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
   try {
     const scope = await requireSessionOrg(request, { allowGlobal: true });
     if (!scope.ok) return authError(scope);
+    const orgData = scope.organizationId ? (await getPrismaForOrg(scope.organizationId)).client : db;
 
-    const employee = await db.employee.findFirst({
+    const employee = await orgData.employee.findFirst({
       where: { id, ...(scope.organizationId ? { organizationId: scope.organizationId } : {}) },
       include: { department: true },
     });
@@ -28,7 +29,7 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
     // Get all activities for last 30 days. Internal agent processes are
     // excluded at the data layer — the monitoring agent's own process must
     // never count as employee application usage.
-    const activities = excludeInternalAgentActivities(await db.activity.findMany({
+    const activities = excludeInternalAgentActivities(await orgData.activity.findMany({
       where: { employeeId: id, timestamp: { gte: thirtyDaysAgo } },
       orderBy: { timestamp: 'desc' },
     }));
@@ -157,7 +158,7 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
     const activeDays = new Set(activities.map((a) => format(new Date(a.timestamp), 'yyyy-MM-dd'))).size || 1;
 
     // Devices
-    const devices = await db.device.findMany({
+    const devices = await orgData.device.findMany({
       where: { employeeId: id, status: { not: 'retired' } },
       orderBy: { registeredAt: 'desc' },
     });

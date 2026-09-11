@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { Prisma } from '@prisma/client';
-import { authError, requireSessionOrg, requireAdminOrg, validatePagination } from '@/lib/api';
+import { authError, requireSessionOrg, requireAdminOrg, validatePagination, getPrismaForOrg } from '@/lib/api';
 import { log, requestContext } from '@/lib/logger';
 
 export async function GET(
@@ -170,7 +170,8 @@ export async function POST(
     }
 
     // Validate employee is an active project member AND belongs to the same org.
-    const membership = await db.projectMember.findFirst({
+    const orgData = (await getPrismaForOrg(admin.organizationId)).client;
+    const membership = await orgData.projectMember.findFirst({
       where: { projectId: id, employeeId, leftAt: null, organizationId: admin.organizationId },
     });
     if (!membership) {
@@ -180,7 +181,7 @@ export async function POST(
       );
     }
 
-    const timeEntry = await db.timeEntry.create({
+    const timeEntry = await orgData.timeEntry.create({
       data: {
         projectId: id,
         employeeId,
@@ -197,7 +198,7 @@ export async function POST(
     });
 
     // Audit log
-    await db.auditLog.create({
+    await orgData.auditLog.create({
       data: {
         action: 'create',
         resource: 'time_entry',

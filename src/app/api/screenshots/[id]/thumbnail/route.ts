@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { authError, requireSessionOrg } from '@/lib/api';
+import { authError, requireSessionOrg, getPrismaForOrg } from '@/lib/api';
 import { safeServeMime } from '@/lib/screenshots/storage';
 import { getScreenshot, isNotFound } from '@/lib/storage';
 import { log, requestContext } from '@/lib/logger';
@@ -37,10 +36,11 @@ export async function GET(
       return new NextResponse('Not found', { status: 404 });
     }
     const orgId = scope.organizationId;
+    const orgData = (await getPrismaForOrg(orgId)).client;
 
     const { id } = await params;
 
-    const screenshot = await db.screenshot.findFirst({
+    const screenshot = await orgData.screenshot.findFirst({
       where: { id, organizationId: orgId },
       select: { thumbnailPath: true, mimeType: true },
     });

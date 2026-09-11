@@ -7,7 +7,6 @@ import { cn } from '@/lib/utils';
 import { OmniSightLogo, ScrambleText } from './shared';
 
 const NAV_LINKS = [
-  { href: '#product', label: 'Product' },
   { href: '#features', label: 'Features' },
   { href: '#live', label: 'Live' },
   { href: '#ai', label: 'AI' },

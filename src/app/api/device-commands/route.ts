@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
-import { requireAdminOrg } from '@/lib/api';
+import { requireAdminOrg, getPrismaForOrg } from '@/lib/api';
 import { AGENT_COMMAND_ALLOWLIST } from '@/app/api/agent/commands/route';
 import { log, requestContext } from '@/lib/logger';
 
@@ -30,6 +30,10 @@ export async function POST(req: NextRequest) {
     if (!auth.ok) {
       return NextResponse.json({ error: auth.status === 401 ? 'Unauthorized. Please sign in.' : 'Insufficient permissions' }, { status: auth.status });
     }
+    // ORG DATA BOUNDARY: AgentCommand + org-scoped AuditLog are org-owned and
+    // COPY to the org DB at cutover — resolve the org data client (platform
+    // `db` when the org never opted in).
+    const orgData = (await getPrismaForOrg(auth.organizationId)).client;
 
     const body = (await req.json().catch(() => null)) as {
       deviceId?: unknown;
@@ -83,7 +87,7 @@ export async function POST(req: NextRequest) {
     }
 
     // Device must exist in THIS org and be bound to an employee.
-    const device = await db.device.findFirst({
+    const device = await orgData.device.findFirst({
       where: { id: deviceId, organizationId: auth.organizationId },
       select: { id: true, employeeId: true, status: true },
     });
@@ -94,7 +98,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Device is not bound to an employee' }, { status: 422 });
     }
 
-    const command = await db.$transaction(async (tx) => {
+    const command = await orgData.$transaction(async (tx) => {
       const created = await tx.agentCommand.create({
         data: {
           organizationId: auth.organizationId,

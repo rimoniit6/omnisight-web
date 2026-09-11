@@ -31,6 +31,7 @@
  */
 
 import { db } from '@/lib/db';
+import { getPrismaForOrg } from '@/lib/org-db';
 import { claimJob, finishJob } from './run';
 import { getOrgSetting } from './settings';
 import { safeTimezone, localDayKey, zonedDayStart, zonedDayEnd, addDaysToKey, dayKeysBetween } from '@/lib/timezone';
@@ -95,6 +96,9 @@ export async function rebuildDaysForOrg(
   if (dayKeys.length === 0) return result;
 
   const now = options.now ?? new Date();
+  // Organization identity/timezone is platform-owned (control plane) and stays
+  // on the platform DB; every org-OWNED table below (Employee, BreakSession,
+  // Activity, WorkDaySummary) is read/written through the org's own client.
   const org = await db.organization.findUnique({
     where: { id: orgId },
     select: { id: true, timezone: true },
@@ -103,6 +107,7 @@ export async function rebuildDaysForOrg(
     result.errors.push(`org ${orgId}: not found`);
     return result;
   }
+  const orgData = (await getPrismaForOrg(orgId)).client;
   const tz = safeTimezone(org.timezone);
 
   const [workStartRaw, workEndRaw] = await Promise.all([
@@ -113,7 +118,7 @@ export async function rebuildDaysForOrg(
   const workEndMinutes = parseHHMM(workEndRaw) ?? 18 * 60;
 
   const employeeWhere = options.employeeId ? { id: options.employeeId } : {};
-  const employees = await db.employee.findMany({
+  const employees = await orgData.employee.findMany({
     where: { organizationId: orgId, ...employeeWhere },
     select: { id: true },
   });
@@ -129,7 +134,7 @@ export async function rebuildDaysForOrg(
   const windowStart = zonedDayStart(windowStartKey, tz);
   const windowEndExclusive = new Date(zonedDayEnd(windowEndKey, tz).getTime() + 1);
 
-  const breakSessions = await db.breakSession.findMany({
+  const breakSessions = await orgData.breakSession.findMany({
     where: {
       organizationId: orgId,
       ...(options.employeeId ? { employeeId: options.employeeId } : {}),
@@ -161,7 +166,7 @@ export async function rebuildDaysForOrg(
   for (const key of dayKeys) {
     const dayStart = zonedDayStart(key, tz);
     const dayEndExclusive = new Date(zonedDayEnd(key, tz).getTime() + 1);
-    const rows = await db.activity.findMany({
+    const rows = await orgData.activity.findMany({
       where: {
         employeeId: { in: employeeIds },
         timestamp: { gte: dayStart, lt: dayEndExclusive },
@@ -251,9 +256,9 @@ export async function rebuildDaysForOrg(
   // REPLACED, never accumulated.
   for (let i = 0; i < upserts.length; i += 50) {
     const chunk = upserts.slice(i, i + 50);
-    await db.$transaction(
+    await orgData.$transaction(
       chunk.map((u) =>
-        db.workDaySummary.upsert({
+        orgData.workDaySummary.upsert({
           where: {
             organizationId_employeeId_workDate: {
               organizationId: u.organizationId,

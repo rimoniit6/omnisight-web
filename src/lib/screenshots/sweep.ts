@@ -11,6 +11,7 @@
 import { promises as fs } from 'fs';
 import { join, basename } from 'path';
 import { db } from '@/lib/db';
+import { getPrismaForOrg } from '@/lib/org-db';
 import { log } from '@/lib/logger';
 import { isSupabaseStorage } from '@/lib/storage';
 
@@ -34,6 +35,7 @@ export interface OrphanSweepResult {
  */
 async function collectReferencedFilenames(chunk = 2000): Promise<Set<string>> {
   const referenced = new Set<string>();
+  // Platform rows (orgs that never cut over) — platform DB is authoritative.
   let skip = 0;
   for (;;) {
     const rows = await db.screenshot.findMany({
@@ -47,6 +49,42 @@ async function collectReferencedFilenames(chunk = 2000): Promise<Set<string>> {
     }
     if (rows.length < chunk) break;
     skip += chunk;
+  }
+
+  // Cut-over orgs: their Screenshot rows live in THEIR OWN database, but the
+  // platform local directory may still hold their objects (org cut over its DB
+  // while platform storage was local, or pre-cutover copies remain). Those
+  // files are referenced by the org's rows and must NEVER be swept as orphans
+  // — union every activated org's referenced filenames into the keep-set.
+  const activated = await db.organizationSettings.findMany({
+    where: { useOwnDb: true },
+    select: { organizationId: true },
+  });
+  for (const s of activated) {
+    let orgData: typeof db;
+    try {
+      orgData = (await getPrismaForOrg(s.organizationId)).client;
+    } catch {
+      continue; // misconfigured org — its own operations fail closed
+    }
+    try {
+      let orgSkip = 0;
+      for (;;) {
+        const rows = await orgData.screenshot.findMany({
+          select: { filePath: true, thumbnailPath: true },
+          skip: orgSkip,
+          take: chunk,
+        });
+        for (const row of rows) {
+          if (row.filePath) referenced.add(basename(row.filePath));
+          if (row.thumbnailPath) referenced.add(basename(row.thumbnailPath));
+        }
+        if (rows.length < chunk) break;
+        orgSkip += chunk;
+      }
+    } catch {
+      continue; // org DB unreachable — skip its protection set (reported via the org's own fail-closed paths)
+    }
   }
   return referenced;
 }

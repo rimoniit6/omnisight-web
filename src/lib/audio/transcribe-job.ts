@@ -1,4 +1,6 @@
+import type { PrismaClient } from '@prisma/client';
 import { db } from '@/lib/db';
+import { getPrismaForOrg } from '@/lib/org-db';
 import { log } from '@/lib/logger';
 import { getAudioSignedUrl } from '@/lib/audio/storage';
 import { MAX_AUDIO_RETRIES } from '@/lib/audio/types';
@@ -18,8 +20,11 @@ interface TranscriptionSubmitResult {
  */
 export async function submitForTranscription(
   recordingId: string,
+  data: PrismaClient = db,
 ): Promise<TranscriptionSubmitResult> {
-  const recording = await db.audioRecording.findUnique({
+  // AudioRecording is org-owned (copied at activation) — the row read and the
+  // status updates must land on the org's own client, never platform after cutover.
+  const recording = await data.audioRecording.findUnique({
     where: { id: recordingId },
     select: {
       id: true,
@@ -50,7 +55,7 @@ export async function submitForTranscription(
   }
 
   // Update status to queued
-  await db.audioRecording.update({
+  await data.audioRecording.update({
     where: { id: recordingId },
     data: { status: 'queued' },
   });
@@ -82,7 +87,7 @@ export async function submitForTranscription(
     }
 
     // Update status to transcribing
-    await db.audioRecording.update({
+    await data.audioRecording.update({
       where: { id: recordingId },
       data: { status: 'transcribing' },
     });
@@ -109,25 +114,35 @@ export async function processPendingTranscriptions(limit = 5): Promise<{
 }> {
   const result = { processed: 0, submitted: 0, failed: 0, errors: [] as string[] };
 
-  // Find recordings that need transcription (uploaded or queued, not exceeded retries)
-  const pending = await db.audioRecording.findMany({
-    where: {
-      status: { in: ['uploaded', 'queued'] },
-      retryCount: { lt: MAX_AUDIO_RETRIES },
-    },
-    orderBy: { createdAt: 'asc' },
-    take: limit,
-    select: { id: true },
-  });
+  // AudioRecording rows are org-owned and copied at activation — scan each
+  // ACTIVE org's OWN database (a global platform scan would miss post-cutover
+  // rows entirely), oldest-first, bounded per org.
+  const orgs = await db.organization.findMany({ where: { status: 'active' }, select: { id: true } });
+  for (const org of orgs) {
+    const orgData = (await getPrismaForOrg(org.id)).client;
+    // Org filter: on a shared platform client (org not yet activated) this
+    // restricts the scan to THIS org's rows — otherwise every iteration would
+    // re-submit the same recordings once per org pass.
+    const pending = await orgData.audioRecording.findMany({
+      where: {
+        organizationId: org.id,
+        status: { in: ['uploaded', 'queued'] },
+        retryCount: { lt: MAX_AUDIO_RETRIES },
+      },
+      orderBy: { createdAt: 'asc' },
+      take: limit,
+      select: { id: true },
+    });
 
-  for (const rec of pending) {
-    result.processed++;
-    const submitResult = await submitForTranscription(rec.id);
-    if (submitResult.success) {
-      result.submitted++;
-    } else {
-      result.failed++;
-      result.errors.push(`${rec.id}: ${submitResult.error}`);
+    for (const rec of pending) {
+      result.processed++;
+      const submitResult = await submitForTranscription(rec.id, orgData);
+      if (submitResult.success) {
+        result.submitted++;
+      } else {
+        result.failed++;
+        result.errors.push(`${rec.id}: ${submitResult.error}`);
+      }
     }
   }
 

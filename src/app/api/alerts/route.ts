@@ -1,7 +1,6 @@
 'use server';
 import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { authError, requireSessionOrg, requireAdminOrg, validatePagination } from '@/lib/api';
+import { authError, requireSessionOrg, requireAdminOrg, validatePagination, getPrismaForOrg } from '@/lib/api';
 import { isAlertStatus, isAlertSeverity } from '@/lib/notifications/constants';
 import { log, requestContext } from '@/lib/logger';
 
@@ -14,6 +13,7 @@ export async function GET(req: NextRequest) {
     if (!scope.ok) return authError(scope);
     if (!scope.organizationId) return NextResponse.json({ data: [], total: 0, page: 1, pageSize: 50, totalPages: 0, stats: null });
     const orgId = scope.organizationId;
+    const orgData = (await getPrismaForOrg(orgId)).client;
 
     const { searchParams } = new URL(req.url);
 
@@ -49,13 +49,13 @@ export async function GET(req: NextRequest) {
     }
 
     const [alerts, total] = await Promise.all([
-      db.alert.findMany({
+      orgData.alert.findMany({
         where,
         orderBy: { createdAt: 'desc' },
         skip,
         take: pageSize,
       }),
-      db.alert.count({ where }),
+      orgData.alert.count({ where }),
     ]);
 
     const totalPages = Math.ceil(total / pageSize);
@@ -63,12 +63,12 @@ export async function GET(req: NextRequest) {
     // DB-backed statistics (N-3): counts + severity distribution computed by
     // the database, never by loading the whole table into the client.
     const [statusAgg, severityAgg] = await Promise.all([
-      db.alert.groupBy({
+      orgData.alert.groupBy({
         by: ['status'],
         where: { organizationId: orgId },
         _count: { status: true },
       }),
-      db.alert.groupBy({
+      orgData.alert.groupBy({
         by: ['severity'],
         where: { organizationId: orgId },
         _count: { severity: true },
@@ -97,6 +97,7 @@ export async function POST(req: NextRequest) {
   try {
     const admin = await requireAdminOrg(req);
     if (!admin.ok) return authError(admin);
+    const orgData = (await getPrismaForOrg(admin.organizationId)).client;
 
     let body: Record<string, unknown>;
     try {
@@ -125,7 +126,7 @@ export async function POST(req: NextRequest) {
     const alertType = type || 'system';
     const alertSeverity = isAlertSeverity(severity) ? severity : 'warning';
 
-    const alert = await db.alert.create({
+    const alert = await orgData.alert.create({
       data: {
         title,
         description,
@@ -139,7 +140,7 @@ export async function POST(req: NextRequest) {
       },
     });
 
-    await db.auditLog.create({
+    await orgData.auditLog.create({
       data: {
         action: 'create',
         resource: 'alert',
@@ -163,6 +164,7 @@ export async function PUT(req: NextRequest) {
     // (cross-org alert mutation is rejected with 404 concealment).
     const admin = await requireAdminOrg(req);
     if (!admin.ok) return authError(admin);
+    const orgData = (await getPrismaForOrg(admin.organizationId)).client;
 
     let body: Record<string, unknown>;
     try {
@@ -192,13 +194,13 @@ export async function PUT(req: NextRequest) {
 
     // Fetch current state for the audit (previous → new) and to enforce
     // org-scoped 404 concealment.
-    const existing = await db.alert.findFirst({
+    const existing = await orgData.alert.findFirst({
       where: { id, organizationId: admin.organizationId },
       select: { id: true, status: true, severity: true },
     });
     if (!existing) return NextResponse.json({ error: 'Alert not found' }, { status: 404 });
 
-    const alert = await db.alert.update({
+    const alert = await orgData.alert.update({
       where: { id },
       data,
     });
@@ -208,7 +210,7 @@ export async function PUT(req: NextRequest) {
     if (data.status && data.status !== existing.status) changed.push(`status: ${existing.status} → ${data.status}`);
     if (data.severity && data.severity !== existing.severity) changed.push(`severity: ${existing.severity} → ${data.severity}`);
     if (changed.length > 0) {
-      await db.auditLog.create({
+      await orgData.auditLog.create({
         data: {
           action: 'update',
           resource: 'alert',

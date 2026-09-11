@@ -1,7 +1,10 @@
+import type { PrismaClient } from '@prisma/client';
 import { db } from '@/lib/db';
+import { getPrismaForOrg } from '@/lib/org-db';
 import { resolveRetentionDays, retentionCutoff } from './settings';
 import { sweepOrphanScreenshotFiles } from '@/lib/screenshots/sweep';
 import { removeArtifactByPath } from '@/lib/storage';
+import { deleteAudio } from '@/lib/audio/storage';
 import { BREAK_TITLES } from '@/lib/breaks/service';
 import { localDayKey } from '@/lib/timezone';
 
@@ -151,23 +154,33 @@ async function purgeFileRows(
  * CONCURRENCY/IDEMPOTENCY: every predicate is a pure "older than cutoff"
  * query, so concurrent runs and repeated runs are safe — a second run finds
  * nothing already purged and deletes nothing twice.
+ *
+ * ORG DATA BOUNDARY: every table touched here is org-owned and COPYs to the
+ * org's DB at cutover (Screenshot, Activity, ActivityBatchReceipt,
+ * WorkDaySummary, BreakSession, Report, AiInsight, AiUsage, SentimentRecord,
+ * AuditLog, ConsentLog, UsbEvent, PolicyViolation, Notification, Alert,
+ * AudioRecording). `data` is the org data client (for an activated org, its
+ * own DB — retention must operate on the AUTHORITATIVE copy). Organization
+ * (timezone) and OrganizationSetting (retention days) stay on the platform
+ * db — they are control-plane tables and are never copied.
  */
 export async function runRetentionForOrg(
   orgId: string,
   now = new Date(),
-  limit = 500
+  limit = 500,
+  data: PrismaClient = db
 ): Promise<RetentionResult> {
   const result: RetentionResult = { ...EMPTY };
 
   const shotDays = await resolveRetentionDays(orgId, 'screenshot_retention_days');
   if (shotDays > 0) {
-    const stale = await db.screenshot.findMany({
+    const stale = await data.screenshot.findMany({
       where: { organizationId: orgId, capturedAt: { lt: retentionCutoff(shotDays, now) } },
       take: limit,
       select: { id: true, filePath: true, thumbnailPath: true },
     });
     if (stale.length > 0) {
-      result.screenshots = await purgeFileRows(orgId, stale, result, 'screenshot', 'screenshot', (ids) => db.screenshot.deleteMany({ where: { id: { in: ids } } }));
+      result.screenshots = await purgeFileRows(orgId, stale, result, 'screenshot', 'screenshot', (ids) => data.screenshot.deleteMany({ where: { id: { in: ids } } }));
     }
   }
 
@@ -182,7 +195,7 @@ export async function runRetentionForOrg(
     // excludes NULL titles (NULL NOT IN (...) evaluates to unknown/false), so
     // a plain `title: { notIn: [...] }` would silently skip every untitled
     // activity row. NULL titles are ordinary telemetry and must be purged.
-    const del = await db.activity.deleteMany({
+    const del = await data.activity.deleteMany({
       where: {
         timestamp: { lt: retentionCutoff(actDays, now) },
         employee: { organizationId: orgId },
@@ -195,7 +208,7 @@ export async function runRetentionForOrg(
     // once a receipt is older than the activity retention cutoff, any
     // legitimate retry/replay window has long passed, so it can be dropped.
     // Scoped by organizationId directly (receipts carry their own org FK).
-    const receiptDel = await db.activityBatchReceipt.deleteMany({
+    const receiptDel = await data.activityBatchReceipt.deleteMany({
       where: { organizationId: orgId, receivedAt: { lt: retentionCutoff(actDays, now) } },
     });
     result.activityBatchReceipts = receiptDel.count;
@@ -210,7 +223,7 @@ export async function runRetentionForOrg(
     const cutoff = retentionCutoff(actDays, now);
     const orgTz = await db.organization.findUnique({ where: { id: orgId }, select: { timezone: true } });
     const cutoffKey = localDayKey(cutoff, orgTz?.timezone ?? 'UTC');
-    const summaryDel = await db.workDaySummary.deleteMany({
+    const summaryDel = await data.workDaySummary.deleteMany({
       where: { organizationId: orgId, workDate: { lt: cutoffKey } },
     });
     result.workDaySummaries = summaryDel.count;
@@ -225,7 +238,7 @@ export async function runRetentionForOrg(
     let purged = 0;
     let mirrorPurged = 0;
     for (;;) {
-      const stale = await db.breakSession.findMany({
+      const stale = await data.breakSession.findMany({
         where: { organizationId: orgId, endedAt: { not: null, lt: cutoff } },
         take: limit,
         select: { id: true, employeeId: true },
@@ -234,7 +247,7 @@ export async function runRetentionForOrg(
       const ids = stale.map((s) => s.id);
       const employeeIds = [...new Set(stale.map((s) => s.employeeId))];
       // Legacy mirror rows for the SAME employees, older than the same cutoff.
-      const mirror = await db.activity.deleteMany({
+      const mirror = await data.activity.deleteMany({
         where: {
           employeeId: { in: employeeIds },
           timestamp: { lt: cutoff },
@@ -242,7 +255,7 @@ export async function runRetentionForOrg(
         },
       });
       mirrorPurged += mirror.count;
-      const del = await db.breakSession.deleteMany({ where: { id: { in: ids } } });
+      const del = await data.breakSession.deleteMany({ where: { id: { in: ids } } });
       purged += del.count;
       if (stale.length < limit) break;
     }
@@ -252,26 +265,26 @@ export async function runRetentionForOrg(
 
   const repDays = await resolveRetentionDays(orgId, 'report_retention_days');
   if (repDays > 0) {
-    const stale = await db.report.findMany({
+    const stale = await data.report.findMany({
       where: { organizationId: orgId, createdAt: { lt: retentionCutoff(repDays, now) } },
       take: limit,
       select: { id: true, filePath: true },
     });
     if (stale.length > 0) {
-      result.reports = await purgeFileRows(orgId, stale, result, 'report', 'legacy', (ids) => db.report.deleteMany({ where: { id: { in: ids } } }));
+      result.reports = await purgeFileRows(orgId, stale, result, 'report', 'legacy', (ids) => data.report.deleteMany({ where: { id: { in: ids } } }));
     }
   }
 
   const aiDays = await resolveRetentionDays(orgId, 'ai_insight_retention_days');
   if (aiDays > 0) {
-    const del = await db.aiInsight.deleteMany({
+    const del = await data.aiInsight.deleteMany({
       where: { organizationId: orgId, createdAt: { lt: retentionCutoff(aiDays, now) } },
     });
     result.aiInsights = del.count;
     // Phase 5: per-call AI usage metering rows follow the same window (0 = keep
     // forever, consistent with the other AI-derived records). Metering rows are
     // strictly org-scoped and carry no secrets/payloads.
-    const usageDel = await db.aiUsage.deleteMany({
+    const usageDel = await data.aiUsage.deleteMany({
       where: { organizationId: orgId, createdAt: { lt: retentionCutoff(aiDays, now) } },
     });
     result.aiUsage = usageDel.count;
@@ -280,7 +293,7 @@ export async function runRetentionForOrg(
   // Sentiment records are AI-derived workforce insights: they follow the same
   // ai_insight_retention_days window as other AI insights (0 = keep forever).
   if (aiDays > 0) {
-    const del = await db.sentimentRecord.deleteMany({
+    const del = await data.sentimentRecord.deleteMany({
       where: { organizationId: orgId, createdAt: { lt: retentionCutoff(aiDays, now) } },
     });
     result.sentimentRecords = del.count;
@@ -289,7 +302,7 @@ export async function runRetentionForOrg(
   // Compliance records: anonymize, never delete.
   const auditDays = await resolveRetentionDays(orgId, 'audit_log_retention_days');
   if (auditDays > 0) {
-    const upd = await db.auditLog.updateMany({
+    const upd = await data.auditLog.updateMany({
       where: { organizationId: orgId, createdAt: { lt: retentionCutoff(auditDays, now) } },
       data: { userId: null, ipAddress: null },
     });
@@ -298,7 +311,7 @@ export async function runRetentionForOrg(
 
   const consentLogDays = await resolveRetentionDays(orgId, 'consent_log_retention_days');
   if (consentLogDays > 0) {
-    const upd = await db.consentLog.updateMany({
+    const upd = await data.consentLog.updateMany({
       where: { organizationId: orgId, createdAt: { lt: retentionCutoff(consentLogDays, now) } },
       data: { anonymizedAt: now, performedBy: null, ipAddress: null, description: '[redacted per retention policy]' },
     });
@@ -310,7 +323,7 @@ export async function runRetentionForOrg(
   // every other retention step — idempotent and concurrency-safe.
   const usbDays = await resolveRetentionDays(orgId, 'usb_event_retention_days');
   if (usbDays > 0) {
-    const del = await db.usbEvent.deleteMany({
+    const del = await data.usbEvent.deleteMany({
       where: { organizationId: orgId, createdAt: { lt: retentionCutoff(usbDays, now) } },
     });
     result.usbEvents = del.count;
@@ -320,7 +333,7 @@ export async function runRetentionForOrg(
   // (default 0 = keep forever — security-relevant records, admins opt in).
   const violationDays = await resolveRetentionDays(orgId, 'policy_violation_retention_days');
   if (violationDays > 0) {
-    const del = await db.policyViolation.deleteMany({
+    const del = await data.policyViolation.deleteMany({
       where: { organizationId: orgId, createdAt: { lt: retentionCutoff(violationDays, now) } },
     });
     result.policyViolations = del.count;
@@ -336,7 +349,7 @@ export async function runRetentionForOrg(
     // Repeated bounded batches so one org's retention never issues a single
     // unbounded delete.
     for (;;) {
-      const stale = await db.notification.findMany({
+      const stale = await data.notification.findMany({
         where: {
           organizationId: orgId,
           status: { in: ['read', 'archived'] },
@@ -346,7 +359,7 @@ export async function runRetentionForOrg(
         select: { id: true },
       });
       if (stale.length === 0) break;
-      const del = await db.notification.deleteMany({ where: { id: { in: stale.map((s) => s.id) } } });
+      const del = await data.notification.deleteMany({ where: { id: { in: stale.map((s) => s.id) } } });
       purged += del.count;
       if (stale.length < limit) break;
     }
@@ -361,7 +374,7 @@ export async function runRetentionForOrg(
     const cutoff = retentionCutoff(alertDays, now);
     let purged = 0;
     for (;;) {
-      const stale = await db.alert.findMany({
+      const stale = await data.alert.findMany({
         where: {
           organizationId: orgId,
           status: { in: ['resolved', 'archived'] },
@@ -371,7 +384,7 @@ export async function runRetentionForOrg(
         select: { id: true },
       });
       if (stale.length === 0) break;
-      const del = await db.alert.deleteMany({ where: { id: { in: stale.map((s) => s.id) } } });
+      const del = await data.alert.deleteMany({ where: { id: { in: stale.map((s) => s.id) } } });
       purged += del.count;
       if (stale.length < limit) break;
     }
@@ -385,7 +398,7 @@ export async function runRetentionForOrg(
   // before the DB row — a file that cannot be deleted keeps its row.
   const audioDays = await resolveRetentionDays(orgId, 'screenshot_retention_days');
   if (audioDays > 0) {
-    const staleAudio = await db.audioRecording.findMany({
+    const staleAudio = await data.audioRecording.findMany({
       where: {
         organizationId: orgId,
         status: { in: ['completed', 'failed'] },
@@ -402,7 +415,9 @@ export async function runRetentionForOrg(
           continue;
         }
         try {
-          await removeArtifactByPath(orgId, row.filePath, 'legacy');
+          // Audio objects are org-owned — deleteAudio resolves the org's own
+          // storage driver (getOrgStorage), never the platform pool after cutover.
+          await deleteAudio(orgId, row.filePath);
           removableIds.push(row.id);
         } catch {
           result.audioFileErrors.push(`audio ${row.id} (${row.filePath})`);
@@ -410,7 +425,7 @@ export async function runRetentionForOrg(
       }
       if (removableIds.length > 0) {
         // Transcriptions are cascade-deleted with the recording.
-        const del = await db.audioRecording.deleteMany({ where: { id: { in: removableIds } } });
+        const del = await data.audioRecording.deleteMany({ where: { id: { in: removableIds } } });
         result.audioRecordings = del.count;
       }
     }
@@ -436,7 +451,13 @@ export async function runRetention(limit = 500): Promise<RetentionResult> {
   const total: RetentionResult = { ...EMPTY };
   for (const org of orgs) {
     try {
-      mergeInto(total, await runRetentionForOrg(org.id, new Date(), limit));
+      // ORG DATA BOUNDARY: resolve the org's data client once and route every
+      // org-scoped purge through it. Activated orgs operate on their own DB;
+      // platform orgs (useOwnDb=false) resolve to the shared platform db with
+      // no extra connection. A misconfigured own-DB org throws here and is
+      // isolated per-org (reported in result.errors, others still processed).
+      const { client: orgData } = await getPrismaForOrg(org.id);
+      mergeInto(total, await runRetentionForOrg(org.id, new Date(), limit, orgData));
     } catch (error) {
       total.errors.push(`org ${org.id}: ${String(error)}`);
       console.error(`[retention] organization ${org.id} failed, continuing:`, error);

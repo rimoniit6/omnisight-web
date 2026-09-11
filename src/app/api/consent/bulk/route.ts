@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
-import { getSessionOrg, authenticateRequest } from '@/lib/api';
+import { getPrismaForOrg, getSessionOrg, authenticateRequest } from '@/lib/api';
 import { hasRolePermission } from '@/lib/auth';
 import { CONSENT_TYPES, applyConsentTransition } from '@/lib/consent';
 import type { ConsentStatus, ConsentType } from '@/lib/consent';
@@ -37,7 +37,10 @@ export async function POST(req: NextRequest) {
     if (!org) return NextResponse.json({ error: 'No organization found' }, { status: 404 });
 
     // Tenant isolation: the employee must belong to the caller's organization.
-    const emp = await db.employee.findFirst({
+    // Employee/Consent/ConsentLog/AuditLog are org-owned (copied at activation)
+    // — resolve the org client for the whole mutation.
+    const orgData = (await getPrismaForOrg(org.id)).client;
+    const emp = await orgData.employee.findFirst({
       where: { id: employeeId, organizationId: org.id },
       select: { id: true, firstName: true, lastName: true },
     });
@@ -64,7 +67,7 @@ export async function POST(req: NextRequest) {
 
     const newStatus: ConsentStatus = action.startsWith('grant') ? 'granted' : 'revoked';
 
-    const updated = await db.$transaction(async (tx) => {
+    const updated = await orgData.$transaction(async (tx) => {
       let count = 0;
 
       for (const type of typedTypes) {
@@ -115,7 +118,7 @@ export async function POST(req: NextRequest) {
     // S-06: a bulk revoke that touches webcam_access consent ends the
     // employee's active webcam sessions and drops buffered frames immediately.
     if (newStatus === 'revoked' && typedTypes.includes('webcam_access')) {
-      await endWebcamSessionsOnRevoke(emp.id);
+      await endWebcamSessionsOnRevoke(emp.id, orgData);
     }
 
     return NextResponse.json({ success: true, updated, action: newStatus, types: types.length });

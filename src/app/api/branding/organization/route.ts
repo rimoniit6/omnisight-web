@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { authError, requireAdminOrg, parseJsonBody, BodyParseError, authenticateRequest } from '@/lib/api';
+import { authError, getPrismaForOrg, requireAdminOrg, parseJsonBody, BodyParseError, authenticateRequest } from '@/lib/api';
 import { invalidateBrandingCache, isValidBrandName, isValidBrowserTitle, isValidHexColor, isValidTagline, getRawOrganizationBranding, validateSvgCode } from '@/lib/branding';
 import { log, requestContext } from '@/lib/logger';
 
@@ -143,11 +142,12 @@ export async function PATCH(req: NextRequest) {
     }
 
     // Upsert the organization branding row
-    const existing = await db.organizationBranding.findUnique({
+    const orgData = (await getPrismaForOrg(orgId)).client;
+    const existing = await orgData.organizationBranding.findUnique({
       where: { organizationId: orgId },
     });
 
-    const { branding } = await db.$transaction(async (tx) => {
+    const { branding } = await orgData.$transaction(async (tx) => {
       let result;
       if (existing) {
         result = await tx.organizationBranding.update({

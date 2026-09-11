@@ -1,7 +1,7 @@
 'use server';
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
-import { authError, requireSessionOrg } from '@/lib/api';
+import { authError, getPrismaForOrg, requireSessionOrg } from '@/lib/api';
 import { effectiveDeviceStatus } from '@/lib/device-status';
 import { lastNDayKeys } from '@/lib/timezone';
 import {
@@ -49,6 +49,7 @@ export async function GET(req: NextRequest) {
     log.info('dashboard.auth:success', { durationMs: Date.now() - startTime, ...ctx });
 
     const orgId = scope.organizationId;
+    const orgData = (await getPrismaForOrg(orgId)).client;
 
     // Organization timezone — single source of truth for the local-day
     // productivity buckets (S-6). Defaults to UTC for a missing row.
@@ -75,7 +76,7 @@ export async function GET(req: NextRequest) {
     // and it agrees with the presence API / realtime events.
     log.info('dashboard.devices:start', { ...ctx });
     const devicesStart = Date.now();
-    const devices = await db.device.findMany({
+    const devices = await orgData.device.findMany({
       where: { organizationId: orgId },
       select: { status: true, lastHeartbeat: true },
     });
@@ -103,12 +104,12 @@ export async function GET(req: NextRequest) {
     const queriesStart = Date.now();
     const [totalEmployees, activeAlerts, totalDevices, departmentBreakdown] =
       await Promise.all([
-        db.employee.count({ where: { organizationId: orgId, status: 'active' } }),
-        db.alert.count({
+        orgData.employee.count({ where: { organizationId: orgId, status: 'active' } }),
+        orgData.alert.count({
           where: { organizationId: orgId, status: { in: ['pending', 'acknowledged'] } },
         }),
-        db.device.count({ where: { organizationId: orgId } }),
-        db.department.findMany({
+        orgData.device.count({ where: { organizationId: orgId } }),
+        orgData.department.findMany({
           where: { organizationId: orgId },
           include: { _count: { select: { employees: true } } },
         }),
@@ -176,7 +177,7 @@ export async function GET(req: NextRequest) {
       productiveTime: number;
     }> = [];
     if (topEmployeeIds.length > 0) {
-      const topRows = await db.employee.findMany({
+      const topRows = await orgData.employee.findMany({
         where: { id: { in: topEmployeeIds } },
         select: {
           id: true,
@@ -233,7 +234,7 @@ export async function GET(req: NextRequest) {
     log.info('dashboard.recent:start', { ...ctx });
     const recentStart = Date.now();
     const recentActivities = excludeInternalAgentActivities(
-      await db.activity.findMany({
+      await orgData.activity.findMany({
         where: {
           employee: { organizationId: orgId },
           ...NON_INTERNAL_AGENT_ACTIVITY_FILTER,

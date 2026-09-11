@@ -1,11 +1,17 @@
 'use client';
 
+import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { motion, useReducedMotion } from 'framer-motion';
 import { ArrowRight, Check, Sparkles } from 'lucide-react';
 import { Reveal, SectionHeading, GlowButton, useLandingContent } from './shared';
 
 // ─── Pricing — driven by the live plan catalog (same /api/plans contract ───
+// V1: renders per-deployment-mode pricing from the SAME server resolver
+// pipeline that the purchase flow uses (rows come from the PlanPricing
+// configuration via /api/plans; the client never computes prices). Monthly/
+// yearly toggle, Managed device terms, Customer Database unlimited, and the
+// winning offer are all database-driven.
 interface PublicPlan {
   id: string;
   name: string;
@@ -16,6 +22,18 @@ interface PublicPlan {
   retentionDays: number;
   features: string[];
   isSelfHosted: boolean;
+  // V1 additive fields (absent when no pricing config exists yet)
+  pricing?: Array<{
+    deploymentMode: 'MANAGED' | 'CUSTOMER_DB';
+    billingPeriod: 'MONTHLY' | 'YEARLY';
+    basePrice: number;
+    currency: string;
+    includedDevices: number | null;
+    additionalDevicePrice: number | null;
+    unlimitedDevices: boolean;
+  }>;
+  offerName?: string | null;
+  offerIsFree?: boolean;
 }
 
 const CURRENCY_SYMBOL: Record<string, string> = { BDT: '৳', USD: '$', EUR: '€' };
@@ -31,6 +49,7 @@ export function PricingSection() {
     staleTime: 5 * 60 * 1000,
   });
 
+  const [period, setPeriod] = useState<'MONTHLY' | 'YEARLY'>('MONTHLY');
   const plans = (data?.plans ?? []).filter((p) => !p.isSelfHosted).slice(0, 3);
 
   return (
@@ -42,10 +61,29 @@ export function PricingSection() {
         subtitle="Every plan starts with a conversation. Select a package, talk to OmniSight, and our team handles provisioning — no online checkout."
       />
 
+      <div className="mx-auto mb-10 flex justify-center">
+        <div className="tech-font inline-flex rounded-full border border-white/10 bg-white/5 p-1">
+          {(['MONTHLY', 'YEARLY'] as const).map((p) => (
+            <button
+              key={p}
+              onClick={() => setPeriod(p)}
+              className={`rounded-full px-4 py-1.5 text-[11px] font-bold uppercase tracking-[0.14em] transition-colors ${
+                period === p ? 'bg-cyan-300/20 text-cyan-200' : 'text-white/50 hover:text-white/80'
+              }`}
+            >
+              {p === 'MONTHLY' ? 'Monthly' : 'Yearly'}
+            </button>
+          ))}
+        </div>
+      </div>
+
       <div className="mt-14 grid gap-5 md:grid-cols-3">
         {plans.map((plan, i) => {
           const symbol = CURRENCY_SYMBOL[plan.currency] ?? `${plan.currency} `;
           const isFree = plan.priceMonthly === 0;
+          // V1 pricing rows for this plan + period (server-resolved values).
+          const managed = plan.pricing?.find((r) => r.deploymentMode === 'MANAGED' && r.billingPeriod === period);
+          const customerDb = plan.pricing?.find((r) => r.deploymentMode === 'CUSTOMER_DB' && r.billingPeriod === period);
           const features =
             plan.features.length > 0
               ? plan.features
@@ -65,11 +103,28 @@ export function PricingSection() {
                 <p className="tech-font text-[12px] font-bold uppercase tracking-[0.22em] text-cyan-300">
                   {plan.name}
                 </p>
+                {plan.offerName && (
+                  <span className="mt-2 inline-flex w-fit items-center rounded-full border border-emerald-300/40 bg-emerald-300/10 px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-[0.12em] text-emerald-300">
+                    {plan.offerIsFree ? 'Free offer' : `Offer: ${plan.offerName}`}
+                  </span>
+                )}
                 <p className="mt-4 text-4xl font-semibold tracking-tight text-white">
                   {symbol}
-                  {plan.priceMonthly.toLocaleString()}
+                  {(managed?.basePrice ?? plan.priceMonthly).toLocaleString()}
                   <span className="ml-1 text-sm font-normal text-white/40">/ month</span>
                 </p>
+                <p className="mt-1 text-[11.5px] text-white/40">
+                  OmniSight Managed · {period === 'YEARLY' ? 'billed yearly' : 'billed monthly'}
+                  {managed && !managed.unlimitedDevices && managed.includedDevices != null
+                    ? ` · ${managed.includedDevices} devices included${managed.additionalDevicePrice ? ` · +${symbol}${managed.additionalDevicePrice}/extra device` : ''}`
+                    : ''}
+                </p>
+                {customerDb && (
+                  <p className="mt-1 text-[11.5px] text-white/40">
+                    Customer Database: {symbol}
+                    {customerDb.basePrice.toLocaleString()}/{period === 'YEARLY' ? 'yr' : 'mo'} · unlimited devices
+                  </p>
+                )}
                 <p className="mt-2 min-h-[40px] text-[13px] leading-relaxed text-white/50">
                   {plan.description || 'Scoped for your organization’s needs.'}
                 </p>
@@ -82,8 +137,8 @@ export function PricingSection() {
                   ))}
                 </ul>
                 <div className="mt-6">
-                  <GlowButton href="/contact" variant={plan.name === 'Pro' ? 'primary' : 'outline'} className="w-full">
-                    {isFree ? 'Get Started' : 'Talk to OmniSight'}
+                  <GlowButton href={`/checkout?planId=${plan.id}`} variant={plan.name === 'Pro' ? 'primary' : 'outline'} className="w-full">
+                    {isFree ? 'Get Started' : 'Request Pricing'}
                   </GlowButton>
                 </div>
               </motion.div>

@@ -51,6 +51,7 @@ interface MigrationView {
 const STATUS_META: Record<string, { label: string; className: string; active: boolean }> = {
   queued: { label: 'Queued', className: 'bg-blue-500/15 text-blue-600', active: true },
   migrating: { label: 'Migrating…', className: 'bg-violet-500/15 text-violet-600', active: true },
+  reconciling: { label: 'Synchronizing…', className: 'bg-violet-500/15 text-violet-600', active: true },
   verifying: { label: 'Verifying…', className: 'bg-amber-500/15 text-amber-600', active: true },
   ready_to_activate: { label: 'Ready to activate', className: 'bg-emerald-500/15 text-emerald-600', active: false },
   activated: { label: 'Completed', className: 'bg-emerald-500/15 text-emerald-600', active: false },
@@ -114,7 +115,7 @@ export function MigrationStatusCard({
     refetchInterval: (query) => {
       const status = query.state.data?.migration?.status;
       // Poll fast while real work is in flight; idle otherwise.
-      return status === 'migrating' || status === 'verifying' || status === 'queued' ? 4000 : 30000;
+      return status === 'migrating' || status === 'reconciling' || status === 'verifying' || status === 'queued' ? 4000 : 30000;
     },
     refetchIntervalInBackground: false,
   });
@@ -213,7 +214,7 @@ export function MigrationStatusCard({
   const overallPct =
     migration.kind === 'DATABASE' ? migration.recordsPct : migration.objectsPct;
   const inFlight =
-    migration.status === 'migrating' || migration.status === 'verifying' || migration.status === 'queued';
+    migration.status === 'migrating' || migration.status === 'reconciling' || migration.status === 'verifying' || migration.status === 'queued';
 
   // State-machine consistency guard — mirrors the backend invariant, so the
   // card can never render "migrated successfully / verified / ready at 99%".
@@ -269,7 +270,7 @@ export function MigrationStatusCard({
           </span>
         </div>
         <ProgressBar pct={migration.recordsPct ?? 0} />
-        {migration.currentTable && (migration.status === 'migrating' || migration.status === 'verifying') && (
+        {migration.currentTable && (migration.status === 'migrating' || migration.status === 'reconciling' || migration.status === 'verifying') && (
           <p className="text-xs text-muted-foreground">Copying: {migration.currentTable}</p>
         )}
         {migration.tableProgress && Object.keys(migration.tableProgress).length > 0 && (
@@ -329,8 +330,8 @@ export function MigrationStatusCard({
           <li className={`flex items-center gap-1.5 ${migration.status !== 'queued' ? 'text-emerald-700' : 'text-muted-foreground'}`}>
             <CheckCircle2 className="h-3.5 w-3.5" /> Connection
           </li>
-          <li className={`flex items-center gap-1.5 ${migration.status === 'migrating' || migration.status === 'ready_to_activate' || migration.status === 'activated' ? 'text-foreground' : migration.status === 'verifying' ? 'text-emerald-700' : 'text-muted-foreground'}`}>
-            {migration.status === 'migrating' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Clock className="h-3.5 w-3.5" />} Transferring
+          <li className={`flex items-center gap-1.5 ${migration.status === 'migrating' || migration.status === 'reconciling' || migration.status === 'ready_to_activate' || migration.status === 'activated' ? 'text-foreground' : migration.status === 'verifying' ? 'text-emerald-700' : 'text-muted-foreground'}`}>
+            {migration.status === 'migrating' || migration.status === 'reconciling' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Clock className="h-3.5 w-3.5" />} {migration.status === 'reconciling' ? 'Synchronizing' : 'Transferring'}
           </li>
           <li className={`flex items-center gap-1.5 ${migration.status === 'verifying' ? 'text-foreground' : ['ready_to_activate', 'activated'].includes(migration.status) ? 'text-emerald-700' : 'text-muted-foreground'}`}>
             {migration.status === 'verifying' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Clock className="h-3.5 w-3.5" />} Verifying
@@ -391,16 +392,18 @@ export function MigrationStatusCard({
             </div>
           </div>
         )}
-        {(migration.status === 'migrating' || migration.status === 'verifying') && (
+        {(migration.status === 'migrating' || migration.status === 'reconciling' || migration.status === 'verifying') && (
           <div className="flex items-center gap-2 text-xs text-muted-foreground">
             {migration.status === 'verifying' ? <Clock className="h-3.5 w-3.5" /> : <Loader2 className="h-3.5 w-3.5 animate-spin" />}
-            {migration.status === 'verifying'
-              ? migration.kind === 'STORAGE'
-                ? 'Verifying the copied organization files…'
-                : 'Verifying the copied organization data…'
-              : migration.kind === 'STORAGE'
-                ? 'Copying your organization files…'
-                : 'Copying your organization data…'}
+            {migration.status === 'reconciling'
+              ? 'Synchronizing new data that arrived during the transfer…'
+              : migration.status === 'verifying'
+                ? migration.kind === 'STORAGE'
+                  ? 'Verifying the copied organization files…'
+                  : 'Verifying the copied organization data…'
+                : migration.kind === 'STORAGE'
+                  ? 'Copying your organization files…'
+                  : 'Copying your organization data…'}
           </div>
         )}
         {migration.status === 'queued' && (

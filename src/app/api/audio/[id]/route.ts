@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { requireAdminOrg, authError } from '@/lib/api';
+import { requireAdminOrg, authError, getPrismaForOrg } from '@/lib/api';
 import { log, requestContext } from '@/lib/logger';
 import { deleteAudio, audioKeyFromPath } from '@/lib/audio/storage';
 
@@ -12,9 +11,10 @@ export async function GET(
   try {
     const admin = await requireAdminOrg(request);
     if (!admin.ok) return authError(admin);
+    const orgData = (await getPrismaForOrg(admin.organizationId)).client;
 
     const { id } = await params;
-    const recording = await db.audioRecording.findFirst({
+    const recording = await orgData.audioRecording.findFirst({
       where: { id, organizationId: admin.organizationId },
       include: {
         employee: {
@@ -44,9 +44,10 @@ export async function DELETE(
   try {
     const admin = await requireAdminOrg(request);
     if (!admin.ok) return authError(admin);
+    const orgData = (await getPrismaForOrg(admin.organizationId)).client;
 
     const { id } = await params;
-    const recording = await db.audioRecording.findFirst({
+    const recording = await orgData.audioRecording.findFirst({
       where: { id, organizationId: admin.organizationId },
     });
 
@@ -64,7 +65,7 @@ export async function DELETE(
     }
 
     // Delete DB records atomically (transcription is cascade-deleted with recording)
-    await db.$transaction(async (tx) => {
+    await orgData.$transaction(async (tx) => {
       await tx.audioRecording.delete({ where: { id } });
       await tx.auditLog.create({
         data: {

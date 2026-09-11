@@ -31,6 +31,10 @@ export async function POST(req: NextRequest) {
     }
     const employee = authResult.employee;
     const deviceId = authResult.deviceId;
+    // ORG DATA BOUNDARY: AgentCommand + WebcamSession are org-owned and COPY
+    // to the org DB at cutover — route reads/writes through the org data
+    // client resolved by the authenticated token.
+    const orgData = authResult.orgData ?? db;
 
     const body = (await req.json().catch(() => null)) as { sessionId?: unknown; commandId?: unknown } | null;
     if (!body || typeof body !== 'object') {
@@ -46,7 +50,7 @@ export async function POST(req: NextRequest) {
     }
 
     // The initiating command must be THIS device's allowlisted webcam.start.
-    const command = await db.agentCommand.findUnique({ where: { id: commandId } });
+    const command = await orgData.agentCommand.findUnique({ where: { id: commandId } });
     if (!command || command.deviceId !== deviceId || command.organizationId !== employee.organizationId) {
       return NextResponse.json({ error: 'Command not found' }, { status: 404 });
     }
@@ -67,7 +71,7 @@ export async function POST(req: NextRequest) {
     }
 
     // One active session per device.
-    const active = await db.webcamSession.findFirst({ where: { deviceId, status: 'active' }, select: { sessionId: true } });
+    const active = await orgData.webcamSession.findFirst({ where: { deviceId, status: 'active' }, select: { sessionId: true } });
     if (active) {
       return NextResponse.json({ error: 'A webcam session is already active for this device' }, { status: 409 });
     }
@@ -83,7 +87,7 @@ export async function POST(req: NextRequest) {
     }
 
     try {
-      const session = await db.webcamSession.create({
+      const session = await orgData.webcamSession.create({
         data: {
           sessionId,
           employeeId: employee.id,

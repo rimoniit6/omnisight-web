@@ -2,7 +2,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { Prisma } from '@prisma/client';
-import { authError, requireSessionOrg, requireAdminOrg } from '@/lib/api';
+import { authError, requireSessionOrg, requireAdminOrg, getPrismaForOrg } from '@/lib/api';
 import { getEmployeeDeleteImpact } from '@/lib/delete-impact';
 import { getClientIp } from '@/lib/agent/auth';
 import { log, requestContext } from '@/lib/logger';
@@ -84,10 +84,11 @@ export async function GET(
   try {
     const scope = await requireSessionOrg(req, { allowGlobal: true });
     if (!scope.ok) return authError(scope);
+    const orgData = scope.organizationId ? (await getPrismaForOrg(scope.organizationId)).client : db;
 
     const { id } = await params;
     // Resolve inside the caller's org only; cross-org ids -> 404.
-    const employee = await db.employee.findFirst({
+    const employee = await orgData.employee.findFirst({
       where: { id, ...(scope.organizationId ? { organizationId: scope.organizationId } : {}) },
       include: {
         department: true,
@@ -113,6 +114,7 @@ export async function PUT(
   try {
     const admin = await requireAdminOrg(req);
     if (!admin.ok) return authError(admin);
+    const orgData = (await getPrismaForOrg(admin.organizationId)).client;
 
     const { id } = await params;
     const body = await req.json().catch(() => null);
@@ -125,7 +127,7 @@ export async function PUT(
       return NextResponse.json({ error: validationError }, { status: 400 });
     }
 
-    const existing = await db.employee.findFirst({
+    const existing = await orgData.employee.findFirst({
       where: { id, organizationId: admin.organizationId },
       include: {
         department: { select: { id: true, name: true } },
@@ -136,7 +138,7 @@ export async function PUT(
 
     // Cross-org validation: departmentId must belong to the caller's org.
     if (body.departmentId) {
-      const dept = await db.department.findFirst({
+      const dept = await orgData.department.findFirst({
         where: { id: body.departmentId, organizationId: admin.organizationId },
         select: { id: true },
       });
@@ -155,7 +157,7 @@ export async function PUT(
     }
 
     try {
-      const employee = await db.$transaction(async (tx) => {
+      const employee = await orgData.$transaction(async (tx) => {
         // MERGE semantics — only fields present in the body are updated, so a
         // partial payload (`{ status }` from the table toggle, `{ designation }`
         // from a quick edit) can never silently wipe the other columns.
@@ -223,9 +225,10 @@ export async function DELETE(
   try {
     const admin = await requireAdminOrg(req);
     if (!admin.ok) return authError(admin);
+    const orgData = (await getPrismaForOrg(admin.organizationId)).client;
 
     const { id } = await params;
-    const existing = await db.employee.findFirst({
+    const existing = await orgData.employee.findFirst({
       where: { id, organizationId: admin.organizationId },
       select: { id: true, firstName: true, lastName: true, status: true },
     });
@@ -233,22 +236,12 @@ export async function DELETE(
 
     // Informational impact (employee delete is the project's soft-archive
     // pattern — all history is preserved).
-    const impact = await getEmployeeDeleteImpact(id, admin.organizationId);
+    const impact = await getEmployeeDeleteImpact(id, admin.organizationId, orgData);
 
-    const employee = await db.$transaction(async (tx) => {
+    const employee = await orgData.$transaction(async (tx) => {
       const archived = await tx.employee.update({
         where: { id },
         data: { status: 'archived' },
-      });
-
-      // Security: an archived employee must no longer be able to authenticate
-      // through their agent login. The AgentAccount row is kept (1:1 with the
-      // employee) but disabled, so the employee record's audit trail stays
-      // intact while the dead credential is inert. Agent authentication
-      // rejects disabled accounts.
-      await tx.agentAccount.updateMany({
-        where: { employeeId: id, status: 'active' },
-        data: { status: 'disabled' },
       });
 
       await tx.auditLog.create({
@@ -264,6 +257,17 @@ export async function DELETE(
       });
 
       return archived;
+    });
+
+    // Security: an archived employee must no longer be able to authenticate
+    // through their agent login. The AgentAccount row is kept (1:1 with the
+    // employee) but disabled, so the employee record's audit trail stays
+    // intact while the dead credential is inert. Agent authentication
+    // rejects disabled accounts. AgentAccount is a control-plane table and
+    // stays on the platform DB.
+    await db.agentAccount.updateMany({
+      where: { employeeId: id, status: 'active' },
+      data: { status: 'disabled' },
     });
 
     return NextResponse.json({ data: employee, archived: true, impact });

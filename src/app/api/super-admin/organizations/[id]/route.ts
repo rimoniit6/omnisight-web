@@ -47,6 +47,12 @@ export async function GET(
           endDate: true,
           trialEndDate: true,
           notes: true,
+          // V1 commercial snapshot (§6): billing period + purchased device
+          // entitlement + snapshot price come from the subscription itself.
+          billingPeriod: true,
+          deviceQuantity: true,
+          deploymentModeSnapshot: true,
+          priceSnapshot: true,
           plan: {
             select: { id: true, name: true, priceMonthly: true, priceYearly: true, currency: true, maxDevices: true, retentionDays: true },
           },
@@ -67,6 +73,23 @@ export async function GET(
               notes: true,
             },
           },
+        },
+      },
+      // Full commercial history (§4): every subscription ever created for
+      // this organization — old terms are preserved, never overwritten.
+      subscriptions: {
+        orderBy: { createdAt: 'desc' },
+        select: {
+          id: true,
+          status: true,
+          startDate: true,
+          endDate: true,
+          billingPeriod: true,
+          deviceQuantity: true,
+          deploymentModeSnapshot: true,
+          priceSnapshot: true,
+          createdAt: true,
+          plan: { select: { name: true } },
         },
       },
       licenseKey: {

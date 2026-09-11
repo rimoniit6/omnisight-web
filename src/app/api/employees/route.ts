@@ -2,7 +2,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { Prisma } from '@prisma/client';
-import { authError, requireSessionOrg, requireAdminOrg } from '@/lib/api';
+import { authError, requireSessionOrg, requireAdminOrg, getPrismaForOrg } from '@/lib/api';
 import { EMPLOYEE_ONLINE_THRESHOLD_MS, LIFECYCLE_PINNED_STATUSES } from '@/lib/presence';
 import { createOrgNotification } from '@/lib/notifications/service';
 import { log, requestContext } from '@/lib/logger';
@@ -153,6 +153,8 @@ export async function GET(req: NextRequest) {
         where.organizationId = orgParam;
       }
     }
+    const effectiveOrgId = scope.organizationId ?? (typeof where.organizationId === 'string' ? where.organizationId : undefined);
+    const orgData = effectiveOrgId ? (await getPrismaForOrg(effectiveOrgId)).client : db;
 
     // Archived employees are hidden by default (existing behavior); selecting
     // the "archived" status explicitly opts into seeing them.
@@ -175,7 +177,7 @@ export async function GET(req: NextRequest) {
     const departmentId = (searchParams.get('departmentId') || '').trim();
     const departmentName = (searchParams.get('department') || '').trim();
     if (departmentId) {
-      const dept = await db.department.findFirst({
+      const dept = await orgData.department.findFirst({
         where: {
           id: departmentId,
           ...(scope.organizationId ? { organizationId: scope.organizationId } : {}),
@@ -187,7 +189,7 @@ export async function GET(req: NextRequest) {
       }
       where.departmentId = departmentId;
     } else if (departmentName) {
-      const dept = await db.department.findFirst({
+      const dept = await orgData.department.findFirst({
         where: {
           name: departmentName,
           ...(scope.organizationId ? { organizationId: scope.organizationId } : {}),
@@ -255,7 +257,7 @@ export async function GET(req: NextRequest) {
 
     // Records + total count run in parallel — no N+1, no sequential awaits.
     const [employees, total, activeCount, inactiveCount] = await Promise.all([
-      db.employee.findMany({
+      orgData.employee.findMany({
         where,
         include: {
           department: { select: { id: true, name: true } },
@@ -268,9 +270,9 @@ export async function GET(req: NextRequest) {
         skip,
         take: pageSize,
       }),
-      db.employee.count({ where }),
-      db.employee.count({ where: { ...where, status: 'active' } }),
-      db.employee.count({ where: { ...where, status: 'inactive' } }),
+      orgData.employee.count({ where }),
+      orgData.employee.count({ where: { ...where, status: 'active' } }),
+      orgData.employee.count({ where: { ...where, status: 'inactive' } }),
     ]);
 
     const totalPages = Math.ceil(total / pageSize);
@@ -299,6 +301,7 @@ export async function POST(req: NextRequest) {
     // Admin-only mutation; org derived from the session — never the client.
     const admin = await requireAdminOrg(req);
     if (!admin.ok) return authError(admin);
+    const orgData = (await getPrismaForOrg(admin.organizationId)).client;
 
     const body = await req.json();
     const { firstName, lastName, email, phone, designation, departmentId, employeeId, joinDate } = body;
@@ -309,7 +312,7 @@ export async function POST(req: NextRequest) {
 
     // Cross-org validation: departmentId must belong to the caller's org.
     if (departmentId) {
-      const dept = await db.department.findFirst({
+      const dept = await orgData.department.findFirst({
         where: { id: departmentId, organizationId: admin.organizationId },
         select: { id: true },
       });
@@ -318,7 +321,7 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    const employee = await db.employee.create({
+    const employee = await orgData.employee.create({
       data: {
         firstName,
         lastName,
@@ -338,7 +341,7 @@ export async function POST(req: NextRequest) {
 
     // Real `new_employee` notification producer (N-6): a genuine trigger —
     // an employee was actually created — with structured employee linkage.
-    await createOrgNotification(db, {
+    await createOrgNotification(orgData, {
       title: `New Employee: ${firstName} ${lastName}`,
       message: `${firstName} ${lastName} (${employeeId}) joined the organization.`,
       type: 'new_employee',

@@ -88,7 +88,13 @@ function agentReq(token: string, activities: unknown[]): NextRequest {
 }
 
 async function seedOrg(name: string) {
-  return db.organization.create({ data: { name, slug: name.toLowerCase().replace(/[^a-z0-9]+/g, '-') } });
+  return db.organization.create({
+    data: {
+      name,
+      slug: name.toLowerCase().replace(/[^a-z0-9]+/g, '-'),
+      trialEndsAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
+    },
+  });
 }
 
 async function seedEmployee(orgId: string, code: string) {
@@ -623,7 +629,12 @@ async function detailFor(
 
 async function seedOrgWithTz(name: string, timezone: string) {
   return db.organization.create({
-    data: { name, slug: `${name.toLowerCase().replace(/[^a-z0-9]+/g, '-')}-${timezone.toLowerCase().replace(/[^a-z0-9]+/g, '')}`, timezone },
+    data: {
+      name,
+      slug: `${name.toLowerCase().replace(/[^a-z0-9]+/g, '-')}-${timezone.toLowerCase().replace(/[^a-z0-9]+/g, '')}`,
+      timezone,
+      trialEndsAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
+    },
   });
 }
 

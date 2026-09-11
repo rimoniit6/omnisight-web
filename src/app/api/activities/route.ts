@@ -1,7 +1,7 @@
 'use server';
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
-import { authError, requireSessionOrg, validatePagination } from '@/lib/api';
+import { authError, getPrismaForOrg, requireSessionOrg, validatePagination } from '@/lib/api';
 import { NON_INTERNAL_AGENT_ACTIVITY_FILTER } from '@/lib/agent-process';
 import { isValidTimezone, zonedDayStart, zonedDayEnd } from '@/lib/timezone';
 import { log, requestContext } from '@/lib/logger';
@@ -52,6 +52,7 @@ export async function GET(req: NextRequest) {
       });
     }
     const orgId = scope.organizationId;
+    const orgData = (await getPrismaForOrg(orgId)).client;
 
     const { searchParams } = new URL(req.url);
 
@@ -121,7 +122,7 @@ export async function GET(req: NextRequest) {
 
     // ── Rows + total + full-dataset summary (DB-side, one round-trip set) ──
     const [activities, total, summaryAgg] = await Promise.all([
-      db.activity.findMany({
+      orgData.activity.findMany({
         where,
         include: {
           employee: { select: { id: true, firstName: true, lastName: true, avatar: true } },
@@ -131,8 +132,8 @@ export async function GET(req: NextRequest) {
         skip,
         take: pageSize,
       }),
-      db.activity.count({ where }),
-      db.activity.aggregate({
+      orgData.activity.count({ where }),
+      orgData.activity.aggregate({
         where,
         _count: { id: true },
         _sum: { duration: true },
@@ -141,7 +142,7 @@ export async function GET(req: NextRequest) {
 
     const categoryAgg = await Promise.all(
       ACTIVITY_CATEGORIES.filter((c) => c !== 'idle').map((c) =>
-        db.activity.aggregate({ where: { ...where, category: c }, _sum: { duration: true } })
+        orgData.activity.aggregate({ where: { ...where, category: c }, _sum: { duration: true } })
       )
     );
 

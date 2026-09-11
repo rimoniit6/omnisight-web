@@ -151,6 +151,11 @@ const PUBLIC_PREFIXES = [
   // Public landing copy overrides (Super Admin-managed; page renders built-in
   // defaults when empty). Read-only, never exposes tenant/credential data.
   '/api/landing',
+  // V1 public commerce: server-side price preview + purchase request
+  // submission. Both recalculate/validate everything server-side, leak no
+  // tenant data, and are rate-limited inside the routes.
+  '/api/pricing/preview',
+  '/api/purchase-requests',
 ];
 const AGENT_PREFIXES = ['/api/agent/'];
 // Public health probes for external monitoring: the routes only reveal

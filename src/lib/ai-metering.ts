@@ -12,6 +12,7 @@
 //   - Retention follows ai_insight_retention_days via the retention job.
 
 import { db } from '@/lib/db';
+import { getPrismaForOrg } from '@/lib/org-db';
 
 export type AiUsageOperation =
   | 'ai_insight'
@@ -39,9 +40,9 @@ export interface AiUsageWrite {
  * break the AI operation it observes. Errors are logged with safe fields only
  * (no key, no payload).
  */
-export async function recordAiUsage(record: AiUsageWrite): Promise<void> {
+export async function recordAiUsage(record: AiUsageWrite, data: import('@prisma/client').PrismaClient = db): Promise<void> {
   try {
-    await db.aiUsage.create({
+    await data.aiUsage.create({
       data: {
         organizationId: record.organizationId,
         provider: record.provider,
@@ -92,18 +93,34 @@ export async function meterAiCall<T extends { provider: string; model: string; e
   // returns provider '' / model ''). Nothing to meter.
   if (!result || (!result.provider && !result.model)) return result;
 
-  await recordAiUsage({
-    organizationId: opts.organizationId,
-    provider: result.provider || 'unknown',
-    model: result.model || 'unknown',
-    operation: opts.operation,
-    status: result.error ? 'error' : 'success',
-    errorCode: result.error ?? null,
-    inputTokens: result.usage?.inputTokens ?? null,
-    outputTokens: result.usage?.outputTokens ?? null,
-    totalTokens: result.usage?.totalTokens ?? null,
-    latencyMs,
-  });
+  // AiUsage is org-owned (copied at activation) — resolve the org's own
+  // client so post-cutover metering rows land there, never the platform DB.
+  // Best-effort semantics preserved: resolution failures are logged, not
+  // thrown (metering must never break the AI operation it observes).
+  let meteringClient = db;
+  try {
+    meteringClient = (await getPrismaForOrg(opts.organizationId)).client;
+  } catch (err) {
+    console.error(
+      `AI metering org resolution failed (non-fatal): org=${opts.organizationId}`,
+      err instanceof Error ? err.message : String(err)
+    );
+  }
+  await recordAiUsage(
+    {
+      organizationId: opts.organizationId,
+      provider: result.provider || 'unknown',
+      model: result.model || 'unknown',
+      operation: opts.operation,
+      status: result.error ? 'error' : 'success',
+      errorCode: result.error ?? null,
+      inputTokens: result.usage?.inputTokens ?? null,
+      outputTokens: result.usage?.outputTokens ?? null,
+      totalTokens: result.usage?.totalTokens ?? null,
+      latencyMs,
+    },
+    meteringClient
+  );
 
   return result;
 }

@@ -7,6 +7,7 @@
 // so the UI always knows exactly which dataset produced the analysis.
 
 import { NextResponse } from 'next/server';
+import type { PrismaClient } from '@prisma/client';
 import { db } from '@/lib/db';
 import { zonedDayStart, zonedDayEnd, localDayKey } from '@/lib/timezone';
 
@@ -35,7 +36,8 @@ export type FilterParseResult =
 export async function parseInsightFilters(
   organizationId: string,
   orgTimezone: string,
-  params: { from?: string; to?: string; employeeId?: string | null; departmentId?: string | null; projectId?: string | null }
+  params: { from?: string; to?: string; employeeId?: string | null; departmentId?: string | null; projectId?: string | null },
+  data: PrismaClient = db
 ): Promise<FilterParseResult> {
   const { from, to } = params;
 
@@ -86,16 +88,18 @@ export async function parseInsightFilters(
   const periodEnd = zonedDayEnd(endKey, orgTimezone);
 
   // Org-scoped entity validation (conceals cross-org ids as not found).
+  // Employee/Department/Project are org-owned (copied at activation) — the
+  // validation reads run on the org client when the caller resolves it.
   if (params.employeeId) {
-    const emp = await db.employee.findFirst({ where: { id: params.employeeId, organizationId }, select: { id: true } });
+    const emp = await data.employee.findFirst({ where: { id: params.employeeId, organizationId }, select: { id: true } });
     if (!emp) return { ok: false, response: NextResponse.json({ error: 'Employee not found' }, { status: 404 }) };
   }
   if (params.departmentId) {
-    const dept = await db.department.findFirst({ where: { id: params.departmentId, organizationId }, select: { id: true } });
+    const dept = await data.department.findFirst({ where: { id: params.departmentId, organizationId }, select: { id: true } });
     if (!dept) return { ok: false, response: NextResponse.json({ error: 'Department not found' }, { status: 404 }) };
   }
   if (params.projectId) {
-    const proj = await db.project.findFirst({ where: { id: params.projectId, organizationId }, select: { id: true } });
+    const proj = await data.project.findFirst({ where: { id: params.projectId, organizationId }, select: { id: true } });
     if (!proj) return { ok: false, response: NextResponse.json({ error: 'Project not found' }, { status: 404 }) };
   }
 

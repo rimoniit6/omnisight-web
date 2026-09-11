@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { requireAdminOrg, authError } from '@/lib/api';
+import { requireAdminOrg, authError, getPrismaForOrg } from '@/lib/api';
 import { log, requestContext } from '@/lib/logger';
 import { putAudio, generateAudioFilename } from '@/lib/audio/storage';
 import {
@@ -15,6 +14,7 @@ export async function POST(request: NextRequest) {
   try {
     const admin = await requireAdminOrg(request);
     if (!admin.ok) return authError(admin);
+    const orgData = (await getPrismaForOrg(admin.organizationId)).client;
 
     const formData = await request.formData();
     const file = formData.get('file') as File | null;
@@ -68,7 +68,7 @@ export async function POST(request: NextRequest) {
     await putAudio(admin.organizationId, filename, bytes, file.type);
 
     // Create database record
-    const recording = await db.audioRecording.create({
+    const recording = await orgData.audioRecording.create({
       data: {
         organizationId: admin.organizationId,
         employeeId: employeeId || null,
@@ -82,7 +82,7 @@ export async function POST(request: NextRequest) {
     });
 
     // Audit log
-    await db.auditLog.create({
+    await orgData.auditLog.create({
       data: {
         action: 'create',
         resource: 'audio_recording',
@@ -113,6 +113,7 @@ export async function GET(request: NextRequest) {
   try {
     const admin = await requireAdminOrg(request);
     if (!admin.ok) return authError(admin);
+    const orgData = (await getPrismaForOrg(admin.organizationId)).client;
 
     const { searchParams } = new URL(request.url);
     const page = Math.max(1, Number(searchParams.get('page')) || 1);
@@ -142,7 +143,7 @@ export async function GET(request: NextRequest) {
     }
 
     const [recordings, total] = await Promise.all([
-      db.audioRecording.findMany({
+      orgData.audioRecording.findMany({
         where,
         include: {
           employee: { select: { id: true, firstName: true, lastName: true, employeeId: true } },
@@ -155,7 +156,7 @@ export async function GET(request: NextRequest) {
         skip: (page - 1) * pageSize,
         take: pageSize,
       }),
-      db.audioRecording.count({ where }),
+      orgData.audioRecording.count({ where }),
     ]);
 
     return NextResponse.json({

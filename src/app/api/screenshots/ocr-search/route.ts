@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
-import { authError, requireSessionOrg } from '@/lib/api';
+import { authError, getPrismaForOrg, requireSessionOrg } from '@/lib/api';
 import { log, requestContext } from '@/lib/logger';
 
 // GET /api/screenshots/ocr-search?query=...&page=1&pageSize=20
@@ -14,6 +14,10 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: 'Insufficient permissions' }, { status: 403 });
     }
     const orgId = scope.organizationId;
+    // Org data client: Screenshot / Employee / Device are org-owned (copied at
+    // activation) — the raw-SQL queries must run there, never on the platform
+    // DB after cutover.
+    const orgData = (await getPrismaForOrg(orgId)).client;
 
     const { searchParams } = new URL(req.url);
     const query = searchParams.get('query');
@@ -35,13 +39,13 @@ export async function GET(req: NextRequest) {
     // We need the total count and the paginated results
     const [countResult, screenshots] = await Promise.all([
       // Count total matching rows — org-scoped
-      db.$queryRawUnsafe<[{ count: bigint }]>(
+      orgData.$queryRawUnsafe<[{ count: bigint }]>(
         `SELECT COUNT(*) as count FROM "Screenshot" WHERE "organizationId" = $1 AND "ocrText" IS NOT NULL AND LOWER("ocrText") LIKE LOWER($2)`,
         orgId,
         likePattern
       ),
       // Fetch paginated results with joins — org-scoped
-      db.$queryRawUnsafe<unknown[]>(
+      orgData.$queryRawUnsafe<unknown[]>(
         `SELECT s.*, 
           e."id" as "employee_id", e."firstName" as "employee_firstName", e."lastName" as "employee_lastName", 
           e."employeeId" as "employee_employeeId", e."avatar" as "employee_avatar",

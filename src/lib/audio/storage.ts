@@ -1,9 +1,25 @@
 import { basename } from 'path';
 import crypto from 'crypto';
 import { storage } from '@/lib/storage';
+import { getOrgStorage } from '@/lib/org-storage';
 import type { AllowedAudioMime } from './types';
 
 const AUDIO_BUCKET = 'audio';
+
+/**
+ * Resolve the storage driver for an organization's audio artifacts.
+ *
+ * Same organization-aware model as screenshots: an org with an ACTIVE
+ * dedicated storage change-request resolves its own driver (getOrgStorage);
+ * only an org that never opted in falls back to the platform driver. After a
+ * storage cutover the org driver is authoritative — audio objects must never
+ * silently continue landing in platform storage while the audio metadata rows
+ * live in the org's own database.
+ */
+async function audioStorageDriver(orgId: string): Promise<ReturnType<typeof storage>> {
+  const res = await getOrgStorage(orgId);
+  return res.mode === 'org' ? res.driver : storage();
+}
 
 /** Storage key for an audio object. Keys are NEVER derived from client input. */
 export function audioKey(orgId: string, filename: string): string {
@@ -30,17 +46,20 @@ export async function putAudio(
   bytes: Buffer,
   mimeType: string,
 ): Promise<void> {
-  await storage().put(audioKey(orgId, filename), { bytes, contentType: mimeType });
+  const driver = await audioStorageDriver(orgId);
+  await driver.put(audioKey(orgId, filename), { bytes, contentType: mimeType });
 }
 
 /** Read an audio file. */
 export async function getAudio(orgId: string, filename: string): Promise<Buffer> {
-  return storage().get(audioKey(orgId, filename));
+  const driver = await audioStorageDriver(orgId);
+  return driver.get(audioKey(orgId, filename));
 }
 
 /** Delete an audio file. */
 export async function deleteAudio(orgId: string, filename: string): Promise<void> {
-  await storage().delete(audioKey(orgId, filename));
+  const driver = await audioStorageDriver(orgId);
+  await driver.delete(audioKey(orgId, filename));
 }
 
 /**
@@ -52,7 +71,8 @@ export async function getAudioSignedUrl(
   filename: string,
   expiresInSeconds = 3600,
 ): Promise<string | null> {
-  return storage().getSignedUrl(audioKey(orgId, filename), expiresInSeconds);
+  const driver = await audioStorageDriver(orgId);
+  return driver.getSignedUrl(audioKey(orgId, filename), expiresInSeconds);
 }
 
 /** Resolve a storage key from a filePath column value. */

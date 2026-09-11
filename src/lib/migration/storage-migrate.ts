@@ -25,6 +25,7 @@
 //     copy any still missing to the destination until a pass changes nothing —
 //     post-flip objects are written straight to the destination by the live app.
 
+import type { PrismaClient } from '@prisma/client';
 import { basename } from 'path';
 import { db } from '@/lib/db';
 import { getOrgStorage } from '@/lib/org-storage';
@@ -69,7 +70,7 @@ interface StorageRef {
  * current data DB — platform before a DB cutover, the org's own after). */
 export async function collectOrgStorageRefs(
   orgId: string,
-  client: { screenshot: { findMany: (a: Record<string, unknown>) => Promise<Array<{ filePath: string; fileSize: number | null; thumbnailPath: string | null; thumbnailSize: number | null }>> }; audioRecording: { findMany: (a: Record<string, unknown>) => Promise<Array<{ filePath: string; fileSize: number | null }>> } } = db
+  client: PrismaClient = db
 ): Promise<StorageRef[]> {
   const refs: StorageRef[] = [];
   const screenshots = await client.screenshot.findMany({
@@ -243,7 +244,7 @@ export async function drainStorageCutover(
   orgId: string,
   source: StorageDriver,
   destination: { url: string; key: string },
-  refsClient: { screenshot: { findMany: (a: Record<string, unknown>) => Promise<Array<{ filePath: string; fileSize: number | null; thumbnailPath: string | null; thumbnailSize: number | null }>> }; audioRecording: { findMany: (a: Record<string, unknown>) => Promise<Array<{ filePath: string; fileSize: number | null }>> } },
+  refsClient: PrismaClient,
   opts: { maxPasses?: number } = {}
 ): Promise<StorageDrainOutcome> {
   const maxPasses = opts.maxPasses ?? 50;

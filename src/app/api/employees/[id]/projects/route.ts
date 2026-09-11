@@ -1,7 +1,7 @@
 'use server';
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
-import { authError, requireSessionOrg, requireAdminOrg } from '@/lib/api';
+import { authError, requireSessionOrg, requireAdminOrg, getPrismaForOrg } from '@/lib/api';
 import { log, requestContext } from '@/lib/logger';
 
 /**
@@ -23,9 +23,10 @@ export async function GET(
   try {
     const scope = await requireSessionOrg(req, { allowGlobal: true });
     if (!scope.ok) return authError(scope);
+    const orgData = scope.organizationId ? (await getPrismaForOrg(scope.organizationId)).client : db;
 
     const { id } = await params;
-    const employee = await db.employee.findFirst({
+    const employee = await orgData.employee.findFirst({
       where: { id, ...(scope.organizationId ? { organizationId: scope.organizationId } : {}) },
       select: { id: true },
     });
@@ -33,7 +34,7 @@ export async function GET(
       return NextResponse.json({ error: 'Employee not found' }, { status: 404 });
     }
 
-    const memberships = await db.projectMember.findMany({
+    const memberships = await orgData.projectMember.findMany({
       where: { employeeId: id },
       include: {
         project: {
@@ -52,7 +53,7 @@ export async function GET(
     });
 
     // Total logged hours per project for this employee.
-    const hours = await db.timeEntry.groupBy({
+    const hours = await orgData.timeEntry.groupBy({
       by: ['projectId'],
       where: { employeeId: id, projectId: { in: memberships.map((m) => m.projectId) } },
       _sum: { hours: true },
@@ -84,6 +85,7 @@ export async function PUT(
   try {
     const admin = await requireAdminOrg(req);
     if (!admin.ok) return authError(admin);
+    const orgData = (await getPrismaForOrg(admin.organizationId)).client;
 
     const { id } = await params;
     const body = await req.json().catch(() => null);
@@ -96,7 +98,7 @@ export async function PUT(
       return NextResponse.json({ error: 'Too many projects (max 100)' }, { status: 400 });
     }
 
-    const employee = await db.employee.findFirst({
+    const employee = await orgData.employee.findFirst({
       where: { id, organizationId: admin.organizationId },
       select: { id: true, firstName: true, lastName: true, activeTrackingProjectId: true },
     });
@@ -106,7 +108,7 @@ export async function PUT(
 
     // Every requested project must belong to the caller's org; cross-org -> 422.
     const projects = projectIds.length > 0
-      ? await db.project.findMany({
+      ? await orgData.project.findMany({
           where: { id: { in: projectIds }, organizationId: admin.organizationId },
           select: { id: true, name: true },
         })
@@ -121,7 +123,7 @@ export async function PUT(
     const name = `${employee.firstName} ${employee.lastName}`.trim() || employee.id;
     const projectNameMap = new Map(projects.map((p) => [p.id, p.name]));
 
-    const result = await db.$transaction(async (tx) => {
+    const result = await orgData.$transaction(async (tx) => {
       // ALL memberships (active + left) so previously-removed projects can be
       // REACTIVATED — the (projectId, employeeId) unique constraint forbids
       // creating a second row for a soft-removed membership.

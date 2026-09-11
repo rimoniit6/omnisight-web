@@ -1,7 +1,7 @@
 'use server';
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
-import { authError, requireSessionOrg } from '@/lib/api';
+import { authError, requireSessionOrg, getPrismaForOrg } from '@/lib/api';
 import { log, requestContext } from '@/lib/logger';
 
 async function scopedOrg(req: NextRequest): Promise<{ ok: true; organizationId: string } | { ok: false; response: NextResponse }> {
@@ -33,12 +33,13 @@ export async function PUT(
       return NextResponse.json({ error: 'Invalid status. Must be one of: acknowledged, dismissed, actioned, active' }, { status: 400 });
     }
 
-    const insight = await db.aiInsight.findFirst({ where: { id, organizationId: scoped.organizationId } });
+    const orgData = (await getPrismaForOrg(scoped.organizationId)).client;
+    const insight = await orgData.aiInsight.findFirst({ where: { id, organizationId: scoped.organizationId } });
     if (!insight) {
       return NextResponse.json({ error: 'Insight not found' }, { status: 404 });
     }
 
-    const updated = await db.aiInsight.update({
+    const updated = await orgData.aiInsight.update({
       where: { id },
       data: {
         status,

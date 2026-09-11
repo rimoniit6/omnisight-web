@@ -1,46 +1,47 @@
 'use server';
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
-import { authError, requireSessionOrg } from '@/lib/api';
+import { authError, requireSessionOrg, getPrismaForOrg } from '@/lib/api';
 import { log, requestContext } from '@/lib/logger';
 
 export async function GET(req: NextRequest) {
   try {
     const scope = await requireSessionOrg(req, { allowGlobal: true });
     if (!scope.ok) return authError(scope);
+    const orgData = scope.organizationId ? (await getPrismaForOrg(scope.organizationId)).client : db;
 
     const orgWhere: Record<string, unknown> = scope.organizationId ? { organizationId: scope.organizationId } : {};
     // Org-bound employee ids — used to scope the cross-tenant activity groupBy.
     const orgEmployeeIds = scope.organizationId
-      ? (await db.employee.findMany({ where: { organizationId: scope.organizationId }, select: { id: true } })).map((e) => e.id)
+      ? (await orgData.employee.findMany({ where: { organizationId: scope.organizationId }, select: { id: true } })).map((e) => e.id)
       : null;
 
     const [byDepartment, byDesignation, byStatus, allEmployees, newHiresThisMonth] = await Promise.all([
       // By department
-      db.employee.groupBy({
+      orgData.employee.groupBy({
         by: ['departmentId'],
         where: { status: { not: 'archived' }, ...orgWhere },
         _count: { id: true },
       }),
       // By designation
-      db.employee.groupBy({
+      orgData.employee.groupBy({
         by: ['designation'],
         where: { status: { not: 'archived' }, ...orgWhere },
         _count: { id: true },
       }),
       // By status
-      db.employee.groupBy({
+      orgData.employee.groupBy({
         by: ['status'],
         where: orgWhere,
         _count: { id: true },
       }),
       // All employees for tenure calculation
-      db.employee.findMany({
+      orgData.employee.findMany({
         where: { status: { not: 'archived' }, joinDate: { not: null }, ...orgWhere },
         select: { id: true, joinDate: true },
       }),
       // New hires this month
-      db.employee.count({
+      orgData.employee.count({
         where: {
           status: { not: 'archived' },
           joinDate: {
@@ -55,7 +56,7 @@ export async function GET(req: NextRequest) {
     const deptMap = new Map<string, string>();
     const deptIds = byDepartment.map((d) => d.departmentId).filter(Boolean) as string[];
     if (deptIds.length > 0) {
-      const depts = await db.department.findMany({
+      const depts = await orgData.department.findMany({
         where: { id: { in: deptIds } },
         select: { id: true, name: true },
       });
@@ -63,7 +64,7 @@ export async function GET(req: NextRequest) {
     }
 
     // Active count per department
-    const activeByDept = await db.employee.groupBy({
+    const activeByDept = await orgData.employee.groupBy({
       by: ['departmentId'],
       where: { status: 'active', ...orgWhere },
       _count: { id: true },
@@ -107,7 +108,7 @@ export async function GET(req: NextRequest) {
     }
 
     // Top performers: employees with highest productive activity hours
-    const productiveActivities = await db.activity.groupBy({
+    const productiveActivities = await orgData.activity.groupBy({
       by: ['employeeId'],
       where: { category: 'productive', ...(orgEmployeeIds ? { employeeId: { in: orgEmployeeIds } } : {}) },
       _sum: { duration: true },
@@ -119,7 +120,7 @@ export async function GET(req: NextRequest) {
     let topPerformers: Array<{ id: string; firstName: string; lastName: string; designation: string | null; productivityScore: number }> = [];
 
     if (topEmployeeIds.length > 0) {
-      const topEmployees = await db.employee.findMany({
+      const topEmployees = await orgData.employee.findMany({
         where: { id: { in: topEmployeeIds }, ...(scope.organizationId ? { organizationId: scope.organizationId } : {}) },
         select: { id: true, firstName: true, lastName: true, designation: true },
       });

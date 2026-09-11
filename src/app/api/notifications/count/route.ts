@@ -1,7 +1,6 @@
 'use server';
 import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { authError, requireSessionOrg } from '@/lib/api';
+import { authError, requireSessionOrg, getPrismaForOrg } from '@/lib/api';
 import { log, requestContext } from '@/lib/logger';
 
 export async function GET(req: NextRequest) {
@@ -11,10 +10,11 @@ export async function GET(req: NextRequest) {
     if (!scope.ok) return authError(scope);
     if (!scope.organizationId) return NextResponse.json({ unread: 0, total: 0 });
     const orgId = scope.organizationId;
+    const orgData = (await getPrismaForOrg(orgId)).client;
 
     const [unread, total] = await Promise.all([
-      db.notification.count({ where: { status: 'unread', organizationId: orgId } }),
-      db.notification.count({ where: { organizationId: orgId } }),
+      orgData.notification.count({ where: { status: 'unread', organizationId: orgId } }),
+      orgData.notification.count({ where: { organizationId: orgId } }),
     ]);
     return NextResponse.json({ unread, total });
   } catch (error) {

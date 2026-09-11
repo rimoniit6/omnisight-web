@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
-import { authError, requireManagerOrg, parseJsonBody, BodyParseError } from '@/lib/api';
+import { authError, requireManagerOrg, parseJsonBody, BodyParseError, getPrismaForOrg } from '@/lib/api';
 import { validateAlertRuleInput } from '@/lib/alerts/validation';
 import { log, requestContext } from '@/lib/logger';
 
@@ -16,6 +16,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     const scope = await requireManagerOrg(req);
     if (!scope.ok) return authError(scope);
     const orgId = scope.organizationId;
+    const orgData = (await getPrismaForOrg(orgId)).client;
     const { id } = await params;
 
     let body: Record<string, unknown>;
@@ -35,7 +36,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
 
     // Org-scoped find: a rule belonging to another org is indistinguishable
     // from a missing one (404), preserving tenant isolation.
-    const existing = await db.alertRule.findFirst({
+    const existing = await orgData.alertRule.findFirst({
       where: { id, organizationId: orgId },
       select: { id: true },
     });
@@ -43,7 +44,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       return NextResponse.json({ error: 'Alert rule not found' }, { status: 404 });
     }
 
-    const rule = await db.alertRule.update({
+    const rule = await orgData.alertRule.update({
       where: { id },
       data: {
         name: parsed.value.name,
@@ -67,9 +68,10 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
     const scope = await requireManagerOrg(req);
     if (!scope.ok) return authError(scope);
     const orgId = scope.organizationId;
+    const orgData = (await getPrismaForOrg(orgId)).client;
     const { id } = await params;
 
-    const existing = await db.alertRule.findFirst({
+    const existing = await orgData.alertRule.findFirst({
       where: { id, organizationId: orgId },
       select: { id: true },
     });
@@ -77,7 +79,7 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
       return NextResponse.json({ error: 'Alert rule not found' }, { status: 404 });
     }
 
-    await db.alertRule.delete({ where: { id } });
+    await orgData.alertRule.delete({ where: { id } });
     return NextResponse.json({ success: true });
   } catch {
     log.error('api.alert-rules.', { error: String('Alert rule delete error:') }, requestContext(req));

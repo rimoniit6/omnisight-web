@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import * as XLSX from 'xlsx';
+import type { PrismaClient } from '@prisma/client';
 import { db } from '@/lib/db';
-import { requireAdminOrg, authError } from '@/lib/api';
+import { requireAdminOrg, authError, getPrismaForOrg } from '@/lib/api';
 import { log, requestContext } from '@/lib/logger';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
@@ -70,24 +71,24 @@ function parseDate(value: string): Date | null {
 
 const EMPLOYEE_REQUIRED = ['firstName', 'lastName', 'email'];
 
-async function importEmployees(rows: Record<string, string>[], orgId: string): Promise<ImportResult> {
+async function importEmployees(rows: Record<string, string>[], orgId: string, data: PrismaClient): Promise<ImportResult> {
   let imported = 0;
   let skipped = 0;
   const messages: Array<{ row: number; error: string }> = [];
 
   // Get current employee count for auto-generating employeeId
-  const employeeCount = await db.employee.count({ where: { organizationId: orgId } });
+  const employeeCount = await data.employee.count({ where: { organizationId: orgId } });
   let autoIdCounter = employeeCount + 1;
 
   // Cache existing emails for fast duplicate check
-  const existingEmployees = await db.employee.findMany({
+  const existingEmployees = await data.employee.findMany({
     where: { organizationId: orgId },
     select: { email: true },
   });
   const existingEmails = new Set(existingEmployees.map((e) => e.email.toLowerCase()));
 
   // Cache departments (case-insensitive lookup)
-  const allDepts = await db.department.findMany({
+  const allDepts = await data.department.findMany({
     where: { organizationId: orgId },
     select: { id: true, name: true },
   });
@@ -135,7 +136,7 @@ async function importEmployees(rows: Record<string, string>[], orgId: string): P
           departmentId = cachedId;
         } else {
           // Create new department
-          const newDept = await db.department.create({
+          const newDept = await data.department.create({
             data: { name: deptName, organizationId: orgId },
           });
           departmentId = newDept.id;
@@ -146,7 +147,7 @@ async function importEmployees(rows: Record<string, string>[], orgId: string): P
       // Generate or use provided employeeId
       const employeeId = (row['employeeId'] || '').trim() || `EMP-${autoIdCounter++}`;
 
-      await db.employee.create({
+      await data.employee.create({
         data: {
           firstName,
           lastName,
@@ -178,7 +179,7 @@ async function importEmployees(rows: Record<string, string>[], orgId: string): P
 
 const PROJECT_REQUIRED = ['name'];
 
-async function importProjects(rows: Record<string, string>[], orgId: string): Promise<ImportResult> {
+async function importProjects(rows: Record<string, string>[], orgId: string, data: PrismaClient): Promise<ImportResult> {
   let imported = 0;
   let skipped = 0;
   const messages: Array<{ row: number; error: string }> = [];
@@ -188,7 +189,7 @@ async function importProjects(rows: Record<string, string>[], orgId: string): Pr
 
   // Reject duplicates against existing org projects AND within this batch
   // (case-insensitive) — same rule as the create/update APIs.
-  const existingProjects = await db.project.findMany({
+  const existingProjects = await data.project.findMany({
     where: { organizationId: orgId },
     select: { name: true },
   });
@@ -220,7 +221,7 @@ async function importProjects(rows: Record<string, string>[], orgId: string): Pr
     seenNames.add(nameKey);
 
     try {
-      await db.project.create({
+      await data.project.create({
         data: {
           name,
           description: (row['description'] || '').trim() || null,
@@ -250,20 +251,20 @@ async function importProjects(rows: Record<string, string>[], orgId: string): Pr
 
 const TIME_ENTRY_REQUIRED = ['employeeEmail', 'projectName', 'date', 'hours'];
 
-async function importTimeEntries(rows: Record<string, string>[], orgId: string): Promise<ImportResult> {
+async function importTimeEntries(rows: Record<string, string>[], orgId: string, data: PrismaClient): Promise<ImportResult> {
   let imported = 0;
   let skipped = 0;
   const messages: Array<{ row: number; error: string }> = [];
 
   // Pre-load employees and projects for lookup
-  const employees = await db.employee.findMany({
+  const employees = await data.employee.findMany({
     where: { organizationId: orgId },
     select: { id: true, email: true },
   });
   const employeeMap = new Map<string, string>();
   employees.forEach((e) => employeeMap.set(e.email.toLowerCase(), e.id));
 
-  const projects = await db.project.findMany({
+  const projects = await data.project.findMany({
     where: { organizationId: orgId },
     select: { id: true, name: true },
   });
@@ -324,7 +325,7 @@ async function importTimeEntries(rows: Record<string, string>[], orgId: string):
     const billable = billableRaw === 'false' || billableRaw === 'no' || billableRaw === '0' ? false : true;
 
     try {
-      await db.timeEntry.create({
+      await data.timeEntry.create({
         data: {
           projectId,
           employeeId,
@@ -420,24 +421,25 @@ export async function POST(
     }
 
     // 6. Perform import based on type (org from requireAdminOrg, not client input)
+    const orgData = (await getPrismaForOrg(admin.organizationId)).client;
     let result: ImportResult;
 
     switch (type) {
       case 'employees':
-        result = await importEmployees(rows, admin.organizationId);
+        result = await importEmployees(rows, admin.organizationId, orgData);
         break;
       case 'projects':
-        result = await importProjects(rows, admin.organizationId);
+        result = await importProjects(rows, admin.organizationId, orgData);
         break;
       case 'time-entries':
-        result = await importTimeEntries(rows, admin.organizationId);
+        result = await importTimeEntries(rows, admin.organizationId, orgData);
         break;
       default:
         return NextResponse.json({ error: 'Invalid import type' }, { status: 400 });
     }
 
     // 7. Audit log
-    await db.auditLog.create({
+    await orgData.auditLog.create({
       data: {
         action: 'import',
         resource: type,

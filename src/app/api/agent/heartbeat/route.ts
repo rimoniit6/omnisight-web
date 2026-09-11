@@ -14,9 +14,16 @@ export async function POST(req: NextRequest) {
 
     const clientIp = getClientIp(req);
 
+    // ── ORG DATA BOUNDARY ──
+    // Device and BreakSession are org-owned (COPY to the org's DB at cutover).
+    // After activation their authoritative home is the org DB — resolve once
+    // here (validateAgentToken already guarantees a valid org) and route all
+    // org-scoped writes/reads through it.
+    const orgData = authResult.orgData ?? db;
+
     // Update device heartbeat
     if (authResult.deviceId) {
-      await db.device.update({
+      await orgData.device.update({
         where: { id: authResult.deviceId },
         data: {
           status: 'online',
@@ -29,7 +36,7 @@ export async function POST(req: NextRequest) {
     // Canonical break state rides on every heartbeat so the agent pauses
     // collectors within ONE heartbeat interval (10–60s) of an admin or
     // self-service break toggle — far faster than the 10-minute config sync.
-    const openBreak = await db.breakSession.findFirst({
+    const openBreak = await orgData.breakSession.findFirst({
       where: { employeeId: authResult.employee!.id, endedAt: null },
       orderBy: { startedAt: 'desc' },
       select: { startedAt: true },

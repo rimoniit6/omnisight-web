@@ -14,8 +14,18 @@
 //     bcrypt in place on first successful verify (same pattern as
 //     verifyAgentPassword in src/lib/agent/auth.ts).
 
+import type { PrismaClient } from '@prisma/client';
 import { db } from '@/lib/db';
 import { hashPassword, verifyPassword } from '@/lib/auth';
+
+// ROUTING NOTE: the AgentAccount table itself is deliberately PLATFORM-OWNED
+// (agent credential rows — the migration plan excludes AgentToken/AgentSession
+// on the same grounds, and AgentAccount is the credential anchor that the
+// agent-login flow keys on). It is therefore NEVER routed through
+// getPrismaForOrg. The Employee reads below ARE org-owned (Employee is copied
+// at activation), so callers that hold an org client pass it via the `data`
+// parameter; the login path discovers the org from the platform account's
+// stable identity and re-reads the employee from the org DB.
 
 /** Brute-force lockout policy. */
 export const AGENT_ACCOUNT = {
@@ -114,8 +124,8 @@ export async function createAgentAccount(input: {
 }
 
 /** Resolve the default agentId (Employee.employeeId) for an employee. */
-export async function getDefaultAgentId(employeeId: string): Promise<string> {
-  const employee = await db.employee.findUnique({
+export async function getDefaultAgentId(employeeId: string, data: PrismaClient = db): Promise<string> {
+  const employee = await data.employee.findUnique({
     where: { id: employeeId },
     select: { employeeId: true },
   });

@@ -19,7 +19,9 @@
 //     `valid:false` so no reason is ever leaked.
 
 import { randomBytes } from 'crypto';
+import type { PrismaClient } from '@prisma/client';
 import { db } from '@/lib/db';
+import { getPrismaForOrg } from '@/lib/org-db';
 import { getClientIpFromHeaders } from '@/lib/rate-limit';
 import { log } from '@/lib/logger';
 
@@ -78,6 +80,8 @@ export async function validateAgentSession(req: Request): Promise<{
     organizationId: string;
     status: string;
   };
+  /** Org data client for COPIED (org-owned) tables — see validateAgentToken. */
+  orgData?: PrismaClient;
   error?: string;
 }> {
   try {
@@ -103,7 +107,15 @@ export async function validateAgentSession(req: Request): Promise<{
       return { valid: false, error: 'Session expired' };
     }
 
-    const employee = await db.employee.findUnique({
+    // ── ORG DATA BOUNDARY ─────────────────────────────────────────────────
+    // AgentSession / AgentAccount / Organization stay PLATFORM-side, but
+    // Employee is org-owned and COPYs to the org's own database at activation
+    // — after a cutover the org DB is authoritative for it. The session row
+    // already carries the server-derived organizationId, so the org data
+    // client can be resolved before touching any org-owned row.
+    const orgData = (await getPrismaForOrg(session.organizationId)).client;
+
+    const employee = await orgData.employee.findUnique({
       where: { id: session.employeeId },
       select: {
         id: true,
@@ -158,6 +170,7 @@ export async function validateAgentSession(req: Request): Promise<{
         organizationId: employee.organizationId,
         status: employee.status,
       },
+      orgData,
     };
   } catch (error) {
     log.error('agent.session.error', { err: error, ip: getClientIpFromHeaders(req.headers) });

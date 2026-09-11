@@ -1,7 +1,7 @@
 'use server';
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
-import { authError, requireAdminOrg } from '@/lib/api';
+import { authError, requireAdminOrg, getPrismaForOrg } from '@/lib/api';
 import { log, requestContext } from '@/lib/logger';
 
 export async function POST(req: NextRequest) {
@@ -11,6 +11,7 @@ export async function POST(req: NextRequest) {
     const scope = await requireAdminOrg(req);
     if (!scope.ok) return authError(scope);
     const orgId = scope.organizationId;
+    const orgData = (await getPrismaForOrg(orgId)).client;
 
     let body: Record<string, unknown>;
     try {
@@ -48,7 +49,7 @@ export async function POST(req: NextRequest) {
 
     if (action === 'mark_read') {
       const now = new Date();
-      const result = await db.notification.updateMany({
+      const result = await orgData.notification.updateMany({
         where,
         data: { status: 'read', readAt: now },
       });
@@ -56,7 +57,7 @@ export async function POST(req: NextRequest) {
     }
 
     if (action === 'archive') {
-      const result = await db.notification.updateMany({
+      const result = await orgData.notification.updateMany({
         where,
         data: { status: 'archived' },
       });
@@ -64,7 +65,7 @@ export async function POST(req: NextRequest) {
     }
 
     if (action === 'delete') {
-      const result = await db.notification.deleteMany({ where });
+      const result = await orgData.notification.deleteMany({ where });
       return NextResponse.json({ success: true, affected: result.count });
     }
 

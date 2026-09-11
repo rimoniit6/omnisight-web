@@ -58,8 +58,10 @@ export async function POST(req: NextRequest) {
 
     // The matched policy must exist and be ACTIVE in this organization. A
     // foreign/deactivated policy id is concealed identically to a missing one
-    // (no cross-org information leak).
-    const policy = await db.appListEntry.findFirst({
+    // (no cross-org information leak). AppListEntry is org-owned (copied at
+    // activation) — read it via the org data client.
+    const orgData = authResult.orgData ?? db;
+    const policy = await orgData.appListEntry.findFirst({
       where: { id: input.policyId, organizationId: orgId, isActive: true },
       select: { id: true, appName: true, listType: true },
     });
@@ -77,7 +79,7 @@ export async function POST(req: NextRequest) {
     });
 
     try {
-      const created = await db.$transaction(async (tx) => {
+      const created = await orgData.$transaction(async (tx) => {
         const row = await tx.policyViolation.create({
           data: {
             organizationId: orgId,

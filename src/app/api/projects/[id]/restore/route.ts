@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
-import { authError, requireAdminOrg } from '@/lib/api';
+import { authError, requireAdminOrg, getPrismaForOrg } from '@/lib/api';
 import { log, requestContext } from '@/lib/logger';
 
 /**
@@ -19,9 +19,10 @@ export async function POST(
     if (!admin.ok) return authError(admin);
 
     const { id } = await params;
+    const orgData = (await getPrismaForOrg(admin.organizationId)).client;
 
     // Project must belong to the caller's org; cross-org ids -> 404.
-    const existing = await db.project.findFirst({
+    const existing = await orgData.project.findFirst({
       where: { id, organizationId: admin.organizationId },
     });
     if (!existing) {
@@ -36,7 +37,7 @@ export async function POST(
       );
     }
 
-    const project = await db.project.update({
+    const project = await orgData.project.update({
       where: { id },
       data: { status: 'active' },
       include: {
@@ -46,7 +47,7 @@ export async function POST(
     });
 
     // Audit log
-    await db.auditLog.create({
+    await orgData.auditLog.create({
       data: {
         action: 'update',
         resource: 'project',

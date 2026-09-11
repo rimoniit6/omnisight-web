@@ -376,6 +376,18 @@ The app container:
 Note: the full `seed.ts` deliberately refuses to run under
 `NODE_ENV=production`; use the production-safe plan bootstrap above instead.
 
+Realtime/live updates: the compose stack runs only PostgreSQL + the app. For
+realtime functionality, also start the Bun live-updates service on a host that
+can reach the same database:
+
+```bash
+cd mini-services/live-updates
+bun index.ts
+```
+
+Point the app at it via `NEXT_PUBLIC_LIVE_UPDATES_URL` (see *Live-Updates
+Service* under Vercel above).
+
 ### Prometheus Metrics
 
 `GET /api/metrics` exposes lightweight Prometheus text metrics: process

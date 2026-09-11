@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { authError, requireManagerOrg } from '@/lib/api';
+import { authError, getPrismaForOrg, requireManagerOrg } from '@/lib/api';
 import { log, requestContext } from '@/lib/logger';
 
 // GET /api/ai-provider/metering
@@ -12,22 +11,23 @@ export async function GET(req: NextRequest) {
     const scope = await requireManagerOrg(req);
     if (!scope.ok) return authError(scope);
     const orgId = scope.organizationId;
+    const orgData = (await getPrismaForOrg(orgId)).client;
 
     const now = new Date();
     const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
     const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
 
     const [total, today, thisMonth, errors, byOperation, recent] = await Promise.all([
-      db.aiUsage.count({ where: { organizationId: orgId } }),
-      db.aiUsage.count({ where: { organizationId: orgId, createdAt: { gte: todayStart } } }),
-      db.aiUsage.count({ where: { organizationId: orgId, createdAt: { gte: monthStart } } }),
-      db.aiUsage.count({ where: { organizationId: orgId, status: 'error' } }),
-      db.aiUsage.groupBy({
+      orgData.aiUsage.count({ where: { organizationId: orgId } }),
+      orgData.aiUsage.count({ where: { organizationId: orgId, createdAt: { gte: todayStart } } }),
+      orgData.aiUsage.count({ where: { organizationId: orgId, createdAt: { gte: monthStart } } }),
+      orgData.aiUsage.count({ where: { organizationId: orgId, status: 'error' } }),
+      orgData.aiUsage.groupBy({
         by: ['operation', 'status'],
         where: { organizationId: orgId },
         _count: { _all: true },
       }),
-      db.aiUsage.findMany({
+      orgData.aiUsage.findMany({
         where: { organizationId: orgId },
         orderBy: { createdAt: 'desc' },
         take: 50,

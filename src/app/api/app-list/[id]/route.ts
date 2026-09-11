@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { authError, requireAdminOrg } from '@/lib/api';
+import { authError, getPrismaForOrg, requireAdminOrg } from '@/lib/api';
 import { bumpPolicyVersion } from '@/lib/policies/version';
 import { log, requestContext } from '@/lib/logger';
 
@@ -14,12 +13,13 @@ export async function DELETE(
     // session — never from client input.
     const admin = await requireAdminOrg(req);
     if (!admin.ok) return authError(admin);
+    const orgData = (await getPrismaForOrg(admin.organizationId)).client;
 
     const { id } = await params;
 
     // Org ownership is part of the lookup boundary: cross-org and nonexistent
     // IDs are concealed identically (404), and produce ZERO mutations.
-    const entry = await db.appListEntry.findFirst({
+    const entry = await orgData.appListEntry.findFirst({
       where: {
         id,
         organizationId: admin.organizationId,
@@ -30,7 +30,7 @@ export async function DELETE(
       return NextResponse.json({ error: 'App list entry not found' }, { status: 404 });
     }
 
-    const updated = await db.$transaction(async (tx) => {
+    const updated = await orgData.$transaction(async (tx) => {
       const result = await tx.appListEntry.update({
         where: { id },
         data: { isActive: false },

@@ -1,7 +1,7 @@
 'use server';
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
-import { authError, requireSessionOrg, requireAdminOrg } from '@/lib/api';
+import { authError, requireSessionOrg, requireAdminOrg, getPrismaForOrg } from '@/lib/api';
 import { log, requestContext } from '@/lib/logger';
 
 export async function GET(
@@ -88,19 +88,20 @@ export async function DELETE(
     // caller's organization.
     const scope = await requireAdminOrg(req);
     if (!scope.ok) return authError(scope);
+    const orgData = (await getPrismaForOrg(scope.organizationId)).client;
 
     const { id } = await params;
     if (!id || id.length > 64) {
       return NextResponse.json({ error: 'Invalid sentiment record id' }, { status: 400 });
     }
-    const existing = await db.sentimentRecord.findFirst({
+    const existing = await orgData.sentimentRecord.findFirst({
       where: { id, employee: { organizationId: scope.organizationId } },
       select: { id: true },
     });
     if (!existing) {
       return NextResponse.json({ error: 'Sentiment record not found' }, { status: 404 });
     }
-    await db.sentimentRecord.delete({ where: { id } });
+    await orgData.sentimentRecord.delete({ where: { id } });
     return NextResponse.json({ success: true });
   } catch (error) {
     log.error('api.sentiment.id.', { error: String('Sentiment DELETE error:') }, requestContext(req));

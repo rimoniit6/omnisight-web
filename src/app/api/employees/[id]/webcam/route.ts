@@ -1,7 +1,7 @@
 'use server';
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
-import { authError, requireSessionOrg } from '@/lib/api';
+import { authError, requireSessionOrg, getPrismaForOrg } from '@/lib/api';
 import { hasActiveConsent } from '@/lib/consent';
 import { resolveOrgMonitoring } from '@/lib/jobs/settings';
 import { effectiveDeviceStatus } from '@/lib/device-status';
@@ -32,9 +32,10 @@ export async function GET(
   try {
     const scope = await requireSessionOrg(request, { allowGlobal: true });
     if (!scope.ok) return authError(scope);
+    const orgData = scope.organizationId ? (await getPrismaForOrg(scope.organizationId)).client : db;
 
     const { id } = await params;
-    const employee = await db.employee.findFirst({
+    const employee = await orgData.employee.findFirst({
       where: { id, ...(scope.organizationId ? { organizationId: scope.organizationId } : {}) },
       select: { id: true, organizationId: true },
     });
@@ -43,18 +44,18 @@ export async function GET(
     }
 
     const [activeSession, recentSessions, consentOk, monitoring, devices] = await Promise.all([
-      db.webcamSession.findFirst({
+      orgData.webcamSession.findFirst({
         where: { employeeId: id, status: 'active' },
         orderBy: { startedAt: 'desc' },
       }),
-      db.webcamSession.findMany({
+      orgData.webcamSession.findMany({
         where: { employeeId: id, status: { not: 'active' } },
         orderBy: { startedAt: 'desc' },
         take: 5,
       }),
       hasActiveConsent(employee.id, 'webcam_access'),
       resolveOrgMonitoring(employee.organizationId),
-      db.device.findMany({
+      orgData.device.findMany({
         where: { employeeId: id, status: { not: 'retired' } },
         orderBy: { registeredAt: 'desc' },
         select: { id: true, name: true, status: true, lastHeartbeat: true },
@@ -77,7 +78,8 @@ export async function GET(
     if (activeSession && activeSession.lastFrameAt) {
       const framesSilentMs = now - activeSession.lastFrameAt.getTime();
       if (framesSilentMs > FRAME_TTL_GRACE_MS) {
-        await db.webcamSession.updateMany({
+        const orgDataConverge = (await getPrismaForOrg(employee.organizationId)).client;
+        await orgDataConverge.webcamSession.updateMany({
           where: { sessionId: activeSession.sessionId, status: 'active' },
           data: { status: 'ended', endedAt: new Date(), endedReason: 'disconnect' },
         });

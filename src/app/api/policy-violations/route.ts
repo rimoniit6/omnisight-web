@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { authError, requireSessionOrg, validatePagination } from '@/lib/api';
+import { authError, requireSessionOrg, validatePagination, getPrismaForOrg } from '@/lib/api';
 import type { Prisma } from '@prisma/client';
 import { log, requestContext } from '@/lib/logger';
 
@@ -17,6 +16,7 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ data: [], total: 0, page: 1, pageSize: 20, totalPages: 0 });
     }
     const orgId = scope.organizationId;
+    const orgData = (await getPrismaForOrg(orgId)).client;
 
     const { searchParams } = new URL(req.url);
     const pagination = validatePagination(searchParams, { defaultPageSize: 20, maxPageSize: 100 });
@@ -38,15 +38,15 @@ export async function GET(req: NextRequest) {
     if (search) where.executableName = { contains: search };
 
     const [rows, total, summaryRows] = await Promise.all([
-      db.policyViolation.findMany({
+      orgData.policyViolation.findMany({
         where,
         orderBy: { createdAt: 'desc' },
         skip: pagination.skip,
         take: pagination.pageSize,
       }),
-      db.policyViolation.count({ where }),
+      orgData.policyViolation.count({ where }),
       // Summary counts via DB-side aggregation — never loaded into memory.
-      db.policyViolation.groupBy({
+      orgData.policyViolation.groupBy({
         by: ['severity'],
         where: { organizationId: orgId },
         _count: { _all: true },

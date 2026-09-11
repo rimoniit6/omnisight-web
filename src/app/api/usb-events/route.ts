@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
 import type { Prisma } from '@prisma/client';
-import { authError, requireSessionOrg, validatePagination, parseOptionalDate } from '@/lib/api';
+import { authError, requireSessionOrg, validatePagination, parseOptionalDate, getPrismaForOrg } from '@/lib/api';
 import { isValidUsbEventType } from '@/lib/policies/constants';
 import { log, requestContext } from '@/lib/logger';
 
@@ -26,6 +25,7 @@ export async function GET(req: NextRequest) {
       });
     }
     const orgId = scope.organizationId;
+    const orgData = (await getPrismaForOrg(orgId)).client;
 
     const { searchParams } = new URL(req.url);
     const pagination = validatePagination(searchParams, { defaultPageSize: 20, maxPageSize: 100 });
@@ -61,13 +61,13 @@ export async function GET(req: NextRequest) {
     }
 
     const [events, total] = await Promise.all([
-      db.usbEvent.findMany({
+      orgData.usbEvent.findMany({
         where,
         orderBy: { createdAt: 'desc' },
         skip: pagination.skip,
         take: pagination.pageSize,
       }),
-      db.usbEvent.count({ where }),
+      orgData.usbEvent.count({ where }),
     ]);
 
     // UsbEvent has no relations in the schema — join employees/devices manually
@@ -76,13 +76,13 @@ export async function GET(req: NextRequest) {
     type EmployeeBrief = { id: string; firstName: string; lastName: string; employeeId: string };
     type DeviceBrief = { id: string; name: string };
     const employees: EmployeeBrief[] = empIds.length > 0
-      ? await db.employee.findMany({
+      ? await orgData.employee.findMany({
           where: { id: { in: empIds } },
           select: { id: true, firstName: true, lastName: true, employeeId: true },
         })
       : [];
     const devices: DeviceBrief[] = devIds.length > 0
-      ? await db.device.findMany({
+      ? await orgData.device.findMany({
           where: { id: { in: devIds } },
           select: { id: true, name: true },
         })
@@ -99,10 +99,10 @@ export async function GET(req: NextRequest) {
     const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
     const summaryScope: Prisma.UsbEventWhereInput = { organizationId: orgId, createdAt: { gte: sevenDaysAgo } };
     const [eventCount, blockedCount, insertCount, removeCount] = await Promise.all([
-      db.usbEvent.count({ where: summaryScope }),
-      db.usbEvent.count({ where: { ...summaryScope, blocked: true } }),
-      db.usbEvent.count({ where: { ...summaryScope, eventType: 'usb_insert' } }),
-      db.usbEvent.count({ where: { ...summaryScope, eventType: 'usb_remove' } }),
+      orgData.usbEvent.count({ where: summaryScope }),
+      orgData.usbEvent.count({ where: { ...summaryScope, blocked: true } }),
+      orgData.usbEvent.count({ where: { ...summaryScope, eventType: 'usb_insert' } }),
+      orgData.usbEvent.count({ where: { ...summaryScope, eventType: 'usb_remove' } }),
     ]);
 
     return NextResponse.json({

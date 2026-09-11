@@ -2,7 +2,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { Prisma } from '@prisma/client';
 import { db } from '@/lib/db';
-import { requireManagerOrg, authError } from '@/lib/api';
+import { requireManagerOrg, authError, getPrismaForOrg } from '@/lib/api';
 import { NON_INTERNAL_AGENT_ACTIVITY_FILTER } from '@/lib/agent-process';
 import { safeTimezone, zonedDayStart, addDaysToKey, localDayKey } from '@/lib/timezone';
 import { subDays } from 'date-fns';
@@ -83,9 +83,10 @@ export async function GET(
     // Auth: manager+ role + org scope
     const auth = await requireManagerOrg(request);
     if (!auth.ok) return authError(auth);
+    const orgData = (await getPrismaForOrg(auth.organizationId)).client;
 
     // Org-scoped employee lookup — foreign/nonexistent ids are concealed as 404.
-    const employee = await db.employee.findFirst({
+    const employee = await orgData.employee.findFirst({
       where: { id, ...(auth.organizationId ? { organizationId: auth.organizationId } : {}) },
       select: { id: true, firstName: true, lastName: true, organizationId: true },
     });
@@ -136,7 +137,7 @@ export async function GET(
 
     // Collect rows page-by-page with a hard cap
     const collected: ActivityExportRow[] = [];
-    let page = await db.activity.findMany({
+    let page = await orgData.activity.findMany({
       where: baseWhere,
       include,
       orderBy,
@@ -150,7 +151,7 @@ export async function GET(
       }
       if (page.length < EXPORT_PAGE_SIZE || collected.length >= MAX_EXPORT_ROWS) break;
       const last = page[page.length - 1];
-      page = await db.activity.findMany({
+      page = await orgData.activity.findMany({
         where: {
           ...baseWhere,
           OR: [
@@ -192,7 +193,7 @@ export async function GET(
     const csv = generateCSV(ACTIVITY_EXPORT_COLUMNS, data);
 
     // Audit log
-    await db.auditLog.create({
+    await orgData.auditLog.create({
       data: {
         action: 'export',
         resource: 'activity',

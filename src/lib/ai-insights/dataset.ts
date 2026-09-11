@@ -11,7 +11,9 @@
 // TimeEntry rows, no PII beyond employee display name + department + role, no
 // secrets. Bounded to MAX_EMPLOYEES so a large org cannot blow up the prompt.
 
+import type { PrismaClient } from '@prisma/client';
 import { db } from '@/lib/db';
+import { getPrismaForOrg } from '@/lib/org-db';
 import { hasActiveConsent } from '@/lib/consent';
 import { NON_INTERNAL_AGENT_ACTIVITY_FILTER } from '@/lib/agent-process';
 import { createHash } from 'crypto';
@@ -113,6 +115,10 @@ export async function buildInsightDataset(
 ): Promise<InsightDataset> {
   const { periodStart, periodEnd } = filters;
 
+  // Organization identity is platform-owned; Employee/Activity/TimeEntry/
+  // Project/Consent are org-owned (copied at activation) — resolve the org
+  // client for every operational read below.
+  const orgData = (await getPrismaForOrg(organizationId)).client;
   const org = await db.organization.findUnique({
     where: { id: organizationId },
     select: { id: true, name: true, timezone: true },
@@ -126,7 +132,7 @@ export async function buildInsightDataset(
     ...(filters.employeeId ? { id: filters.employeeId } : {}),
     ...(filters.departmentId ? { departmentId: filters.departmentId } : {}),
   };
-  const employees = await db.employee.findMany({
+  const employees = await orgData.employee.findMany({
     where: employeeWhere,
     select: {
       id: true,
@@ -155,9 +161,9 @@ export async function buildInsightDataset(
     scoped = employees.filter((e) => (e.projectMembers ?? []).length > 0);
   }
 
-  // 2. Consent gate (batched, bounded)
+  // 2. Consent gate (batched, bounded) — Consent/ConsentPolicy are org-owned.
   const consentResults = await Promise.all(
-    scoped.map(async (e) => ({ e, consented: await hasActiveConsent(e.id, 'activity_tracking') }))
+    scoped.map(async (e) => ({ e, consented: await hasActiveConsent(e.id, 'activity_tracking', orgData) }))
   );
   const consented = consentResults.filter((r) => r.consented).map((r) => r.e);
   const consentSkipped = scoped.length - consented.length;
@@ -174,7 +180,7 @@ export async function buildInsightDataset(
     // Fetch the period's activity for the scoped employees (internal agent
     // rows excluded at query time). Bounded by the employee cap; durations
     // aggregated below. Indexed by (employeeId, timestamp).
-    const rows = await db.activity.findMany({
+    const rows = await orgData.activity.findMany({
       where: {
         employeeId: { in: empIds },
         timestamp: { gte: periodStart, lte: periodEnd },
@@ -208,7 +214,7 @@ export async function buildInsightDataset(
   // 5. TimeEntry hours per employee+project in the period
   let timeEntries: Array<{ employeeId: string; projectId: string; hours: number }> = [];
   if (empIds.length > 0) {
-    const entries = await db.timeEntry.findMany({
+    const entries = await orgData.timeEntry.findMany({
       where: {
         employeeId: { in: empIds },
         organizationId,
@@ -236,7 +242,7 @@ export async function buildInsightDataset(
     deadline: Date | null;
   }> = [];
   if (referencedProjectIds.size > 0) {
-    projectRows = await db.project.findMany({
+    projectRows = await orgData.project.findMany({
       where: { id: { in: [...referencedProjectIds] }, organizationId },
       select: { id: true, name: true, status: true, estimatedHours: true, deadline: true },
     });

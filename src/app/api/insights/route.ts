@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
-import { authError, getSessionOrg, requireManagerOrg, parseJsonBody, BodyParseError } from '@/lib/api';
+import { authError, getSessionOrg, requireManagerOrg, parseJsonBody, BodyParseError, getPrismaForOrg } from '@/lib/api';
 import { runAiInsightsAnalysis } from '@/lib/ai-insights/engine';
 import { parseInsightFilters } from '@/lib/ai-insights/filters';
 import { safeTimezone } from '@/lib/timezone';
@@ -10,7 +10,8 @@ export async function GET(req: NextRequest) {
   try {
     const org = await getSessionOrg(req);
     if (!org) return NextResponse.json({ error: 'No organization found' }, { status: 400 });
-    const insights = await db.aiInsight.findMany({
+    const orgData = (await getPrismaForOrg(org.id)).client;
+    const insights = await orgData.aiInsight.findMany({
       where: { organizationId: org.id },
       orderBy: { createdAt: 'desc' },
     });
@@ -40,6 +41,7 @@ export async function POST(req: NextRequest) {
     const scope = await requireManagerOrg(req);
     if (!scope.ok) return authError(scope);
     const orgId = scope.organizationId;
+    const orgData = (await getPrismaForOrg(orgId)).client;
 
     const orgRow = await db.organization.findUnique({
       where: { id: orgId },
@@ -64,7 +66,7 @@ export async function POST(req: NextRequest) {
       departmentId: typeof body.departmentId === 'string' ? body.departmentId : null,
       projectId: typeof body.projectId === 'string' ? body.projectId : null,
     };
-    const parsed = await parseInsightFilters(orgId, orgTz, filterParams);
+    const parsed = await parseInsightFilters(orgId, orgTz, filterParams, orgData);
     if (!parsed.ok) return parsed.response;
 
     const result = await runAiInsightsAnalysis({
@@ -155,7 +157,7 @@ export async function POST(req: NextRequest) {
       },
     });
 
-    const insight = await db.$transaction(async (tx) => {
+    const insight = await orgData.$transaction(async (tx) => {
       const created = await tx.aiInsight.create({
         data: {
           title,

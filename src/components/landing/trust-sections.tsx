@@ -73,10 +73,10 @@ export function DeploymentModes() {
           copyKey="deployment"
           eyebrow="Deployment Modes"
           title="Choose the way your organization runs."
-          subtitle="One OmniSight platform, three deployment models — the organization record always decides the runtime mode, never the device."
+          subtitle="One OmniSight platform, two deployment models — the organization record always decides the runtime mode, never the device."
         />
 
-        <div className="mt-14 grid gap-5 md:grid-cols-3">
+        <div className="mt-14 mx-auto grid max-w-3xl grid-cols-1 gap-5 sm:grid-cols-2">
           {MODES.map((mode, i) => (
             <Reveal key={mode.name} delay={i * 0.1} className="h-full">
               <div className="glass-panel group flex h-full flex-col rounded-2xl p-7 transition-colors hover:border-cyan-300/30">

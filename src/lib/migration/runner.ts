@@ -16,6 +16,7 @@ import { decryptSecret } from '@/lib/crypto';
 import { log } from '@/lib/logger';
 import { applyDatabaseSwitch, applyStorageSwitch, revertDatabaseSwitch, revertStorageSwitch } from '@/lib/infra-connect';
 import { getPrismaForOrg } from '@/lib/org-db';
+import { getOrgStorage } from '@/lib/org-storage';
 import { storage as platformStorage } from '@/lib/storage';
 import { runDatabaseMigration, drainDatabaseCutover, verifyCutoverDestination, buildDestinationDbClient, userSafeError } from './db-migrate';
 import type { TableProgressMap } from './plan';
@@ -33,15 +34,19 @@ const CUTOVER_MAX_DRAIN_PASSES = 50;
 // the loop early. Live orgs converge across these bounded passes; the
 // deterministic guarantee for anything still in flight lives in the cutover
 // drain at activation, not here.
-const MAX_RECONCILE_PASSES = 3;
+const MAX_RECONCILE_PASSES = 5;
 
-export const MIGRATION_STATUSES = ['queued', 'migrating', 'verifying', 'ready_to_activate', 'cutover', 'activated', 'failed', 'cancelled'] as const;
+export const MIGRATION_STATUSES = ['queued', 'migrating', 'reconciling', 'verifying', 'ready_to_activate', 'cutover', 'activated', 'failed', 'cancelled'] as const;
 export type MigrationStatus = (typeof MIGRATION_STATUSES)[number];
 
 /** Server-side transition table — invalid transitions are rejected, never coerced. */
 export const MIGRATION_TRANSITIONS: Record<MigrationStatus, MigrationStatus[]> = {
   queued: ['migrating', 'cancelled'],
-  migrating: ['verifying', 'failed', 'queued'],
+  migrating: ['reconciling', 'verifying', 'failed', 'queued'],
+  // Reconciliation: initial copy is done; the engine is re-running to fold in
+  // rows that arrived during the transfer. A zero-drift pass skips directly
+  // to verifying.
+  reconciling: ['verifying', 'failed', 'queued'],
   verifying: ['ready_to_activate', 'failed'],
   // ready → cutover begins the deterministic cutover (routing flip + drain).
   // A stranded 'cutover' row (worker died between flip and finalize) is
@@ -132,7 +137,7 @@ export async function cancelQueuedMigration(requestId: string, reason: string): 
 /** True when the request's migration is actively running (unsafe to cancel). */
 export async function isMigrationRunning(requestId: string): Promise<boolean> {
   const m = await db.infrastructureMigration.findUnique({ where: { requestId }, select: { status: true } });
-  return m?.status === 'migrating' || m?.status === 'verifying' || m?.status === 'cutover';
+  return m?.status === 'migrating' || m?.status === 'reconciling' || m?.status === 'verifying' || m?.status === 'cutover';
 }
 
 /**
@@ -477,13 +482,13 @@ async function claimNext(): Promise<ClaimedMigration | null> {
   // 1) Requeue stale in-flight rows (lease lapsed → previous worker died).
   const staleCutoff = new Date(Date.now() - STALE_MIGRATING_MS);
   const stale = await db.infrastructureMigration.findMany({
-    where: { status: { in: ['migrating', 'verifying'] }, updatedAt: { lt: staleCutoff } },
+    where: { status: { in: ['migrating', 'reconciling', 'verifying'] }, updatedAt: { lt: staleCutoff } },
     select: { id: true },
     take: 1,
   });
   if (stale.length > 0) {
     await db.infrastructureMigration.updateMany({
-      where: { id: stale[0].id, status: { in: ['migrating', 'verifying'] }, updatedAt: { lt: staleCutoff } },
+      where: { id: stale[0].id, status: { in: ['migrating', 'reconciling', 'verifying'] }, updatedAt: { lt: staleCutoff } },
       data: { status: 'queued', errorStage: null, errorMessage: null },
     });
     log.warn('migration.stale_requeued', { migrationId: stale[0].id });
@@ -596,6 +601,14 @@ export async function runDueMigrations(): Promise<{ ran: boolean; migrationId?: 
       // ready_to_activate never claims a hole-free transfer, only a verified,
       // loss-free snapshot boundary.
       let outcome = await runPass();
+      // If the initial copy did not achieve zeroDrift (new rows arrived during
+      // the transfer), enter the RECONCILING phase: re-run the (idempotent)
+      // copy engine until a zero-drift pass or the bounded budget is exhausted.
+      // The UI distinguishes this from the initial transfer via the
+      // 'reconciling' status.
+      if (!outcome.zeroDrift && outcome.ok) {
+        await db.infrastructureMigration.update({ where: { id }, data: { status: 'reconciling' } });
+      }
       for (let pass = 0; pass < MAX_RECONCILE_PASSES && outcome.ok && !outcome.zeroDrift; pass++) {
         outcome = await runPass();
       }
@@ -679,7 +692,7 @@ export async function runDueMigrations(): Promise<{ ran: boolean; migrationId?: 
     return { ran: true, migrationId: id, outcome: 'ready_to_activate' };
   } catch (err) {
     await db.infrastructureMigration.updateMany({
-      where: { id, status: { in: ['migrating', 'verifying'] } },
+      where: { id, status: { in: ['migrating', 'reconciling', 'verifying'] } },
       data: { status: 'failed', errorStage: 'migrate', errorMessage: userSafeError(err), finishedAt: new Date() },
     });
     await audit(organizationId, 'migration_failed', id, `Data migration FAILED: ${userSafeError(err)} — existing infrastructure remains active`);

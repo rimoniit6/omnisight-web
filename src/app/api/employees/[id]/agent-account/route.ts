@@ -1,7 +1,7 @@
 'use server';
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
-import { authError, requireAdminOrg } from '@/lib/api';
+import { authError, requireAdminOrg, getPrismaForOrg } from '@/lib/api';
 import { checkRateLimit, RATE_LIMITS, getClientIpFromHeaders } from '@/lib/rate-limit';
 import { Prisma } from '@prisma/client';
 import { log, requestContext } from '@/lib/logger';
@@ -22,19 +22,28 @@ export async function GET(
 ) {
   const admin = await requireAdminOrg(req);
   if (!admin.ok) return authError(admin);
+  // Employee is org-owned (copied at activation) — read via the org client.
+  const orgData = (await getPrismaForOrg(admin.organizationId)).client;
 
   const { id } = await params;
-  const employee = await db.employee.findFirst({
+  // Employee is org-owned (copied at activation) — org client. AgentAccount is
+  // a platform-owned credential row keyed by employeeId, so it is looked up
+  // separately on the platform DB (same cross-DB pattern as validateAgentToken).
+  const employee = await orgData.employee.findFirst({
     where: { id, organizationId: admin.organizationId },
-    select: { id: true, agentAccount: { select: { id: true, agentId: true, status: true, lastLoginAt: true, failedLoginCount: true, lockedUntil: true, passwordChangedAt: true, createdAt: true, updatedAt: true } } },
+    select: { id: true },
   });
   if (!employee) {
     return NextResponse.json({ error: 'Employee not found' }, { status: 404 });
   }
-  if (!employee.agentAccount) {
+  const account = await db.agentAccount.findUnique({
+    where: { employeeId: employee.id },
+    select: { id: true, agentId: true, status: true, lastLoginAt: true, failedLoginCount: true, lockedUntil: true, passwordChangedAt: true, createdAt: true, updatedAt: true },
+  });
+  if (!account) {
     return NextResponse.json({ data: null });
   }
-  return NextResponse.json({ data: employee.agentAccount });
+  return NextResponse.json({ data: account });
 }
 
 // POST /api/employees/[id]/agent-account
@@ -67,8 +76,9 @@ export async function POST(
     return NextResponse.json({ error: 'Agent ID must be 1-64 characters' }, { status: 400 });
   }
 
-  // Employee must exist in the admin's organization.
-  const employee = await db.employee.findFirst({
+  // Employee must exist in the admin's organization (org-owned — org client).
+  const orgData = (await getPrismaForOrg(admin.organizationId)).client;
+  const employee = await orgData.employee.findFirst({
     where: { id, organizationId: admin.organizationId },
     select: { id: true, employeeId: true, firstName: true, lastName: true },
   });
@@ -77,6 +87,7 @@ export async function POST(
   }
 
   // Check for existing account BEFORE attempting create (cleaner error message than P2002).
+  // AgentAccount is platform-owned (credential row) — checked on the platform DB.
   const existing = await db.agentAccount.findUnique({ where: { employeeId: employee.id } });
   if (existing) {
     return NextResponse.json({ error: 'Agent account already exists for this employee' }, { status: 409 });
@@ -89,8 +100,8 @@ export async function POST(
       password,
     });
 
-    // Audit log
-    await db.auditLog.create({
+    // Audit log (org-owned rows land on the org client)
+    await orgData.auditLog.create({
       data: {
         action: 'create',
         resource: 'agent_account',
@@ -144,20 +155,27 @@ export async function PATCH(
     return NextResponse.json({ error: 'Status must be "active" or "disabled"' }, { status: 400 });
   }
 
-  const employee = await db.employee.findFirst({
+  // Employee is org-owned (copied at activation) — org client. AgentAccount is
+  // a platform-owned credential row keyed by employeeId (platform lookup).
+  const orgData = (await getPrismaForOrg(admin.organizationId)).client;
+  const employee = await orgData.employee.findFirst({
     where: { id, organizationId: admin.organizationId },
-    select: { id: true, firstName: true, lastName: true, agentAccount: { select: { id: true } } },
+    select: { id: true, firstName: true, lastName: true },
   });
   if (!employee) {
     return NextResponse.json({ error: 'Employee not found' }, { status: 404 });
   }
-  if (!employee.agentAccount) {
+  const agentAccountRow = await db.agentAccount.findUnique({
+    where: { employeeId: employee.id },
+    select: { id: true },
+  });
+  if (!agentAccountRow) {
     return NextResponse.json({ error: 'No agent account exists for this employee' }, { status: 404 });
   }
 
-  const account = await setAgentAccountStatus(employee.agentAccount.id, status as 'active' | 'disabled');
+  const account = await setAgentAccountStatus(agentAccountRow.id, status as 'active' | 'disabled');
 
-  await db.auditLog.create({
+  await orgData.auditLog.create({
     data: {
       action: 'update',
       resource: 'agent_account',

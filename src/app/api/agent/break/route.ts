@@ -36,6 +36,9 @@ export async function POST(req: NextRequest) {
     const employeeId = authResult.employee!.id;
     const organizationId = authResult.employee!.organizationId;
     const deviceId = authResult.deviceId || null;
+    // ORG DATA BOUNDARY: BreakSession/Activity/AuditLog are org-owned and COPY
+    // to the org DB at cutover — route the writes through the org data client.
+    const orgData = authResult.orgData;
 
     if (breakMode) {
       const result = await startBreak({
@@ -44,7 +47,7 @@ export async function POST(req: NextRequest) {
         deviceId,
         source: 'agent',
         actor: deviceId,
-      });
+      }, orgData);
       return NextResponse.json({
         success: true,
         breakMode: true,
@@ -63,7 +66,7 @@ export async function POST(req: NextRequest) {
       deviceId,
       source: 'agent',
       actor: deviceId,
-    });
+    }, orgData);
     return NextResponse.json({
       success: true,
       breakMode: false,

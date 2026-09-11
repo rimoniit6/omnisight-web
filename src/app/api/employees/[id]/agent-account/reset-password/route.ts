@@ -1,7 +1,7 @@
 'use server';
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
-import { authError, requireAdminOrg } from '@/lib/api';
+import { authError, getPrismaForOrg, requireAdminOrg } from '@/lib/api';
 import { checkRateLimit, RATE_LIMITS, getClientIpFromHeaders } from '@/lib/rate-limit';
 import { resetAgentAccountPassword, toPublicAccount } from '@/lib/agent-account';
 import { log, requestContext } from '@/lib/logger';
@@ -31,19 +31,21 @@ export async function POST(
     return NextResponse.json({ error: 'Password is required' }, { status: 400 });
   }
 
-  const employee = await db.employee.findFirst({
+  // Employee is org-owned (copied at activation) — org client. AgentAccount is
+  // a platform-owned credential row keyed by employeeId (platform lookup).
+  const orgData = (await getPrismaForOrg(admin.organizationId)).client;
+  const employee = await orgData.employee.findFirst({
     where: { id, organizationId: admin.organizationId },
-    select: {
-      id: true,
-      firstName: true,
-      lastName: true,
-      agentAccount: { select: { id: true, agentId: true, status: true, passwordChangedAt: true } },
-    },
+    select: { id: true, firstName: true, lastName: true },
   });
   if (!employee) {
     return NextResponse.json({ error: 'Employee not found' }, { status: 404 });
   }
-  if (!employee.agentAccount) {
+  const agentAccountRow = await db.agentAccount.findUnique({
+    where: { employeeId: employee.id },
+    select: { id: true, agentId: true, status: true, passwordChangedAt: true },
+  });
+  if (!agentAccountRow) {
     return NextResponse.json({ error: 'No agent account exists for this employee' }, { status: 404 });
   }
 
@@ -53,12 +55,12 @@ export async function POST(
     // is ACTIVATED by the same reset call. A deliberately disabled account
     // (passwordChangedAt set) stays disabled — the admin enables it explicitly.
     const isPlaceholder =
-      employee.agentAccount.status === 'disabled' && employee.agentAccount.passwordChangedAt === null;
-    const account = await resetAgentAccountPassword(employee.agentAccount.id, password, {
+      agentAccountRow.status === 'disabled' && agentAccountRow.passwordChangedAt === null;
+    const account = await resetAgentAccountPassword(agentAccountRow.id, password, {
       activate: isPlaceholder,
     });
 
-    await db.auditLog.create({
+    await orgData.auditLog.create({
       data: {
         action: 'reset',
         resource: 'agent_account',

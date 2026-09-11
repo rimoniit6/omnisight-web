@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
-import { authError, requireSessionOrg, requireAdminOrg } from '@/lib/api';
+import { authError, requireSessionOrg, requireAdminOrg, getPrismaForOrg } from '@/lib/api';
 import { log, requestContext } from '@/lib/logger';
+import type { PrismaClient } from '@prisma/client';
 
 // Authoritative value sets (mirror of the Project model comments).
 const PROJECT_STATUSES = ['active', 'on_hold', 'completed', 'cancelled'] as const;
@@ -11,8 +12,8 @@ const MAX_NAME_LENGTH = 120;
 
 /** Case-insensitive duplicate-name check within an org (provider-agnostic:
  *  fetches the org's project names and compares lowercased in JS). */
-async function findDuplicateName(organizationId: string, name: string, excludeId?: string) {
-  const existing = await db.project.findMany({
+async function findDuplicateName(organizationId: string, name: string, data: PrismaClient, excludeId?: string) {
+  const existing = await data.project.findMany({
     where: { organizationId, ...(excludeId ? { id: { not: excludeId } } : {}) },
     select: { id: true, name: true },
   });
@@ -135,8 +136,9 @@ export async function PUT(
 
     const { id } = await params;
     const body = await req.json();
+    const orgData = (await getPrismaForOrg(admin.organizationId)).client;
 
-    const existing = await db.project.findFirst({
+    const existing = await orgData.project.findFirst({
       where: { id, organizationId: admin.organizationId },
     });
     if (!existing) {
@@ -188,7 +190,7 @@ export async function PUT(
 
     // Duplicate names (case-insensitive) within the org, excluding self.
     if (name !== undefined) {
-      const dup = await findDuplicateName(admin.organizationId, name.trim(), id);
+      const dup = await findDuplicateName(admin.organizationId, name.trim(), orgData, id);
       if (dup) {
         return NextResponse.json(
           { error: 'A project with this name already exists in your organization' },
@@ -199,7 +201,7 @@ export async function PUT(
 
     // Cross-org validation: departmentId must belong to the caller's org.
     if (departmentId) {
-      const dept = await db.department.findFirst({
+      const dept = await orgData.department.findFirst({
         where: { id: departmentId, organizationId: admin.organizationId },
         select: { id: true },
       });
@@ -222,7 +224,7 @@ export async function PUT(
     if (departmentId !== undefined) updateData.departmentId = departmentId;
     if (tags !== undefined) updateData.tags = JSON.stringify(tags);
 
-    const project = await db.project.update({
+    const project = await orgData.project.update({
       where: { id },
       data: updateData,
       include: { department: { select: { id: true, name: true } } },
@@ -230,7 +232,7 @@ export async function PUT(
 
     // Audit log
     const changes = Object.keys(updateData).join(', ');
-    await db.auditLog.create({
+    await orgData.auditLog.create({
       data: {
         action: 'update',
         resource: 'project',
@@ -257,8 +259,9 @@ export async function DELETE(
     if (!admin.ok) return authError(admin);
 
     const { id } = await params;
+    const orgData = (await getPrismaForOrg(admin.organizationId)).client;
 
-    const existing = await db.project.findFirst({
+    const existing = await orgData.project.findFirst({
       where: { id, organizationId: admin.organizationId },
     });
     if (!existing) {
@@ -270,7 +273,7 @@ export async function DELETE(
     // cleared in the same transaction — an archived project can never remain
     // an active tracking target (the sync engine also rejects cancelled
     // projects, but the field should stay honest).
-    const project = await db.$transaction(async (tx) => {
+    const project = await orgData.$transaction(async (tx) => {
       const saved = await tx.project.update({
         where: { id },
         data: { status: 'cancelled' },

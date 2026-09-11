@@ -15,6 +15,7 @@
 // via instrumentation.ts on a ~30-minute cadence plus the hourly run.
 
 import { db } from '@/lib/db';
+import { getPrismaForOrg } from '@/lib/org-db';
 import { effectiveLiveStatus } from '@/lib/presence';
 
 export interface SyncDeviceCountResult {
@@ -34,38 +35,41 @@ export interface SyncDeviceCountResult {
 export async function syncDeviceCounts(now = new Date()): Promise<SyncDeviceCountResult> {
   const result: SyncDeviceCountResult = { organizations: 0, activeDevices: 0, updated: 0, errors: [] };
 
-  // One batched read of every device's presence-relevant columns.
-  const devices = await db.device.findMany({
-    select: { organizationId: true, status: true, lastHeartbeat: true },
-  });
-
+  // Device is org-owned (copied at activation) — read each ACTIVE org's
+  // devices from ITS OWN database; a global platform scan would miss
+  // post-cutover rows entirely. Organization.activeDeviceCount is a
+  // platform-owned control-plane column — the update stays on the platform DB.
+  const orgs = await db.organization.findMany({ where: { status: 'active' }, select: { id: true } });
   const activeByOrg = new Map<string, number>();
-  const orgIds = new Set<string>();
-  for (const device of devices) {
-    orgIds.add(device.organizationId);
-    if (effectiveLiveStatus(device.status, device.lastHeartbeat, now) === 'online') {
-      activeByOrg.set(device.organizationId, (activeByOrg.get(device.organizationId) ?? 0) + 1);
+  for (const org of orgs) {
+    const orgData = (await getPrismaForOrg(org.id)).client;
+    // Org filter: on a shared platform client (org not yet activated) this
+    // restricts the scan to THIS org's devices — otherwise every iteration
+    // would count the entire platform device set for every org.
+    const devices = await orgData.device.findMany({
+      where: { organizationId: org.id },
+      select: { status: true, lastHeartbeat: true },
+    });
+    let active = 0;
+    for (const device of devices) {
+      if (effectiveLiveStatus(device.status, device.lastHeartbeat, now) === 'online') {
+        active += 1;
+      }
     }
+    activeByOrg.set(org.id, active);
   }
 
   result.activeDevices = activeByOrg.size
     ? [...activeByOrg.values()].reduce((a, b) => a + b, 0)
     : 0;
 
-  const toUpdate = [...orgIds].map((orgId) => ({
-    id: orgId,
-    activeDeviceCount: activeByOrg.get(orgId) ?? 0,
-  }));
-
-  // Persist per-org (activates the @updatedAt column automatically). Skipping
-  // orgs not present in the device projection is correct: syncDeviceCounts only
-  // writes orgs that currently have at least one Device row; an org with zero
-  // devices keeps whatever count the write path left it (baseline 0).
+  // Persist per-org on the platform control plane (activates @updatedAt). An
+  // org with zero devices stores 0 explicitly (the write path's baseline).
   try {
-    for (const org of toUpdate) {
+    for (const [orgId, count] of activeByOrg) {
       await db.organization.updateMany({
-        where: { id: org.id },
-        data: { activeDeviceCount: org.activeDeviceCount },
+        where: { id: orgId },
+        data: { activeDeviceCount: count },
       });
       result.updated += 1;
     }
@@ -73,6 +77,6 @@ export async function syncDeviceCounts(now = new Date()): Promise<SyncDeviceCoun
     result.errors.push(String(error));
   }
 
-  result.organizations = orgIds.size;
+  result.organizations = activeByOrg.size;
   return result;
 }

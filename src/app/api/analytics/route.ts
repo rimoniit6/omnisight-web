@@ -2,7 +2,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { Prisma } from '@prisma/client';
 import { db } from '@/lib/db';
-import { authError, requireSessionOrg } from '@/lib/api';
+import { authError, getPrismaForOrg, requireSessionOrg } from '@/lib/api';
 import { NON_INTERNAL_AGENT_ACTIVITY_FILTER, INTERNAL_AGENT_PROCESS_NAMES } from '@/lib/agent-process';
 import { zonedDayStart, zonedDayEnd, dayKeysBetween, lastNDayKeys } from '@/lib/timezone';
 import { log, requestContext } from '@/lib/logger';
@@ -62,6 +62,11 @@ export async function GET(req: NextRequest) {
     if (!scope.ok) return authError(scope);
     if (!scope.organizationId) return emptyAnalytics();
     const orgId = scope.organizationId;
+    // Org data client: Activity / Employee / Department are org-owned (copied
+    // at activation) — every Prisma and raw-SQL query below runs there, never
+    // on the platform DB after cutover. Organization itself is platform-owned
+    // (identity/control plane) and stays on `db`.
+    const orgData = (await getPrismaForOrg(orgId)).client;
 
     const { searchParams } = new URL(req.url);
     const period = searchParams.get('period') || 'week';
@@ -116,7 +121,7 @@ export async function GET(req: NextRequest) {
     };
 
     // ── Summary: workload distribution + totals (zero rows materialized) ──
-    const byCategory = await db.activity.groupBy({
+    const byCategory = await orgData.activity.groupBy({
       by: ['category'],
       where,
       _sum: { duration: true },
@@ -131,7 +136,7 @@ export async function GET(req: NextRequest) {
     const totalActivities = byCategory.reduce((s, g) => s + (g._count?._all ?? 0), 0);
 
     // ── Active employees in period (distinct employeeIds, zero rows) ──
-    const empGroups = await db.activity.groupBy({ by: ['employeeId'], where });
+    const empGroups = await orgData.activity.groupBy({ by: ['employeeId'], where });
     const activeEmployees = empGroups.length;
 
     // ── Productivity trends: per (org-local day, category) from the DB. The
@@ -148,7 +153,7 @@ export async function GET(req: NextRequest) {
     //     sent as naive UTC wall-clock text and cast `::timestamp` explicitly
     //     so every comparison is session-TZ independent.
     const utcTs = (d: Date) => d.toISOString().slice(0, 19).replace('T', ' ');
-    const trendRows = await db.$queryRaw<Array<{ day: string; category: string | null; duration: bigint }>>`
+    const trendRows = await orgData.$queryRaw<Array<{ day: string; category: string | null; duration: bigint }>>`
       SELECT
         (a."timestamp" AT TIME ZONE 'UTC' AT TIME ZONE ${orgTz})::date::text AS "day",
         a."category" AS "category",
@@ -197,12 +202,12 @@ export async function GET(req: NextRequest) {
 
     // ── Department breakdown: employee→category sums, bucketed by the
     // employee→department map (same membership semantics as before). ──
-    const departments = await db.department.findMany({
+    const departments = await orgData.department.findMany({
       where: { organizationId: orgId },
       include: { _count: { select: { employees: true } } },
     });
 
-    const deptEmployees = await db.employee.findMany({
+    const deptEmployees = await orgData.employee.findMany({
       where: { departmentId: { in: departments.map((d) => d.id) }, status: 'active', organizationId: orgId },
       select: { id: true, departmentId: true },
     });
@@ -214,7 +219,7 @@ export async function GET(req: NextRequest) {
       employeesByDept.set(e.departmentId, set);
     }
 
-    const deptBuckets = await db.activity.groupBy({
+    const deptBuckets = await orgData.activity.groupBy({
       by: ['employeeId', 'category'],
       where,
       _sum: { duration: true },
@@ -261,7 +266,7 @@ export async function GET(req: NextRequest) {
     // insertion-ordered), except 'productive' wins when ANY row is
     // productive (the old JS overwrote the category with 'productive' on
     // sight of a productive row). ──
-    const appRows = await db.$queryRaw<Array<{ key: string; type: string; category: string | null; duration: bigint; count: number }>>`
+    const appRows = await orgData.$queryRaw<Array<{ key: string; type: string; category: string | null; duration: bigint; count: number }>>`
       SELECT
         COALESCE(a."applicationName", a."url", a."title", 'Unknown') AS "key",
         (array_agg(a."type" ORDER BY a."createdAt", a."id"))[1] AS "type",

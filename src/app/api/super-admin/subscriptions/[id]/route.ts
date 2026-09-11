@@ -1,6 +1,7 @@
 import { NextRequest } from 'next/server';
 import { db as prisma } from '@/lib/db';
 import { requireDbVerifiedRole, apiError, apiSuccess, authError, parseJsonBody, BodyParseError } from '@/lib/api';
+import { activatePendingSubscription } from '@/lib/subscription-activation';
 
 // PATCH /api/super-admin/subscriptions/[id]
 // Body: { action: 'activate' | 'pause' | 'resume' | 'cancel' | 'expire', notes? }
@@ -47,27 +48,11 @@ export async function PATCH(
   if (action === 'activate') {
     if (sub.status === 'ACTIVE') return apiError('Subscription is already active', 409);
     if (sub.status !== 'PENDING') return apiError(`Only PENDING subscriptions can be activated (current: ${sub.status})`, 422);
-    const updated = await prisma.$transaction(async (tx) => {
-      const u = await tx.subscription.update({
-        where: { id },
-        data: { status: 'ACTIVE', startDate: sub.startDate ?? now, notes: notes ?? sub.notes, updatedAt: now },
-      });
-      await tx.organization.update({
-        where: { id: sub.organizationId },
-        data: { status: 'active', subscriptionId: id, trialEndsAt: null, updatedAt: now },
-      });
-      await tx.auditLog.create({
-        data: {
-          action: 'update',
-          resource: 'subscription',
-          resourceId: id,
-          description: `Super admin (${admin.email}) activated subscription for org "${sub.organization.name}" (package ${sub.plan.name})${notes ? `: ${notes}` : ''}`,
-          userId: admin.userId,
-          organizationId: sub.organizationId,
-        },
-      });
-      return u;
-    });
+    // V1: activation is implemented ONCE in the shared helper (org pointer +
+    // trial clear + audit) — the purchase-request flow reuses the same path.
+    const activation = await activatePendingSubscription(id, { userId: admin.userId, email: admin.email }, notes);
+    if (!activation.ok) return apiError(activation.message, activation.code === 'NOT_PENDING' ? 422 : 404);
+    const updated = await prisma.subscription.findUnique({ where: { id } });
     return apiSuccess(updated);
   }
 

@@ -3,7 +3,7 @@ import { db } from '@/lib/db';
 import { callAIProvider } from '@/lib/ai-provider-helper';
 import { meterAiCall } from '@/lib/ai-metering';
 import type { Prisma } from '@prisma/client';
-import { requireManagerOrg, authError } from '@/lib/api';
+import { requireManagerOrg, authError, getPrismaForOrg } from '@/lib/api';
 import { hasActiveConsent } from '@/lib/consent';
 import { log, requestContext } from '@/lib/logger';
 
@@ -335,6 +335,7 @@ export async function POST(req: NextRequest) {
   const scope = await requireManagerOrg(req);
   if (!scope.ok) return authError(scope);
   const orgId = scope.organizationId;
+  const orgData = (await getPrismaForOrg(orgId)).client;
 
   // Safe body parse: a bodyless/malformed request is a client error (400),
   // never a 500.
@@ -392,7 +393,7 @@ export async function POST(req: NextRequest) {
   try {
     // Determine employees to analyze (tenant-scoped: org always from the
     // verified session, client ids can only narrow the set).
-    const employees = await db.employee.findMany({
+    const employees = await orgData.employee.findMany({
       where: {
         status: 'active',
         organizationId: orgId,
@@ -423,7 +424,7 @@ export async function POST(req: NextRequest) {
     const consentResults = await Promise.all(
       employees.map(async (e) => ({
         employee: e,
-        consented: await hasActiveConsent(e.id, 'activity_tracking'),
+        consented: await hasActiveConsent(e.id, 'activity_tracking', orgData),
       }))
     );
     const consented = consentResults.filter((r) => r.consented).map((r) => r.employee);
@@ -450,7 +451,7 @@ export async function POST(req: NextRequest) {
     const employeeIdList = consented.map((e) => e.id);
 
     // Batch 1: current-period activities
-    const currentActivities = await db.activity.findMany({
+    const currentActivities = await orgData.activity.findMany({
       where: {
         employeeId: { in: employeeIdList },
         timestamp: { gte: periodStart, lte: periodEnd },
@@ -459,7 +460,7 @@ export async function POST(req: NextRequest) {
     });
 
     // Batch 2: previous-period activities
-    const previousActivities = await db.activity.findMany({
+    const previousActivities = await orgData.activity.findMany({
       where: {
         employeeId: { in: employeeIdList },
         timestamp: { gte: prevStart, lt: periodStart },
@@ -468,7 +469,7 @@ export async function POST(req: NextRequest) {
     });
 
     // Batch 3: anomaly counts in current period
-    const anomalyCounts = await db.anomaly.groupBy({
+    const anomalyCounts = await orgData.anomaly.groupBy({
       by: ['employeeId'],
       where: {
         employeeId: { in: employeeIdList },
@@ -604,7 +605,7 @@ export async function POST(req: NextRequest) {
     // sentiment rows are owned by the project analyze flow and must never be
     // deleted or overwritten by an org-wide run.
     const writeOps: Prisma.PrismaPromise<unknown>[] = [
-      db.sentimentRecord.deleteMany({
+      orgData.sentimentRecord.deleteMany({
         where: {
           organizationId: orgId,
           employeeId: { in: analyzedEmployeeIds },
@@ -616,7 +617,7 @@ export async function POST(req: NextRequest) {
 
     for (const { data } of valid) {
       writeOps.push(
-        db.sentimentRecord.create({
+        orgData.sentimentRecord.create({
           data,
           include: {
             employee: {
@@ -634,11 +635,11 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const txResults = await db.$transaction(writeOps);
+    const txResults = await orgData.$transaction(writeOps);
     const results = txResults.slice(1) as SentimentRecord[];
 
     // Audit log for the run (actor, org, outcome counters)
-    await db.auditLog.create({
+    await orgData.auditLog.create({
       data: {
         action: 'create',
         resource: 'sentiment_record',

@@ -44,6 +44,8 @@ import {
   Globe,
   ServerCog,
   ClipboardList,
+  BadgeDollarSign,
+  ShoppingBag,
 } from 'lucide-react';
 import type { PageType } from '@/lib/store';
 import { canAccessPage } from '@/lib/navigation';
@@ -201,6 +203,8 @@ export const navGroups: NavGroup[] = [
       { page: 'sa-overview', label: 'Overview', icon: Crown },
       { page: 'super-admin-organizations', label: 'Organizations', icon: Building2 },
       { page: 'sa-packages', label: 'Packages', icon: Package },
+      { page: 'sa-pricing', label: 'Pricing & Offers', icon: BadgeDollarSign },
+      { page: 'sa-purchase-requests', label: 'Purchase Requests', icon: ShoppingBag },
       { page: 'sa-infra-requests', label: 'Infrastructure Requests', icon: ClipboardList },
       { page: 'sa-landing', label: 'Landing Page', icon: Globe },
     ],

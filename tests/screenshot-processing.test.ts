@@ -85,9 +85,13 @@ before(async () => {
   db = dbModule.db;
   signJWT = (await import('../src/lib/auth')).signJWT;
 
-  orgA = await db.organization.create({ data: { name: 'Shot Org A', slug: 'shot-org-a-p2' } });
-  orgB = await db.organization.create({ data: { name: 'Shot Org B', slug: 'shot-org-b-p2' } });
-  orgC = await db.organization.create({ data: { name: 'Shot Org C (bulk)', slug: 'shot-org-c-p2' } });
+  // trialEndsAt grants full agent entitlement (hasValidTrial) — same fixture
+  // convention as activity-dedupe / full-org-cutover / reconciliation suites;
+  // without it checkAgentEntitlement rejects every agent upload with 401.
+  const trial = { trialEndsAt: new Date(Date.now() + 30 * 24 * 3600 * 1000) };
+  orgA = await db.organization.create({ data: { name: 'Shot Org A', slug: 'shot-org-a-p2', ...trial } });
+  orgB = await db.organization.create({ data: { name: 'Shot Org B', slug: 'shot-org-b-p2', ...trial } });
+  orgC = await db.organization.create({ data: { name: 'Shot Org C (bulk)', slug: 'shot-org-c-p2', ...trial } });
 
   applyConsentTransition = (await import('../src/lib/consent')).applyConsentTransition;
 

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
-import { authError, requireAdminOrg } from '@/lib/api';
+import { authError, requireAdminOrg, getPrismaForOrg } from '@/lib/api';
 import { startBreak, endBreak, getCurrentBreak } from '@/lib/breaks/service';
 import { EMPLOYEE_ONLINE_THRESHOLD_MS, LIFECYCLE_PINNED_STATUSES } from '@/lib/presence';
 import { getClientIpFromHeaders, UNKNOWN_CLIENT_IP } from '@/lib/client-ip';
@@ -25,11 +25,17 @@ export async function POST(
     const admin = await requireAdminOrg(req);
     if (!admin.ok) return authError(admin);
 
+    // ORG DATA BOUNDARY: Employee/Device/BreakSession/Activity/AuditLog are
+    // org-owned and COPY to the org DB at cutover — resolve the org data
+    // client (platform `db` when the org never opted in) and run the whole
+    // toggle through it.
+    const orgData = (await getPrismaForOrg(admin.organizationId)).client;
+
     const { id } = await params;
 
     // Tenant isolation: the target employee must belong to the authenticated
     // admin's organization. Cross-org / nonexistent ids both return 404.
-    const employee = await db.employee.findFirst({
+    const employee = await orgData.employee.findFirst({
       where: { id, organizationId: admin.organizationId },
       select: { id: true, employeeId: true, firstName: true, lastName: true, organizationId: true },
     });
@@ -41,7 +47,7 @@ export async function POST(
     // Only a LIVE device (fresh heartbeat, non-lifecycle status) is attributed
     // as the employee's active device — org-scoped so the activity/session can
     // never carry a deviceId referencing another organization.
-    const device = await db.device.findFirst({
+    const device = await orgData.device.findFirst({
       where: {
         employeeId: id,
         organizationId: admin.organizationId,
@@ -55,7 +61,7 @@ export async function POST(
     // audit logs) — never the attacker-controlled left-most XFF entry.
     const clientIp = getClientIpFromHeaders(req.headers);
     const ipAddress = clientIp === UNKNOWN_CLIENT_IP ? null : clientIp;
-    const current = await getCurrentBreak(employee.id);
+    const current = await getCurrentBreak(employee.id, orgData);
 
     let result: { session: { id: string; startedAt: Date; endedAt: Date | null } | null; action: string };
     if (current) {
@@ -65,7 +71,7 @@ export async function POST(
         source: 'admin',
         actor: admin.userId,
         ipAddress,
-      });
+      }, orgData);
       result = { session: ended.session, action: 'ended' };
     } else {
       const started = await startBreak({
@@ -75,7 +81,7 @@ export async function POST(
         source: 'admin',
         actor: admin.userId,
         ipAddress,
-      });
+      }, orgData);
       result = { session: started.session, action: 'started' };
     }
 

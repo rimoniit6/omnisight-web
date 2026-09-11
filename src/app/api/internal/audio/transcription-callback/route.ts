@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
+import { getPrismaForOrg } from '@/lib/api';
 import { log, requestContext } from '@/lib/logger';
 import crypto from 'crypto';
 
@@ -68,7 +69,8 @@ export async function POST(request: NextRequest) {
     }
 
     // Verify recording exists and belongs to the specified organization
-    const recording = await db.audioRecording.findFirst({
+    const orgData = (await getPrismaForOrg(organizationId)).client;
+    const recording = await orgData.audioRecording.findFirst({
       where: { id: recordingId, organizationId },
     });
 
@@ -80,7 +82,7 @@ export async function POST(request: NextRequest) {
       // Successful transcription
       const wordCountFinal = wordCount || text.split(/\s+/).filter(Boolean).length;
 
-      await db.$transaction(async (tx) => {
+      await orgData.$transaction(async (tx) => {
         await tx.audioTranscription.upsert({
           where: { recordingId },
           create: {
@@ -119,7 +121,7 @@ export async function POST(request: NextRequest) {
       });
     } else {
       // Failed transcription
-      await db.audioRecording.update({
+      await orgData.audioRecording.update({
         where: { id: recordingId },
         data: {
           status: 'failed',

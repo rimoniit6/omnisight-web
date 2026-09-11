@@ -84,12 +84,14 @@ export function EmptyState({ title, body }: { title: string; body?: string }) {
   );
 }
 
-export function ErrorState({ title = 'Unable to load data', onRetry }: { title?: string; onRetry?: () => void }) {
+export function ErrorState({ title = 'Unable to load data', detail, onRetry }: { title?: string; detail?: string | null; onRetry?: () => void }) {
   return (
     <div className="flex flex-col items-center justify-center rounded-xl border border-red-300 bg-red-50/60 px-6 py-10 text-center dark:border-red-400/20 dark:bg-red-500/5">
       <AlertTriangle size={18} className="text-red-600 dark:text-red-300" aria-hidden />
       <p className="mt-2 text-[13px] text-foreground/80">{title}</p>
-      <p className="mt-1 text-[11.5px] text-muted-foreground">Check your connection and try again.</p>
+      {/* Surface the API's own message when one exists — never hide a backend
+          error behind the generic connection text. */}
+      <p className="mt-1 text-[11.5px] text-muted-foreground">{detail ? detail : 'Check your connection and try again.'}</p>
       {onRetry && (
         <button
           onClick={onRetry}

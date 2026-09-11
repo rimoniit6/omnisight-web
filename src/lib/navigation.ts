@@ -75,6 +75,9 @@ export const PAGE_MIN_ROLE: Record<PageType, NavMinRole> = {
   'data-infrastructure': 'org_admin',
   // Super Admin infrastructure change request queue
   'sa-infra-requests': 'super_admin',
+  // V1 commercial configuration + purchase review queue — super_admin only.
+  'sa-pricing': 'super_admin',
+  'sa-purchase-requests': 'super_admin',
 };
 
 /**

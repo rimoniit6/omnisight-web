@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
-import { authError, requireSessionOrg } from '@/lib/api';
+import { authError, getPrismaForOrg, requireSessionOrg } from '@/lib/api';
 import { excludeInternalAgentActivities } from '@/lib/agent-process';
 import { isValidTimezone, localDayKey, lastNDayKeys } from '@/lib/timezone';
 import { log, requestContext } from '@/lib/logger';
@@ -22,6 +22,7 @@ export async function GET(req: NextRequest) {
       });
     }
     const orgId = scope.organizationId;
+    const orgData = (await getPrismaForOrg(orgId)).client;
 
     const { searchParams } = new URL(req.url);
     const employeeId = searchParams.get('employeeId');
@@ -50,7 +51,7 @@ export async function GET(req: NextRequest) {
 
     // Get activities grouped by date and category. Internal agent processes are
     // excluded so the monitoring agent never skews daily summaries.
-    const activities = excludeInternalAgentActivities(await db.activity.findMany({
+    const activities = excludeInternalAgentActivities(await orgData.activity.findMany({
       where,
       select: {
         timestamp: true,

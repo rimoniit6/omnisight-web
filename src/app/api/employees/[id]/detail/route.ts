@@ -3,7 +3,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { format, subDays } from 'date-fns';
-import { authError, requireSessionOrg } from '@/lib/api';
+import { authError, requireSessionOrg, getPrismaForOrg } from '@/lib/api';
 import { NON_INTERNAL_AGENT_ACTIVITY_FILTER, excludeInternalAgentActivities } from '@/lib/agent-process';
 import { safeTimezone, zonedDayStart, addDaysToKey, localDayKey, hourInTimezone } from '@/lib/timezone';
 import { log, requestContext } from '@/lib/logger';
@@ -39,8 +39,9 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
   try {
     const scope = await requireSessionOrg(request, { allowGlobal: true });
     if (!scope.ok) return authError(scope);
+    const orgData = scope.organizationId ? (await getPrismaForOrg(scope.organizationId)).client : db;
 
-    const employee = await db.employee.findFirst({
+    const employee = await orgData.employee.findFirst({
       where: { id, ...(scope.organizationId ? { organizationId: scope.organizationId } : {}) },
       include: {
         department: true,
@@ -87,23 +88,23 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
     // Count all-time stats. Internal agent processes are excluded via the
     // shared NOT filter (case-insensitive) so the monitoring agent never
     // contributes to usage duration/counts.
-    const allTimeSummary = await db.activity.aggregate({
+    const allTimeSummary = await orgData.activity.aggregate({
       where: { employeeId: id, ...NON_INTERNAL_AGENT_ACTIVITY_FILTER },
       _sum: { duration: true },
       _count: { id: true },
     });
 
-    const allTimeProductive = await db.activity.aggregate({
+    const allTimeProductive = await orgData.activity.aggregate({
       where: { employeeId: id, category: 'productive', ...NON_INTERNAL_AGENT_ACTIVITY_FILTER },
       _sum: { duration: true },
     });
 
-    const allTimeNeutral = await db.activity.aggregate({
+    const allTimeNeutral = await orgData.activity.aggregate({
       where: { employeeId: id, category: 'neutral', ...NON_INTERNAL_AGENT_ACTIVITY_FILTER },
       _sum: { duration: true },
     });
 
-    const allTimeUnproductive = await db.activity.aggregate({
+    const allTimeUnproductive = await orgData.activity.aggregate({
       where: { employeeId: id, category: 'unproductive', ...NON_INTERNAL_AGENT_ACTIVITY_FILTER },
       _sum: { duration: true },
     });
@@ -112,7 +113,7 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
     // with the NULL-safe predicate — website/idle/screenshot/work_session rows
     // are preserved). Timeline and summary stats now agree on the same set.
     const [activitiesPageRows, activitiesTotal] = await Promise.all([
-      db.activity.findMany({
+      orgData.activity.findMany({
         where: {
           employeeId: id,
           timestamp: timestampFilter,
@@ -125,7 +126,7 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
           device: { select: { id: true, name: true } },
         },
       }),
-      db.activity.count({
+      orgData.activity.count({
         where: {
           employeeId: id,
           timestamp: timestampFilter,
@@ -136,23 +137,23 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
     const activitiesInRange = excludeInternalAgentActivities(activitiesPageRows);
 
     // Ranged summary (internal agent processes excluded)
-    const rangeSummary = await db.activity.aggregate({
+    const rangeSummary = await orgData.activity.aggregate({
       where: { employeeId: id, timestamp: timestampFilter, ...NON_INTERNAL_AGENT_ACTIVITY_FILTER },
       _sum: { duration: true },
       _count: { id: true },
     });
 
-    const rangeProductive = await db.activity.aggregate({
+    const rangeProductive = await orgData.activity.aggregate({
       where: { employeeId: id, category: 'productive', timestamp: timestampFilter, ...NON_INTERNAL_AGENT_ACTIVITY_FILTER },
       _sum: { duration: true },
     });
 
-    const rangeNeutral = await db.activity.aggregate({
+    const rangeNeutral = await orgData.activity.aggregate({
       where: { employeeId: id, category: 'neutral', timestamp: timestampFilter, ...NON_INTERNAL_AGENT_ACTIVITY_FILTER },
       _sum: { duration: true },
     });
 
-    const rangeUnproductive = await db.activity.aggregate({
+    const rangeUnproductive = await orgData.activity.aggregate({
       where: { employeeId: id, category: 'unproductive', timestamp: timestampFilter, ...NON_INTERNAL_AGENT_ACTIVITY_FILTER },
       _sum: { duration: true },
     });
@@ -199,7 +200,7 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
     // Top Applications / Website Usage surfaces; groupBy makes them exact and
     // bounded (server-side, never shipped to the browser).
     const [appUsage, websiteUsage] = await Promise.all([
-      db.activity.groupBy({
+      orgData.activity.groupBy({
         by: ['applicationName'],
         where: {
           employeeId: id,
@@ -210,7 +211,7 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
         },
         _sum: { duration: true },
       }),
-      db.activity.groupBy({
+      orgData.activity.groupBy({
         by: ['url'],
         where: {
           employeeId: id,
@@ -278,7 +279,7 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
     // primary filter; legacy rows (pre-linkage) fall back to metadata only.
     // Message/description text is NEVER used as an identity mechanism.
     const [empAlerts, empNotifications] = await Promise.all([
-      db.alert.findMany({
+      orgData.alert.findMany({
         where: {
           organizationId: employee.organizationId,
           OR: [
@@ -289,7 +290,7 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
         orderBy: { createdAt: 'desc' },
         take: 20,
       }),
-      db.notification.findMany({
+      orgData.notification.findMany({
         where: {
           organizationId: employee.organizationId,
           OR: [
@@ -308,7 +309,7 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
       : 0;
 
     // Active sessions count
-    const activeSessionCount = await db.activity.count({
+    const activeSessionCount = await orgData.activity.count({
       where: {
         employeeId: id,
         type: 'work_session',

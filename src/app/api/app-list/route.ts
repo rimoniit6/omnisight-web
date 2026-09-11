@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { authError, requireManagerOrg, requireSessionOrg, validatePagination } from '@/lib/api';
+import { authError, getPrismaForOrg, requireManagerOrg, requireSessionOrg, validatePagination } from '@/lib/api';
 import { validateAppListInput } from '@/lib/policies/validation';
 import { bumpPolicyVersion, readPolicyVersion } from '@/lib/policies/version';
 import { MAX_POLICY_PAYLOAD_ENTRIES } from '@/lib/policies/constants';
@@ -20,6 +19,7 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ data: [], total: 0, page: 1, pageSize: 50, totalPages: 0, policyVersion: '0' });
     }
     const orgId = scope.organizationId;
+    const orgData = (await getPrismaForOrg(orgId)).client;
 
     const { searchParams } = new URL(req.url);
 
@@ -49,13 +49,13 @@ export async function GET(req: NextRequest) {
     }
 
     const [entries, total] = await Promise.all([
-      db.appListEntry.findMany({
+      orgData.appListEntry.findMany({
         where,
         orderBy: { createdAt: 'desc' },
         skip: pagination.skip,
         take: pagination.pageSize,
       }),
-      db.appListEntry.count({ where }),
+      orgData.appListEntry.count({ where }),
     ]);
 
     return NextResponse.json({
@@ -79,6 +79,7 @@ export async function POST(req: NextRequest) {
     // from the verified session — never from client-supplied input.
     const manager = await requireManagerOrg(req);
     if (!manager.ok) return authError(manager);
+    const orgData = (await getPrismaForOrg(manager.organizationId)).client;
 
     let body: Record<string, unknown>;
     try {
@@ -95,7 +96,7 @@ export async function POST(req: NextRequest) {
 
     // Hard cap: never allow an org's active policy set to grow unbounded
     // beyond what the agent payload ships.
-    const activeCount = await db.appListEntry.count({
+    const activeCount = await orgData.appListEntry.count({
       where: { organizationId: manager.organizationId, isActive: true },
     });
     if (activeCount >= MAX_POLICY_PAYLOAD_ENTRIES) {
@@ -105,7 +106,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const entry = await db.$transaction(async (tx) => {
+    const entry = await orgData.$transaction(async (tx) => {
       // DB-safe dedupe: the unique (org, appName, listType, isActive)
       // constraint is the final authority; the pre-check below gives a
       // friendly error, and a concurrent duplicate is caught by P2002.

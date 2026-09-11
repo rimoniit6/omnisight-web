@@ -23,6 +23,7 @@
  *    a disabled type is skipped, never bypassed.
  */
 import { db } from '@/lib/db';
+import { getPrismaForOrg } from '@/lib/org-db';
 import { claimJob, finishJob } from './run';
 import { getOrgSetting } from './settings';
 import { safeTimezone, localDayKey, zonedDayStart, zonedDayEnd } from '@/lib/timezone';
@@ -82,10 +83,11 @@ async function persistFiring(
   entityId: string,
   measured: number,
   now: Date,
-  description: string
+  description: string,
+  data: import('@prisma/client').PrismaClient = db
 ): Promise<'created' | 'cooldown' | 'skipped'> {
   try {
-    return await db.$transaction(async (tx) => {
+    return await data.$transaction(async (tx) => {
       // Cooldown check INSIDE the same transaction as the state write: a
       // replayed run sees the committed lastFiredAt and cannot double-fire.
       const existing = await tx.alertRuleFiring.findUnique({
@@ -175,6 +177,10 @@ export async function evaluateAlertRulesForOrg(
 ): Promise<Omit<AlertRuleJobResult, 'orgsScanned' | 'orgsSkipped' | 'orgsFailed' | 'errors'>> {
   const out = { rulesEvaluated: 0, candidates: 0, alertsCreated: 0, alertsSuppressedByCooldown: 0 };
 
+  // Organization identity/timezone is platform-owned; every org-OWNED table
+  // (AlertRule, Activity, Device, Alert, Notification, AlertRuleFiring) is
+  // read/written through the org's own client after activation.
+  const orgData = (await getPrismaForOrg(orgId)).client;
   const org = await db.organization.findUnique({
     where: { id: orgId },
     select: { timezone: true },
@@ -182,7 +188,7 @@ export async function evaluateAlertRulesForOrg(
   if (!org) return out;
   const tz = safeTimezone(org.timezone);
 
-  const rules = (await db.alertRule.findMany({
+  const rules = (await orgData.alertRule.findMany({
     where: { organizationId: orgId, enabled: true },
     orderBy: { createdAt: 'asc' },
     select: { id: true, name: true, conditionType: true, params: true, severity: true, cooldownMinutes: true },
@@ -208,7 +214,7 @@ export async function evaluateAlertRulesForOrg(
 
   // ── Employee-scoped rules: ONE org-local-day activity load ───────────────
   if (employeeRules.length > 0) {
-    const activities = await db.activity.findMany({
+    const activities = await orgData.activity.findMany({
       where: {
         employee: { organizationId: orgId },
         timestamp: { gte: dayStart, lt: dayEndExclusive },
@@ -254,7 +260,8 @@ export async function evaluateAlertRulesForOrg(
           employeeId,
           result.measured,
           now,
-          `${rule.name}: ${result.measured} ${rule.conditionType === 'outside_hours_activity' ? 'event(s)' : 'min'} measured vs threshold ${result.threshold} ${rule.conditionType === 'outside_hours_activity' ? 'event(s)' : 'min'} (${rule.conditionType.replace(/_/g, ' ')} — org-local day ${dayKey})`
+          `${rule.name}: ${result.measured} ${rule.conditionType === 'outside_hours_activity' ? 'event(s)' : 'min'} measured vs threshold ${result.threshold} ${rule.conditionType === 'outside_hours_activity' ? 'event(s)' : 'min'} (${rule.conditionType.replace(/_/g, ' ')} — org-local day ${dayKey})`,
+          orgData
         );
         if (status === 'created') out.alertsCreated += 1;
         else if (status === 'cooldown') out.alertsSuppressedByCooldown += 1;
@@ -266,7 +273,7 @@ export async function evaluateAlertRulesForOrg(
   //    monitoring consent — a consent-revoked device going silent is not an
   //    alert, mirroring the device-integrity criteria) ──────────────────────
   if (deviceRules.length > 0) {
-    const devices = await db.device.findMany({
+    const devices = await orgData.device.findMany({
       where: {
         organizationId: orgId,
         status: 'online',
@@ -298,7 +305,8 @@ export async function evaluateAlertRulesForOrg(
           device.id,
           result.measured,
           now,
-          `${rule.name}: no heartbeat for ${result.measured} min (threshold ${result.threshold}) — device may be offline, asleep, or the agent interrupted.`
+          `${rule.name}: no heartbeat for ${result.measured} min (threshold ${result.threshold}) — device may be offline, asleep, or the agent interrupted.`,
+          orgData
         );
         if (status === 'created') out.alertsCreated += 1;
         else if (status === 'cooldown') out.alertsSuppressedByCooldown += 1;

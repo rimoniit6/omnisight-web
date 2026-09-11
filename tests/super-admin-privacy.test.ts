@@ -199,21 +199,20 @@ test('PV-08: deployment-mode change to CUSTOMER_DB is rejected', async () => {
 });
 
 // PV-09
-test('PV-09: MANAGED to PRIVATE change is allowed and audited', async () => {
+// V1 commercial model: PRIVATE is a legacy self-hosted mode and must never be
+// (re)assigned through customer-facing/admin surfaces. The route-level guard
+// rejects PRIVATE regardless of the transition matrix in
+// validateDeploymentModeChange (which still permits it for backend
+// compatibility). Stale expectation updated to the enforced behavior.
+test('PV-09: MANAGED to PRIVATE change is rejected (PRIVATE is legacy, never assignable)', async () => {
   const { PATCH } = await import('../src/app/api/super-admin/organizations/[id]/route');
   const res = await PATCH(
     req(`http://localhost:3000/api/super-admin/organizations/${managedId}`, await saToken(), 'PATCH', { deploymentMode: 'PRIVATE' }),
     { params: Promise.resolve({ id: managedId }) },
   );
-  assert.equal(res.status, 200);
+  assert.equal(res.status, 422, 'PRIVATE must not be settable via the org PATCH route in V1');
   const row = await db.organization.findUnique({ where: { id: managedId }, select: { deploymentMode: true } });
-  assert.equal(row?.deploymentMode, 'PRIVATE');
-  const audit = await db.auditLog.findFirst({
-    where: { resource: 'organization', resourceId: managedId, description: { contains: 'deploymentMode' } },
-  });
-  assert.ok(audit, 'mode change must be audited');
-  // restore for later tests
-  await db.organization.update({ where: { id: managedId }, data: { deploymentMode: 'MANAGED' } });
+  assert.equal(row?.deploymentMode, 'MANAGED', 'mode must not change on rejection');
 });
 
 // PV-10

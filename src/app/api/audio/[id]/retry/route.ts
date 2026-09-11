@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
-import { requireAdminOrg, authError } from '@/lib/api';
+import { requireAdminOrg, authError, getPrismaForOrg } from '@/lib/api';
 import { log, requestContext } from '@/lib/logger';
 import { MAX_AUDIO_RETRIES } from '@/lib/audio/types';
 
@@ -48,7 +48,8 @@ export async function POST(
     }
 
     // Reset state for retry
-    await db.audioRecording.update({
+    const orgData = (await getPrismaForOrg(admin.organizationId)).client;
+    await orgData.audioRecording.update({
       where: { id },
       data: {
         status: 'queued',
@@ -57,9 +58,9 @@ export async function POST(
     });
 
     // Delete old transcription if exists
-    await db.audioTranscription.deleteMany({ where: { recordingId: id } });
+    await orgData.audioTranscription.deleteMany({ where: { recordingId: id } });
 
-    await db.auditLog.create({
+    await orgData.auditLog.create({
       data: {
         action: 'update',
         resource: 'audio_recording',

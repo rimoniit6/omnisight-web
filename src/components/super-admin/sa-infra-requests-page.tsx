@@ -71,6 +71,7 @@ function MigrationProgressInline({ migration }: { migration: MigrationView }) {
   const meta: Record<string, { label: string; className: string }> = {
     queued: { label: 'Migration queued', className: 'bg-blue-500/15 text-blue-600' },
     migrating: { label: 'Migrating', className: 'bg-violet-500/15 text-violet-600' },
+    reconciling: { label: 'Synchronizing', className: 'bg-violet-500/15 text-violet-600' },
     verifying: { label: 'Verifying', className: 'bg-amber-500/15 text-amber-600' },
     ready_to_activate: { label: 'Ready to activate', className: 'bg-emerald-500/15 text-emerald-600' },
     activated: { label: 'Activated', className: 'bg-emerald-500/15 text-emerald-600' },
@@ -583,9 +584,9 @@ function RequestRow({
         </div>
       </div>
       <div className="flex items-center gap-2 shrink-0">
-        {request.migration && (request.migration.status === 'migrating' || request.migration.status === 'verifying') && (
+        {request.migration && (request.migration.status === 'migrating' || request.migration.status === 'reconciling' || request.migration.status === 'verifying') && (
           <span className="flex items-center gap-1 text-xs text-violet-600">
-            <Loader2 className="h-3.5 w-3.5 animate-spin" /> migrating
+            <Loader2 className="h-3.5 w-3.5 animate-spin" /> {request.migration.status === 'reconciling' ? 'synchronizing' : 'migrating'}
           </span>
         )}
         <StatusBadge status={request.status} />

@@ -1,7 +1,7 @@
 'use server';
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
-import { authError, requireSessionOrg, SAFE_EMPLOYEE_SELECT } from '@/lib/api';
+import { authError, requireSessionOrg, SAFE_EMPLOYEE_SELECT, getPrismaForOrg } from '@/lib/api';
 import { log, requestContext } from '@/lib/logger';
 
 // GET /api/device-claims
@@ -50,7 +50,8 @@ export async function GET(req: NextRequest) {
     }
 
     // Lazy expiry transition — see the doc comment above.
-    await db.deviceClaim.updateMany({
+    const orgData = (await getPrismaForOrg(scope.organizationId)).client;
+    await orgData.deviceClaim.updateMany({
       where: {
         organizationId: scope.organizationId,
         status: 'pending',
@@ -71,7 +72,7 @@ export async function GET(req: NextRequest) {
     }
 
     const [claims, total, summaryRows] = await Promise.all([
-      db.deviceClaim.findMany({
+      orgData.deviceClaim.findMany({
         where,
         // Never include full employee rows — they carry agentPassword.
         include: {
@@ -86,9 +87,9 @@ export async function GET(req: NextRequest) {
         skip: (page - 1) * pageSize,
         take: pageSize,
       }),
-      db.deviceClaim.count({ where }),
+      orgData.deviceClaim.count({ where }),
       wantSummary
-        ? db.deviceClaim.groupBy({
+        ? orgData.deviceClaim.groupBy({
             by: ['status'],
             where: { organizationId: scope.organizationId },
             _count: { _all: true },
@@ -100,7 +101,7 @@ export async function GET(req: NextRequest) {
     // Device → Employee → Department → Projects, all via existing relations).
     const employeeIds = [...new Set(claims.map((c) => c.employeeId).filter(Boolean))] as string[];
     const memberships = employeeIds.length
-      ? await db.projectMember.findMany({
+      ? await orgData.projectMember.findMany({
           where: { employeeId: { in: employeeIds } },
           include: { project: { select: { id: true, name: true, status: true, color: true } } },
         })

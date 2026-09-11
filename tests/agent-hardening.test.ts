@@ -91,8 +91,8 @@ before(async () => {
   anomalyApi = anApi;
   loginApi = lApi;
 
-  orgA = await db.organization.create({ data: { name: 'Hardening Org A', slug: 'hard-a' } });
-  orgB = await db.organization.create({ data: { name: 'Hardening Org B', slug: 'hard-b' } });
+  orgA = await db.organization.create({ data: { name: 'Hardening Org A', slug: 'hard-a', trialEndsAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000) } });
+  orgB = await db.organization.create({ data: { name: 'Hardening Org B', slug: 'hard-b', trialEndsAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000) } });
 });
 
 after(async () => {

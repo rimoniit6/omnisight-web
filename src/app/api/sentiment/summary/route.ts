@@ -1,7 +1,6 @@
 'use server';
 import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { authError, requireSessionOrg } from '@/lib/api';
+import { authError, requireSessionOrg, getPrismaForOrg } from '@/lib/api';
 import { log, requestContext } from '@/lib/logger';
 
 export async function GET(req: NextRequest) {
@@ -22,6 +21,7 @@ export async function GET(req: NextRequest) {
       });
     }
     const orgId = scope.organizationId;
+    const orgData = (await getPrismaForOrg(orgId)).client;
 
     // All historical rows for the org are loaded once and collapsed to the
     // latest-per-employee set below. This endpoint is only consumed by
@@ -30,7 +30,7 @@ export async function GET(req: NextRequest) {
     // Employee-level records only (projectId IS NULL) — project-scoped
     // sentiment is surfaced in the project context, never in the org-wide
     // summary.
-    const records = await db.sentimentRecord.findMany({
+    const records = await orgData.sentimentRecord.findMany({
       where: { employee: { organizationId: orgId }, projectId: null },
       include: {
         employee: {

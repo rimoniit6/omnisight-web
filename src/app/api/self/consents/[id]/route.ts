@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { getScopedEmployee } from '@/lib/self-guard';
-import { authenticateRequest } from '@/lib/api';
+import { authenticateRequest, getPrismaForOrg } from '@/lib/api';
 import { applyConsentTransition, isValidConsentType } from '@/lib/consent';
 import type { ConsentStatus, ConsentType } from '@/lib/consent';
 import { log, requestContext } from '@/lib/logger';
@@ -56,6 +56,7 @@ export async function PUT(
     if (!employee) {
       return NextResponse.json({ error: 'Employee not found' }, { status: 404 });
     }
+    const orgData = (await getPrismaForOrg(employee.organizationId)).client;
 
     // AUDIT ATTRIBUTION: the authenticated actor is the principal. A manager
     // acting on Employee A is recorded as the manager; the employee is the
@@ -89,7 +90,7 @@ export async function PUT(
     if (syntheticType) {
       // Find-or-create for a consent type that has no row yet. The type is
       // validated against CONSENT_TYPES so an arbitrary id can never resolve.
-      const existing = await db.consent.findFirst({
+      const existing = await orgData.consent.findFirst({
         where: { employeeId: employee.id, consentType: syntheticType },
         select: { id: true, status: true, consentType: true, organizationId: true, employeeId: true },
       });
@@ -110,7 +111,7 @@ export async function PUT(
             { status: 404 }
           );
         }
-        const createdRow = await db.consent.create({
+        const createdRow = await orgData.consent.create({
           data: {
             employeeId: employee.id,
             consentType: syntheticType,
@@ -129,7 +130,7 @@ export async function PUT(
         created = true;
       }
     } else {
-      const found = await db.consent.findUnique({ where: { id } });
+      const found = await orgData.consent.findUnique({ where: { id } });
       if (!found) {
         return NextResponse.json({ error: 'Consent not found' }, { status: 404 });
       }
@@ -152,7 +153,7 @@ export async function PUT(
     }
 
     try {
-      const updated = await db.$transaction(async (tx) =>
+      const updated = await orgData.$transaction(async (tx) =>
         applyConsentTransition(
           tx,
           consent!,

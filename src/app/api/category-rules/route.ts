@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
-import { authError, requireManagerOrg, parseJsonBody, BodyParseError } from '@/lib/api';
+import { authError, requireManagerOrg, parseJsonBody, BodyParseError, getPrismaForOrg } from '@/lib/api';
 import { validateCategoryRuleInput } from '@/lib/classification/validation';
 import { MAX_RULES_PER_ORG } from '@/lib/classification/engine';
 import { log, requestContext } from '@/lib/logger';
@@ -35,6 +35,7 @@ export async function POST(req: NextRequest) {
     const scope = await requireManagerOrg(req);
     if (!scope.ok) return authError(scope);
     const orgId = scope.organizationId;
+    const orgData = (await getPrismaForOrg(orgId)).client;
 
     let body: Record<string, unknown>;
     try {
@@ -54,7 +55,7 @@ export async function POST(req: NextRequest) {
     // Bounded rule count per org — classification is evaluated on every
     // ingestion request, so an unbounded rule table would degrade the hot
     // path and defeat the documented performance bound.
-    const count = await db.categoryRule.count({ where: { organizationId: orgId } });
+    const count = await orgData.categoryRule.count({ where: { organizationId: orgId } });
     if (count >= MAX_RULES_PER_ORG) {
       return NextResponse.json(
         { error: `Maximum of ${MAX_RULES_PER_ORG} category rules per organization` },
@@ -62,7 +63,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const rule = await db.categoryRule.create({
+    const rule = await orgData.categoryRule.create({
       data: {
         organizationId: orgId,
         name: parsed.value.name,

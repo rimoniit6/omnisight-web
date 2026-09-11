@@ -1,7 +1,7 @@
 'use server';
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
-import { authError, requireSessionOrg, requireManagerOrg } from '@/lib/api';
+import { authError, requireSessionOrg, requireManagerOrg, getPrismaForOrg } from '@/lib/api';
 import { NOTIFICATION_TYPE_REGISTRY, isNotificationType } from '@/lib/notifications/constants';
 import { log, requestContext } from '@/lib/logger';
 
@@ -45,6 +45,7 @@ export async function PUT(req: NextRequest) {
   try {
     const manager = await requireManagerOrg(req);
     if (!manager.ok) return authError(manager);
+    const orgData = (await getPrismaForOrg(manager.organizationId)).client;
 
     let body: Record<string, unknown>;
     try {
@@ -61,7 +62,7 @@ export async function PUT(req: NextRequest) {
       return NextResponse.json({ error: 'enabled must be a boolean' }, { status: 422 });
     }
 
-    await db.notificationPreference.upsert({
+    await orgData.notificationPreference.upsert({
       where: {
         organizationId_notificationType: {
           organizationId: manager.organizationId,

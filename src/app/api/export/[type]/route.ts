@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { Prisma } from '@prisma/client';
 import { db } from '@/lib/db';
-import { requireManagerOrg, authError } from '@/lib/api';
+import { requireManagerOrg, authError, getPrismaForOrg } from '@/lib/api';
 import { NON_INTERNAL_AGENT_ACTIVITY_FILTER } from '@/lib/agent-process';
 import { log, requestContext } from '@/lib/logger';
 import {
@@ -129,7 +129,8 @@ async function fetchEmployees(
   // would silently return zero results for employees who joined outside
   // that window.  We keep the parameter signature for API compatibility.
   const orgFilter = orgId ? { organizationId: orgId } : {};
-  const employees = await db.employee.findMany({
+  const orgData = orgId ? (await getPrismaForOrg(orgId)).client : db;
+  const employees = await orgData.employee.findMany({
     where: { status: { not: 'archived' }, ...orgFilter },
     include: {
       department: { select: { name: true } },
@@ -195,6 +196,7 @@ async function fetchActivities(
   // Activity has no organizationId column — scope through the employee relation.
   // Internal agent processes are excluded at the DATA layer (NULL-safe filter)
   // so the monitoring agent's own process never appears in activity exports.
+  const orgData = orgId ? (await getPrismaForOrg(orgId)).client : db;
   let fromDate = from ? new Date(from) : null;
   const toDate = to ? new Date(to) : null;
 
@@ -231,9 +233,9 @@ async function fetchActivities(
   };
 
   const activities = await pagedCollect<ActivityExportRow>(
-    () => db.activity.findMany({ where: baseWhere, include, orderBy, take: EXPORT_PAGE_SIZE }),
+    () => orgData.activity.findMany({ where: baseWhere, include, orderBy, take: EXPORT_PAGE_SIZE }),
     (last) =>
-      db.activity.findMany({
+      orgData.activity.findMany({
         where: {
           ...baseWhere,
           OR: [
@@ -280,6 +282,7 @@ async function fetchTimeEntries(
   orgId: string | null
 ): Promise<Record<string, unknown>[]> {
   const orgFilter = orgId ? { organizationId: orgId } : {};
+  const orgData = orgId ? (await getPrismaForOrg(orgId)).client : db;
   let fromDate = from ? new Date(from) : null;
   const toDate = to ? new Date(to) : null;
 
@@ -314,9 +317,9 @@ async function fetchTimeEntries(
   };
 
   const entries = await pagedCollect<TimeEntryExportRow>(
-    () => db.timeEntry.findMany({ where: baseWhere, include, orderBy, take: EXPORT_PAGE_SIZE }),
+    () => orgData.timeEntry.findMany({ where: baseWhere, include, orderBy, take: EXPORT_PAGE_SIZE }),
     (last) =>
-      db.timeEntry.findMany({
+      orgData.timeEntry.findMany({
         where: {
           ...baseWhere,
           OR: [
@@ -351,7 +354,8 @@ async function fetchProjects(
   orgId: string | null
 ): Promise<Record<string, unknown>[]> {
   const orgFilter = orgId ? { organizationId: orgId } : {};
-  const projects = await db.project.findMany({
+  const orgData = orgId ? (await getPrismaForOrg(orgId)).client : db;
+  const projects = await orgData.project.findMany({
     where: orgFilter,
     include: {
       members: {
@@ -368,7 +372,7 @@ async function fetchProjects(
   const projectIds = projects.map((p) => p.id);
   const hoursByProject =
     projectIds.length > 0
-      ? await db.timeEntry.groupBy({
+      ? await orgData.timeEntry.groupBy({
           by: ['projectId'],
           where: { projectId: { in: projectIds }, ...orgFilter },
           _sum: { hours: true },

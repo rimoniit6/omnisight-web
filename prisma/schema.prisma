@@ -80,6 +80,161 @@ model Plan {
 
   subscriptions Subscription[]
   licenseKeys     LicenseKey[]
+  pricings        PlanPricing[]
+  offers          Offer[]        @relation("OfferPlanScope")
+  purchaseRequests PurchaseRequest[]
+}
+
+// ==================== Plan Pricing (V1 commercial catalog) ==================
+// Per (Plan, deploymentMode, billingPeriod) commercial configuration. This is
+// the control-plane pricing source used by the single pricing resolver
+// (src/lib/pricing.ts) for the landing page, public pricing, purchase
+// requests, Super Admin review, invoice creation, and price validation.
+//
+// The legacy Plan.priceMonthly/priceYearly/maxDevices columns are NOT deleted:
+// they keep serving the existing /api/plans contract and pre-V1 data. When a
+// PlanPricing row exists and isActive, it is authoritative for V1 commercial
+// behavior; otherwise consumers fall back to the legacy plan columns.
+//
+// Scope rules:
+//   - deploymentMode is MANAGED or CUSTOMER_DB only. PRIVATE is a legacy
+//     self-hosted path and must NEVER receive PlanPricing rows.
+//   - includedDevices / additionalDevicePrice are MANAGED-only concepts
+//     (device quantity affects price). They are ignored for CUSTOMER_DB.
+//   - CUSTOMER_DB devices are ALWAYS unlimited — no device cap is derived
+//     from this model, and enforcement must never cap CUSTOMER_DB orgs.
+model PlanPricing {
+  id                   String        @id @default(cuid())
+  planId               String
+  plan                 Plan          @relation(fields: [planId], references: [id], onDelete: Cascade)
+  deploymentMode       DeploymentMode
+  billingPeriod        BillingPeriod
+  basePrice            Float
+  currency             String        @default("BDT")
+  // Managed-only device entitlement config (ignored for CUSTOMER_DB):
+  includedDevices      Int           @default(5)
+  additionalDevicePrice Float        @default(0.0)
+  isActive             Boolean       @default(true)
+  createdAt            DateTime      @default(now())
+  updatedAt            DateTime      @updatedAt
+
+  offers               Offer[]
+
+  @@unique([planId, deploymentMode, billingPeriod])
+  @@index([planId, isActive])
+  @@index([isActive])
+}
+
+// ==================== Offer / Promotion (V1) ================================
+// Deterministic single-offer application: when multiple active+valid offers
+// match a (plan, mode, period) selection, the resolver picks ONE winner by
+// descending discount value (percentage offers valued against the base price,
+// fixed offers by absolute amount), then by earliest createdAt, then id — so
+// pricing is never ambiguous. Discount never drives the final price negative.
+model Offer {
+  id             String          @id @default(cuid())
+  name           String
+  description    String?
+  isActive       Boolean         @default(true)
+  discountType   String // PERCENTAGE | FIXED
+  // PERCENTAGE: 0-100. FIXED: absolute amount in offer currency.
+  discountValue  Float
+  // Free offer / trial: when true the final price resolves to 0 regardless
+  // of the discount math (resolver clamps at 0).
+  isFree         Boolean         @default(false)
+  freeTrialDays  Int?            // optional trial length metadata (informational)
+  currency       String          @default("BDT")
+  startsAt       DateTime?
+  endsAt         DateTime?
+  // Scoping: null = applies to all plans / modes / periods of that dimension.
+  planId         String?
+  plan           Plan?           @relation("OfferPlanScope", fields: [planId], references: [id], onDelete: Cascade)
+  deploymentMode DeploymentMode?
+  billingPeriod  BillingPeriod?
+  pricingId      String? // optional PlanPricing-scoped offer
+  pricing        PlanPricing?    @relation(fields: [pricingId], references: [id], onDelete: Cascade)
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+
+  purchaseRequests PurchaseRequest[]
+
+  @@index([isActive, startsAt, endsAt])
+  @@index([planId])
+}
+
+// ==================== Purchase Request (V1) =================================
+// Public, no-login commercial request: Plan → Deployment Mode → Period →
+// (Managed) device quantity → server-calculated price snapshot → submit.
+// The server RECALCULATES the price from the pricing configuration (never
+// trusts client-submitted amounts) and stores the snapshot here so later
+// pricing/offer edits cannot alter the request.
+//
+// Lifecycle: SUBMITTED → REVIEWED → PAYMENT_VERIFIED → ACTIVATED
+//            (any open state →) REJECTED / CANCELLED
+// Activation goes through the EXISTING subscription lifecycle (no fork).
+model PurchaseRequest {
+  id             String   @id @default(cuid())
+  requestNumber  String   @unique // PR-YYYY-NNNN, sequential like invoices
+
+  // Customer info (public form — no login required).
+  companyName    String
+  contactName    String
+  contactEmail   String
+  contactPhone   String?
+  notes          String?
+
+  // Commercial selection.
+  planId         String
+  plan           Plan     @relation(fields: [planId], references: [id])
+  deploymentMode DeploymentMode
+  billingPeriod  BillingPeriod
+  // Managed: chosen device quantity. CUSTOMER_DB: null (unlimited).
+  deviceQuantity Int?
+
+  // Authoritative server-side price snapshot.
+  basePrice      Float
+  deviceCharge   Float    @default(0.0)
+  discountAmount Float    @default(0.0)
+  finalPrice     Float
+  currency       String   @default("BDT")
+  offerId        String?
+  offer          Offer?   @relation(fields: [offerId], references: [id], onDelete: SetNull)
+  offerName      String?
+  priceSnapshot  Json
+
+  // Activation target (set when the request is activated) — lets the queue
+  // display the produced organization + subscription without extra queries.
+  activatedSubscription Subscription? @relation("PurchaseRequestActivation", fields: [activatedSubscriptionId], references: [id], onDelete: SetNull)
+
+  status         String   @default("SUBMITTED") // PurchaseRequestStatus values
+  statusHistory  Json? // [{ status, at, by, note }]
+
+  // Review / payment / activation trail.
+  reviewedById    String?
+  reviewedAt      DateTime?
+  reviewNote      String?
+  paymentVerifiedById String?
+  paymentVerifiedAt   DateTime?
+  paymentReference   String?
+  // Full manual payment record (§10) — captured at payment verification.
+  // Complements the price snapshot (requested price stays immutable); the
+  // amount received is what was actually paid.
+  paymentMethod      String?
+  paymentAmount      Float?
+  paymentDate        DateTime?
+  paymentNote        String?
+  activatedSubscriptionId String? @unique
+  activatedAt       DateTime?
+  rejectedAt        DateTime?
+  rejectionReason   String?
+  cancelledAt       DateTime?
+
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([status, createdAt])
+  @@index([contactEmail])
+  @@index([planId])
 }
 
 // ==================== License Key (Self-Hosted) ====================
@@ -136,7 +291,22 @@ model Subscription {
   trialEndDate    DateTime?
   notes           String?
   createdAt       DateTime           @default(now())
-  updatedAt       DateTime           @updatedAt
+  updatedAt       DateTime @updatedAt
+
+  // ── V1 commercial snapshot (Phase: Pricing/PurchaseRequest) ───────────────
+  // Retains the commercial terms active at purchase time so later pricing
+  // edits never alter historical subscriptions. All fields are optional so
+  // pre-V1 rows keep their meaning (null = legacy, resolved from the plan).
+  //   billingPeriod  — MONTHLY | YEARLY (reuses the existing BillingPeriod enum)
+  //   deviceQuantity — purchased device count (Managed); null for legacy
+  //   deploymentMode — mode snapshot at purchase (MANAGED | CUSTOMER_DB |
+  //                    PRIVATE for legacy self-hosted purchases)
+  //   priceSnapshot  — full resolver breakdown JSON (base, devices, offer,
+  //                    discount, final price, currency)
+  billingPeriod   BillingPeriod?
+  deviceQuantity  Int?
+  deploymentModeSnapshot DeploymentMode?
+  priceSnapshot   Json?
 
   // Two relations to Organization (must be explicitly named):
   //  - "SubscriptionHistory": one-to-many billing/contract history
@@ -146,6 +316,10 @@ model Subscription {
   currentForOrganization    Organization?  @relation("CurrentOrgSubscription")
   plan                      Plan            @relation(fields: [planId], references: [id])
   invoices                  Invoice[]
+  // Reverse of PurchaseRequest.activatedSubscriptionId — one request can
+  // activate at most one subscription (unique pointer), preserved for the
+  // commercial history chain request → subscription → organization.
+  purchaseRequestActivation PurchaseRequest? @relation("PurchaseRequestActivation")
 
   @@index([organizationId])
   @@index([planId])
@@ -735,9 +909,9 @@ model InfrastructureChangeRequest {
 // platform database/storage to the APPROVED dedicated destination — the step
 // between Super Admin approval and activation. A successful connection test or
 // approval NEVER migrates data; only this entity's state machine does:
-//   QUEUED -> MIGRATING -> VERIFYING -> READY_TO_ACTIVATE -> CUTOVER -> ACTIVATED
+//   QUEUED -> MIGRATING -> RECONCILING -> VERIFYING -> READY_TO_ACTIVATE -> CUTOVER -> ACTIVATED
 //   QUEUED -> CANCELLED (request rejected/cancelled before starting)
-//   MIGRATING|VERIFYING|CUTOVER -> FAILED (destination unchanged; retryable)
+//   MIGRATING|RECONCILING|VERIFYING|CUTOVER -> FAILED (destination unchanged; retryable)
 // Strictly org-scoped: every copied row carries the request's organizationId;
 // platform/shared tables are never copied (see src/lib/migration/plan.ts).
 //
@@ -761,7 +935,7 @@ model InfrastructureMigration {
   organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   kind           String // "DATABASE" | "STORAGE" (mirrors the request kind)
 
-  // queued|migrating|verifying|ready_to_activate|cutover|activated|failed|cancelled
+  // queued|migrating|reconciling|verifying|ready_to_activate|cutover|activated|failed|cancelled
   status         String   @default("queued")
 
   // REAL progress — incremented from actual copied work, never simulated.

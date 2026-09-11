@@ -24,6 +24,7 @@
  * No addresses, no reverse geocoding, no raw device metadata.
  */
 
+import type { PrismaClient } from '@prisma/client';
 import { db } from '@/lib/db';
 import { calculateDistanceKm } from './location-distance';
 
@@ -80,10 +81,17 @@ async function latestAccepted(
   return rows[0] ?? null;
 }
 
+/**
+ * Record an agent location fix. LocationEvent is org-owned (COPYs to the org's
+ * DB at cutover) — `data` is the org data client resolved by the token; agent
+ * routes pass the one from validateAgentToken so post-activation writes land
+ * in the authoritative org DB.
+ */
 export async function recordAgentLocation(
-  input: RecordLocationInput
+  input: RecordLocationInput,
+  data: PrismaClient = db
 ): Promise<RecordLocationResult> {
-  return db.$transaction(async (tx) => {
+  return data.$transaction(async (tx) => {
     const latest = await latestAccepted(tx, input.employeeId);
 
     // First location for this employee — always accept.

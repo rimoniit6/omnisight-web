@@ -76,7 +76,9 @@ test('NAV-5: owner and super_admin clear every gate', () => {
   const superAdminOnlyPages = [
     'super-admin-organizations', 'super-admin-organization-detail',
     'sa-overview', 'sa-packages', 'sa-create-organization', 'sa-landing',
-    'sa-audit',
+    'sa-audit', 'sa-infra-requests',
+    // V1 commercial configuration + purchase review queue.
+    'sa-pricing', 'sa-purchase-requests',
   ];
   for (const role of ['owner', 'super_admin']) {
     for (const p of ALL_PAGES) {

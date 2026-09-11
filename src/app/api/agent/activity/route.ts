@@ -161,7 +161,11 @@ export async function POST(req: NextRequest) {
     // 'activity_tracking' consent (the type granted for app/website/session
     // telemetry). Revoked or missing consent fails closed.
     const employeeId = authResult.employee!.id;
-    if (!(await hasActiveConsent(employeeId, 'activity_tracking'))) {
+    // ORG DATA BOUNDARY: Activity + ActivityBatchReceipt are org-owned and
+    // COPY to the org DB at cutover — route the write (and the consent read)
+    // through the org data client resolved by the authenticated token.
+    const orgData = authResult.orgData ?? db;
+    if (!(await hasActiveConsent(employeeId, 'activity_tracking', orgData))) {
       return NextResponse.json(
         { error: 'Activity tracking requires consent. Consent is not granted or has been revoked.' },
         { status: 403 }
@@ -302,7 +306,7 @@ export async function POST(req: NextRequest) {
     const classificationEnabled = await resolveServerClassificationEnabled(organizationId);
     let reclassified = 0;
     if (classificationEnabled) {
-      const rules = await db.categoryRule.findMany({
+      const rules = await orgData.categoryRule.findMany({
         where: { organizationId, enabled: true },
         select: { id: true, matchType: true, pattern: true, category: true, priority: true, createdAt: true },
         orderBy: [{ priority: 'asc' }, { createdAt: 'asc' }],
@@ -329,7 +333,7 @@ export async function POST(req: NextRequest) {
     const dedupeEnabled =
       validBatchId !== null && (await resolveActivityDedupeEnabled(organizationId));
     if (!dedupeEnabled) {
-      const created = await db.activity.createMany({ data: rows });
+      const created = await orgData.activity.createMany({ data: rows });
       return NextResponse.json({
         success: true,
         count: created.count,
@@ -351,7 +355,7 @@ export async function POST(req: NextRequest) {
     const batchIdKey = validBatchId!;
     const receipt = { organizationId, employeeId, batchId: batchIdKey, rowCount: rows.length };
     try {
-      await db.$transaction(async (tx) => {
+      await orgData.$transaction(async (tx) => {
         await tx.activityBatchReceipt.create({ data: receipt });
         await tx.activity.createMany({ data: rows });
       });

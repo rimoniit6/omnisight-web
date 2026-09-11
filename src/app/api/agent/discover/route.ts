@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
+import { getPrismaForOrg, findDeviceAcrossActivatedOrgDbs } from '@/lib/org-db';
 import {
   generateClaimSecret,
   hashClaimSecret,
@@ -116,33 +117,66 @@ export async function POST(req: NextRequest) {
     const authenticatedEmployee = authResult.valid ? authResult.employee! : null;
     log.info('agent-discover.session:success', { authenticated: authResult.valid, ...ctx });
 
-    // Idempotent: reuse an existing Device for this identity — the device is
-    // NEVER recreated on restart.
-    log.info('agent-discover.device-lookup:start', { ...ctx });
-    const device = await db.device.findFirst({ where: { agentKey: deviceKey } });
-    log.info('agent-discover.device-lookup:success', { deviceFound: !!device, ...ctx });
-
     // ── ORGANIZATION RESOLUTION (server-derived, explicit only) ────────────
+    // Idempotent: reuse an existing Device for this identity — the device is
+    // NEVER recreated on restart. NOTE the org data boundary: Device,
+    // DeviceClaim, Notification and org-owned AuditLog rows COPY to the org's
+    // own database at activation, so after a cutover the org DB (not the
+    // platform `db`) is their authoritative home. The authenticated path
+    // resolves the org data client FIRST and reads the device there — the
+    // platform copy is stale post-cutover.
     log.info('agent-discover.org-resolution:start', { ...ctx });
     let org: { id: string } | null = null;
+    let device: { id: string; organizationId: string; employeeId: string | null } | null = null;
+    let orgData: Awaited<ReturnType<typeof getPrismaForOrg>>['client'] | null = null;
+
     if (authenticatedEmployee) {
       org = await db.organization.findUnique({ where: { id: authenticatedEmployee.organizationId } });
-    } else if (device) {
-      org = await db.organization.findUnique({ where: { id: device.organizationId } });
+      if (org) {
+        orgData = (await getPrismaForOrg(org.id)).client;
+        device = await orgData.device.findFirst({
+          where: { agentKey: deviceKey },
+          select: { id: true, organizationId: true, employeeId: true },
+        });
+      }
     } else {
-      // No session and no existing device — anonymous discovery is not supported.
-      // The employee must authenticate first (Phase 3 login).
-      log.info('agent-discover.org-resolution:no-identity', { ...ctx });
-      return NextResponse.json(
-        {
-          error: 'Device registration requires an employee sign-in. Please authenticate first.',
-          code: 'AUTHENTICATION_REQUIRED',
-        },
-        { status: 422 }
-      );
+      // No session: look the device up on the platform table first (still the
+      // authoritative home for orgs that never cut over).
+      let known: { id: string; organizationId: string; employeeId: string | null } | null = await db.device.findFirst({
+        where: { agentKey: deviceKey },
+        select: { id: true, organizationId: true, employeeId: true },
+      });
+      if (!known) {
+        // RARE unauth fan-out: the platform copy is stale/missing for a device
+        // first discovered after this org cut over. The scan is capped (see
+        // findDeviceAcrossActivatedOrgDbs) and only ever runs on this path.
+        known = await findDeviceAcrossActivatedOrgDbs(deviceKey);
+      }
+      if (known) {
+        org = await db.organization.findUnique({ where: { id: known.organizationId } });
+        if (org) {
+          orgData = (await getPrismaForOrg(org.id)).client;
+          // Re-read from the org DB — the authoritative home after a cutover.
+          device = await orgData.device.findFirst({
+            where: { agentKey: deviceKey },
+            select: { id: true, organizationId: true, employeeId: true },
+          });
+        }
+      } else {
+        // No session and no existing device — anonymous discovery is not
+        // supported. The employee must authenticate first (Phase 3 login).
+        log.info('agent-discover.org-resolution:no-identity', { ...ctx });
+        return NextResponse.json(
+          {
+            error: 'Device registration requires an employee sign-in. Please authenticate first.',
+            code: 'AUTHENTICATION_REQUIRED',
+          },
+          { status: 422 }
+        );
+      }
     }
 
-    if (!org) {
+    if (!org || !orgData) {
       log.warn('agent-discover.org-resolution:no-org', { ...ctx });
       return NextResponse.json(
         { error: 'No organization is configured on this server' },
@@ -150,12 +184,12 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    log.info('agent-discover.org-resolution:success', { orgId: org.id, ...ctx });
+    log.info('agent-discover.org-resolution:success', { orgId: org.id, deviceFound: !!device, ...ctx });
 
     if (!device) {
       // First sight: create the pending Device + claim atomically.
       log.info('agent-discover.transaction:start', { flow: 'new-device', ...ctx });
-      const created = await db.$transaction(async (tx) => {
+      const created = await orgData.$transaction(async (tx) => {
         const dev = await tx.device.create({
           data: {
             name: hostname,
@@ -233,7 +267,7 @@ export async function POST(req: NextRequest) {
     // never create duplicate PENDING claims (a real risk now that the deviceId
     // unique constraint is gone — the history model allows many claims).
     log.info('agent-discover.transaction:start', { flow: 'existing-device', ...ctx });
-    const outcome = await db.$transaction(async (tx) => {
+    const outcome = await orgData.$transaction(async (tx) => {
       await tx.$queryRaw`SELECT id FROM "Device" WHERE id = ${device.id} FOR UPDATE`;
 
       // RE-READ under the lock: the pre-transaction row may be stale if a
@@ -280,7 +314,7 @@ export async function POST(req: NextRequest) {
         if (!wantsFreshClaim) {
           return { kind: 'approved' as const, claim: latest, device: locked };
         }
-        const validToken = await tx.agentToken.findFirst({
+        const validToken = await db.agentToken.findFirst({
           where: { deviceId: locked.id, expiresAt: { gt: now } },
           select: { id: true },
         });

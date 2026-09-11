@@ -16,6 +16,7 @@
 // Licensed as a lease-guarded job ('data_expiry_reminder') from run.ts.
 
 import { db } from '@/lib/db';
+import { getPrismaForOrg } from '@/lib/org-db';
 import { sendDataExpiryReminder } from '@/lib/email';
 
 export const DAY_MS = 24 * 60 * 60 * 1000;
@@ -49,14 +50,17 @@ function appExportLink(): string {
  * compute the same retention window.
  */
 export async function earliestDataAt(orgId: string): Promise<Date | null> {
+  // Screenshot/LocationEvent/AudioRecording/AiInsight/SentimentRecord/Activity
+  // are org-owned (copied at activation) — aggregate on the org's own client.
+  const orgData = (await getPrismaForOrg(orgId)).client;
   const [screenshot, location, audio, aiInsight, sentiment, activity] = await Promise.all([
-    db.screenshot.aggregate({ where: { organizationId: orgId }, _min: { createdAt: true } }),
-    db.locationEvent.aggregate({ where: { organizationId: orgId }, _min: { createdAt: true } }),
-    db.audioRecording.aggregate({ where: { organizationId: orgId }, _min: { createdAt: true } }),
-    db.aiInsight.aggregate({ where: { organizationId: orgId }, _min: { createdAt: true } }),
-    db.sentimentRecord.aggregate({ where: { organizationId: orgId }, _min: { createdAt: true } }),
+    orgData.screenshot.aggregate({ where: { organizationId: orgId }, _min: { createdAt: true } }),
+    orgData.locationEvent.aggregate({ where: { organizationId: orgId }, _min: { createdAt: true } }),
+    orgData.audioRecording.aggregate({ where: { organizationId: orgId }, _min: { createdAt: true } }),
+    orgData.aiInsight.aggregate({ where: { organizationId: orgId }, _min: { createdAt: true } }),
+    orgData.sentimentRecord.aggregate({ where: { organizationId: orgId }, _min: { createdAt: true } }),
     // Activity is scoped through Employee (no direct organizationId column).
-    db.activity.aggregate({
+    orgData.activity.aggregate({
       where: { employee: { organizationId: orgId } },
       _min: { createdAt: true },
     }),

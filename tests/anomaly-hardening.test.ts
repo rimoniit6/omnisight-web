@@ -112,9 +112,9 @@ before(async () => {
   run = rn;
   job = jb;
 
-  orgA = await db.organization.create({ data: { name: 'Anomaly Org A', slug: 'anom-a', timezone: 'UTC' } });
-  orgB = await db.organization.create({ data: { name: 'Anomaly Org B', slug: 'anom-b', timezone: 'UTC' } });
-  orgC = await db.organization.create({ data: { name: 'Anomaly Org C', slug: 'anom-c', timezone: 'UTC' } });
+  orgA = await db.organization.create({ data: { name: 'Anomaly Org A', slug: 'anom-a', timezone: 'UTC', trialEndsAt: new Date(Date.now() + 30 * 24 * 3600 * 1000) } });
+  orgB = await db.organization.create({ data: { name: 'Anomaly Org B', slug: 'anom-b', timezone: 'UTC', trialEndsAt: new Date(Date.now() + 30 * 24 * 3600 * 1000) } });
+  orgC = await db.organization.create({ data: { name: 'Anomaly Org C', slug: 'anom-c', timezone: 'UTC', trialEndsAt: new Date(Date.now() + 30 * 24 * 3600 * 1000) } });
 
   // Org A: full-day work window (00:00–23:59) so the deterministic route-level
   // detection tests only ever trigger productivity_drop + excessive_idle —

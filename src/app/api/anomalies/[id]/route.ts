@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
-import { authenticateRequest, getSessionOrg } from '@/lib/api';
+import { authenticateRequest, getSessionOrg, getPrismaForOrg } from '@/lib/api';
 import { hasRolePermission } from '@/lib/auth';
 import { log, requestContext } from '@/lib/logger';
 
@@ -53,6 +53,7 @@ export async function PUT(
     }
     const org = await getSessionOrg(req);
     if (!org) return NextResponse.json({ error: 'No organization found' }, { status: 404 });
+    const orgData = (await getPrismaForOrg(org.id)).client;
 
     const { id } = await params;
     const body = await req.json();
@@ -79,7 +80,7 @@ export async function PUT(
     }
 
     // Tenant isolation: update only within the caller's organization.
-    const anomaly = await db.anomaly.updateMany({
+    const anomaly = await orgData.anomaly.updateMany({
       where: { id, organizationId: org.id },
       data: updateData,
     });
@@ -87,11 +88,11 @@ export async function PUT(
       return NextResponse.json({ error: 'Anomaly not found' }, { status: 404 });
     }
 
-    const updated = await db.anomaly.findUnique({ where: { id } });
+    const updated = await orgData.anomaly.findUnique({ where: { id } });
 
     // Audit log with actor
     if (updated) {
-      await db.auditLog.create({
+      await orgData.auditLog.create({
         data: {
           action: 'update',
           resource: 'anomaly',

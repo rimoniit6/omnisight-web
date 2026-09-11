@@ -2,6 +2,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { authError, requireAdminOrg, SAFE_EMPLOYEE_SELECT } from '@/lib/api';
+import { checkDeviceEntitlement } from '@/lib/device-entitlement';
 import { checkRateLimit, RATE_LIMITS, getClientIpFromHeaders } from '@/lib/rate-limit';
 import { createOrgNotification } from '@/lib/notifications/service';
 import { log, requestContext } from '@/lib/logger';
@@ -45,6 +46,18 @@ export async function POST(
     // Employee mode requires an explicit employee selection.
     if (typeof employeeId !== 'string' || employeeId.length === 0) {
       return NextResponse.json({ error: 'Employee selection is required' }, { status: 422 });
+    }
+
+    // V1 commercial device entitlement — server-authoritative enforcement.
+    // MANAGED: rejected when the active-device count has reached the
+    // subscription/plan entitlement. CUSTOMER_DB (and legacy PRIVATE) are
+    // ALWAYS unlimited — this check can never cap them.
+    const entitlement = await checkDeviceEntitlement(admin.organizationId);
+    if (!entitlement.allowed) {
+      return NextResponse.json(
+        { error: entitlement.reason ?? 'Device entitlement reached', code: 'DEVICE_ENTITLEMENT_REACHED', currentCount: entitlement.currentCount, limit: entitlement.limit },
+        { status: 403 }
+      );
     }
 
     // Claim must be pending and inside the admin's organization (cross-org ids
@@ -108,6 +121,17 @@ export async function POST(
       // Serialize concurrent approvals for the SAME employee by taking a row
       // lock on the Employee row (SELECT ... FOR UPDATE).
       await tx.$queryRaw`SELECT id FROM "Employee" WHERE id = ${employee.id} FOR UPDATE`;
+
+      // Re-check the entitlement inside the transaction so two concurrent
+      // approvals cannot both squeeze through the pre-transaction check when
+      // only ONE slot remains (last-slot race guard).
+      const org = await tx.organization.findUnique({
+        where: { id: admin.organizationId },
+        select: { activeDeviceCount: true },
+      });
+      if (entitlement.limit !== null && (org?.activeDeviceCount ?? 0) >= entitlement.limit) {
+        throw new Error('DEVICE_ENTITLEMENT_REACHED');
+      }
 
       // Re-check the claim is STILL pending inside the transaction (guarded
       // updateMany instead of an unconditional update).
@@ -217,6 +241,12 @@ export async function POST(
       return NextResponse.json(
         { error: 'This device claim has expired. The device must re-register.' },
         { status: 422 }
+      );
+    }
+    if (error instanceof Error && error.message === 'DEVICE_ENTITLEMENT_REACHED') {
+      return NextResponse.json(
+        { error: 'Device entitlement reached. Increase the subscription\'s device quantity to enroll more devices.', code: 'DEVICE_ENTITLEMENT_REACHED' },
+        { status: 403 }
       );
     }
     log.error('api.device-claims.id.approve.', { error: String('DeviceClaim approve error:') }, requestContext(req));

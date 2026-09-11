@@ -1,7 +1,6 @@
 'use server';
 import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { authError, requireSessionOrg, requireManagerOrg, validatePagination } from '@/lib/api';
+import { authError, requireSessionOrg, requireManagerOrg, validatePagination, getPrismaForOrg } from '@/lib/api';
 import { createOrgNotification, NotificationValidationError } from '@/lib/notifications/service';
 import { validateTitle, validateMessage } from '@/lib/notifications/validation';
 import { log, requestContext } from '@/lib/logger';
@@ -20,6 +19,7 @@ export async function GET(req: NextRequest) {
       });
     }
     const orgId = scope.organizationId;
+    const orgData = (await getPrismaForOrg(orgId)).client;
 
     const { searchParams } = new URL(req.url);
 
@@ -57,25 +57,25 @@ export async function GET(req: NextRequest) {
     }
 
     const [notifications, total] = await Promise.all([
-      db.notification.findMany({
+      orgData.notification.findMany({
         where,
         orderBy: { createdAt: 'desc' },
         skip,
         take: pageSize,
       }),
-      db.notification.count({ where }),
+      orgData.notification.count({ where }),
     ]);
 
-    const unreadCount = await db.notification.count({ where: { status: 'unread', organizationId: orgId } });
+    const unreadCount = await orgData.notification.count({ where: { status: 'unread', organizationId: orgId } });
     const totalPages = Math.ceil(total / pageSize);
 
     // Aggregate stats — same org scope
     const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
-    const recentCount = await db.notification.count({
+    const recentCount = await orgData.notification.count({
       where: { organizationId: orgId, createdAt: { gte: twentyFourHoursAgo } },
     });
 
-    const typeAgg = await db.notification.groupBy({
+    const typeAgg = await orgData.notification.groupBy({
       by: ['type'],
       where: { organizationId: orgId },
       _count: { type: true },
@@ -83,7 +83,7 @@ export async function GET(req: NextRequest) {
     const byType: Record<string, number> = {};
     typeAgg.forEach((t) => { byType[t.type] = t._count.type; });
 
-    const priorityAgg = await db.notification.groupBy({
+    const priorityAgg = await orgData.notification.groupBy({
       by: ['priority'],
       where: { organizationId: orgId },
       _count: { priority: true },
@@ -113,6 +113,7 @@ export async function POST(req: NextRequest) {
     const manager = await requireManagerOrg(req);
     if (!manager.ok) return authError(manager);
     const orgId = manager.organizationId;
+    const orgData = (await getPrismaForOrg(orgId)).client;
 
     let body: Record<string, unknown>;
     try {
@@ -132,7 +133,7 @@ export async function POST(req: NextRequest) {
 
     let notification: { id: string } | null;
     try {
-      notification = await db.$transaction((tx) =>
+      notification = await orgData.$transaction((tx) =>
         createOrgNotification(tx, {
           title: title as string,
           message: message as string,
@@ -157,7 +158,7 @@ export async function POST(req: NextRequest) {
     }
 
     // Audit the creation with the AUTHENTICATED actor (N-2 / actor integrity).
-    await db.auditLog.create({
+    await orgData.auditLog.create({
       data: {
         action: 'create',
         resource: 'notification',
@@ -185,15 +186,16 @@ export async function PUT(req: NextRequest) {
       return NextResponse.json({ error: 'Insufficient permissions' }, { status: 403 });
     }
     const orgId: string = scope.organizationId;
+    const orgData = (await getPrismaForOrg(orgId)).client;
 
     const body = await req.json();
     const { id, status, markAllRead, archive, archiveSelected } = body;
 
     // Archive a single notification
     if (archive && id) {
-      const existing = await db.notification.findFirst({ where: { id, organizationId: orgId }, select: { id: true } });
+      const existing = await orgData.notification.findFirst({ where: { id, organizationId: orgId }, select: { id: true } });
       if (!existing) return NextResponse.json({ error: 'Notification not found' }, { status: 404 });
-      const notification = await db.notification.update({
+      const notification = await orgData.notification.update({
         where: { id },
         data: { status: 'archived' },
       });
@@ -202,7 +204,7 @@ export async function PUT(req: NextRequest) {
 
     // Archive multiple notifications
     if (archiveSelected && Array.isArray(archiveSelected)) {
-      const result = await db.notification.updateMany({
+      const result = await orgData.notification.updateMany({
         where: { id: { in: archiveSelected }, organizationId: orgId },
         data: { status: 'archived' },
       });
@@ -211,7 +213,7 @@ export async function PUT(req: NextRequest) {
 
     if (markAllRead) {
       const now = new Date();
-      await db.notification.updateMany({
+      await orgData.notification.updateMany({
         where: { status: 'unread', organizationId: orgId },
         data: { status: 'read', readAt: now },
       });
@@ -220,7 +222,7 @@ export async function PUT(req: NextRequest) {
 
     if (!id) return NextResponse.json({ error: 'ID is required' }, { status: 400 });
 
-    const existing = await db.notification.findFirst({ where: { id, organizationId: orgId }, select: { id: true } });
+    const existing = await orgData.notification.findFirst({ where: { id, organizationId: orgId }, select: { id: true } });
     if (!existing) return NextResponse.json({ error: 'Notification not found' }, { status: 404 });
 
     // Canonical status only (N-7) — arbitrary strings are rejected.
@@ -234,7 +236,7 @@ export async function PUT(req: NextRequest) {
       updateData.readAt = new Date();
     }
 
-    const notification = await db.notification.update({
+    const notification = await orgData.notification.update({
       where: { id },
       data: updateData,
     });

@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { authError, requireSessionOrg } from '@/lib/api';
+import { authError, getPrismaForOrg, requireSessionOrg } from '@/lib/api';
 import { log, requestContext } from '@/lib/logger';
 
 // GET /api/ai-provider/usage — AI usage statistics derived entirely from the
@@ -18,6 +17,7 @@ export async function GET(req: NextRequest) {
       });
     }
     const orgId = scope.organizationId;
+    const orgData = (await getPrismaForOrg(orgId)).client;
 
     const now = new Date();
     const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
@@ -27,12 +27,12 @@ export async function GET(req: NextRequest) {
 
     // All AI-output rows are the union of these three real tables (org-scoped).
     const [insightCounts, sentimentCounts, screenshotCounts, recentInsights] = await Promise.all([
-      db.aiInsight.groupBy({
+      orgData.aiInsight.groupBy({
         by: ['createdAt'],
         _count: { _all: true },
         where: { createdAt: { gte: sevenDaysAgo }, organizationId: orgId },
       }),
-      db.sentimentRecord.groupBy({
+      orgData.sentimentRecord.groupBy({
         by: ['createdAt'],
         _count: { _all: true },
         // Only rows that actually used an AI provider count as AI usage —
@@ -40,12 +40,12 @@ export async function GET(req: NextRequest) {
         // deterministic output, not AI calls.
         where: { createdAt: { gte: sevenDaysAgo }, employee: { organizationId: orgId }, aiProviderUsed: { notIn: ['rules', 'none'] } },
       }),
-      db.screenshot.groupBy({
+      orgData.screenshot.groupBy({
         by: ['createdAt'],
         _count: { _all: true },
         where: { createdAt: { gte: sevenDaysAgo }, aiAnalysis: { not: null }, organizationId: orgId },
       }),
-      db.aiInsight.findMany({
+      orgData.aiInsight.findMany({
         where: { organizationId: orgId },
         orderBy: { createdAt: 'desc' },
         take: 10,
@@ -83,23 +83,23 @@ export async function GET(req: NextRequest) {
 
     // Totals via lightweight counts (org-scoped)
     const [totalInsights, totalSentiments, totalScreenshots] = await Promise.all([
-      db.aiInsight.count({ where: { organizationId: orgId } }),
-      db.sentimentRecord.count({ where: { employee: { organizationId: orgId }, aiProviderUsed: { notIn: ['rules', 'none'] } } }),
-      db.screenshot.count({ where: { aiAnalysis: { not: null }, organizationId: orgId } }),
+      orgData.aiInsight.count({ where: { organizationId: orgId } }),
+      orgData.sentimentRecord.count({ where: { employee: { organizationId: orgId }, aiProviderUsed: { notIn: ['rules', 'none'] } } }),
+      orgData.screenshot.count({ where: { aiAnalysis: { not: null }, organizationId: orgId } }),
     ]);
     const total = totalInsights + totalSentiments + totalScreenshots;
 
     const [todayInsights, todaySentiments, todayScreenshots] = await Promise.all([
-      db.aiInsight.count({ where: { createdAt: { gte: todayStart }, organizationId: orgId } }),
-      db.sentimentRecord.count({ where: { createdAt: { gte: todayStart }, employee: { organizationId: orgId }, aiProviderUsed: { notIn: ['rules', 'none'] } } }),
-      db.screenshot.count({ where: { createdAt: { gte: todayStart }, aiAnalysis: { not: null }, organizationId: orgId } }),
+      orgData.aiInsight.count({ where: { createdAt: { gte: todayStart }, organizationId: orgId } }),
+      orgData.sentimentRecord.count({ where: { createdAt: { gte: todayStart }, employee: { organizationId: orgId }, aiProviderUsed: { notIn: ['rules', 'none'] } } }),
+      orgData.screenshot.count({ where: { createdAt: { gte: todayStart }, aiAnalysis: { not: null }, organizationId: orgId } }),
     ]);
     const today = todayInsights + todaySentiments + todayScreenshots;
 
     const [monthInsights, monthSentiments, monthScreenshots] = await Promise.all([
-      db.aiInsight.count({ where: { createdAt: { gte: monthStart }, organizationId: orgId } }),
-      db.sentimentRecord.count({ where: { createdAt: { gte: monthStart }, employee: { organizationId: orgId }, aiProviderUsed: { notIn: ['rules', 'none'] } } }),
-      db.screenshot.count({ where: { createdAt: { gte: monthStart }, aiAnalysis: { not: null }, organizationId: orgId } }),
+      orgData.aiInsight.count({ where: { createdAt: { gte: monthStart }, organizationId: orgId } }),
+      orgData.sentimentRecord.count({ where: { createdAt: { gte: monthStart }, employee: { organizationId: orgId }, aiProviderUsed: { notIn: ['rules', 'none'] } } }),
+      orgData.screenshot.count({ where: { createdAt: { gte: monthStart }, aiAnalysis: { not: null }, organizationId: orgId } }),
     ]);
     const thisMonth = monthInsights + monthSentiments + monthScreenshots;
 

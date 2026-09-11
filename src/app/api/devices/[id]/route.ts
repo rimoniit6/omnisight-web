@@ -1,7 +1,7 @@
 'use server';
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
-import { authError, requireSessionOrg, requireAdminOrg } from '@/lib/api';
+import { authError, requireSessionOrg, requireAdminOrg, getPrismaForOrg } from '@/lib/api';
 import { getDeviceDeleteImpact } from '@/lib/delete-impact';
 import { getClientIp } from '@/lib/agent/auth';
 import { effectiveDeviceStatus } from '@/lib/device-status';
@@ -51,11 +51,12 @@ export async function PUT(
   try {
     const admin = await requireAdminOrg(req);
     if (!admin.ok) return authError(admin);
+    const orgData = (await getPrismaForOrg(admin.organizationId)).client;
 
     const { id } = await params;
     const body = await req.json();
 
-    const existing = await db.device.findFirst({
+    const existing = await orgData.device.findFirst({
       where: { id, organizationId: admin.organizationId },
       select: { id: true },
     });
@@ -63,7 +64,7 @@ export async function PUT(
 
     // Cross-org validation: employeeId must belong to the caller's org.
     if (body.employeeId) {
-      const employee = await db.employee.findFirst({
+      const employee = await orgData.employee.findFirst({
         where: { id: body.employeeId, organizationId: admin.organizationId },
         select: { id: true },
       });
@@ -72,7 +73,7 @@ export async function PUT(
       }
     }
 
-    const device = await db.device.update({
+    const device = await orgData.device.update({
       where: { id },
       data: {
         name: body.name,
@@ -102,9 +103,10 @@ export async function DELETE(
   try {
     const admin = await requireAdminOrg(req);
     if (!admin.ok) return authError(admin);
+    const orgData = (await getPrismaForOrg(admin.organizationId)).client;
 
     const { id } = await params;
-    const existing = await db.device.findFirst({
+    const existing = await orgData.device.findFirst({
       where: { id, organizationId: admin.organizationId },
       select: { id: true, name: true },
     });
@@ -116,10 +118,10 @@ export async function DELETE(
     // removed is NEVER hard-deleted by this API. It is retired instead, which
     // keeps every record — mirroring the project's employee/project soft-delete
     // pattern. Only an EMPTY device (no dependents) may be physically removed.
-    const impact = await getDeviceDeleteImpact(id, admin.organizationId);
+    const impact = await getDeviceDeleteImpact(id, admin.organizationId, orgData);
 
     const audit = async () => {
-      await db.auditLog.create({
+      await orgData.auditLog.create({
         data: {
           action: 'delete',
           resource: 'device',
@@ -136,7 +138,7 @@ export async function DELETE(
     };
 
     if (impact.disposition === 'soft' && impact.softAction === 'retire') {
-      const retired = await db.device.update({
+      const retired = await orgData.device.update({
         where: { id },
         data: { status: 'retired' },
       });
@@ -149,7 +151,7 @@ export async function DELETE(
       });
     }
 
-    await db.device.delete({ where: { id } });
+    await orgData.device.delete({ where: { id } });
     await audit();
     return NextResponse.json({ success: true });
   } catch (error) {

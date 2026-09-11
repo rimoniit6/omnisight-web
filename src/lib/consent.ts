@@ -1,3 +1,4 @@
+import type { PrismaClient } from '@prisma/client';
 import { db } from '@/lib/db';
 import type { Prisma } from '@prisma/client';
 
@@ -51,8 +52,8 @@ export function canTransition(from: ConsentStatus, to: ConsentStatus): boolean {
 
 // ==================== Policy helpers ====================
 
-export function getPublishedPolicy(orgId: string, consentType: string) {
-  return db.consentPolicy.findFirst({
+export function getPublishedPolicy(orgId: string, consentType: string, data: PrismaClient = db) {
+  return data.consentPolicy.findFirst({
     where: { organizationId: orgId, consentType, status: 'published' },
     orderBy: { effectiveAt: 'desc' },
   });
@@ -129,9 +130,14 @@ type DbTx = Prisma.TransactionClient;
  * the consented policy version matches the organization's current published
  * policy. If no policy is published the check FAILS CLOSED — the employee
  * must re-consent to the active policy before monitoring resumes.
+ *
+ * `data` is the org data client (Consent/ConsentPolicy are org-owned and COPY
+ * to the org's DB at cutover) — pass the one resolved by validateAgentToken so
+ * post-activation reads hit the authoritative org DB, not the stale platform
+ * copy.
  */
-export async function hasActiveConsent(employeeId: string, type: string): Promise<boolean> {
-  const consent = await db.consent.findFirst({
+export async function hasActiveConsent(employeeId: string, type: string, data: PrismaClient = db): Promise<boolean> {
+  const consent = await data.consent.findFirst({
     where: { employeeId, consentType: type },
     select: {
       status: true,
@@ -145,7 +151,7 @@ export async function hasActiveConsent(employeeId: string, type: string): Promis
   if (consent.expiresAt && consent.expiresAt < new Date()) return false;
 
   if (consent.policyId) {
-    const policy = await db.consentPolicy.findUnique({
+    const policy = await data.consentPolicy.findUnique({
       where: { id: consent.policyId },
       select: { status: true, version: true, organizationId: true },
     });
@@ -158,7 +164,7 @@ export async function hasActiveConsent(employeeId: string, type: string): Promis
 
   // Legacy consent without a linked policy: must match the current published
   // version, otherwise the employee must re-consent to the new policy.
-  const published = await getPublishedPolicy(consent.organizationId, type);
+  const published = await getPublishedPolicy(consent.organizationId, type, data);
   if (!published) return false;
   return published.version === consent.consentVersion;
 }
@@ -354,11 +360,12 @@ export async function applyConsentTransition(
 export async function getConsentState(
   employeeId: string,
   organizationId: string,
-  types: string[]
+  types: string[],
+  data: PrismaClient = db
 ): Promise<Record<string, boolean>> {
   const now = new Date();
   const [consents, policies] = await Promise.all([
-    db.consent.findMany({
+    data.consent.findMany({
       where: { employeeId, consentType: { in: types } },
       select: {
         consentType: true,
@@ -370,7 +377,7 @@ export async function getConsentState(
       },
     }),
     // One row per type: the newest published policy (publish archives the old).
-    db.consentPolicy.findMany({
+    data.consentPolicy.findMany({
       where: { organizationId, consentType: { in: types }, status: 'published' },
       orderBy: { effectiveAt: 'desc' },
       select: { id: true, consentType: true, version: true },

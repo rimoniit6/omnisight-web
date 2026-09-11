@@ -35,7 +35,7 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: 'No valid consent types requested' }, { status: 400 });
     }
 
-    const consents = await getConsentState(employee.id, employee.organizationId, requested);
+    const consents = await getConsentState(employee.id, employee.organizationId, requested, auth.orgData ?? db);
     const allGranted = requested.every((t) => consents[t]);
 
     return NextResponse.json({
@@ -85,8 +85,13 @@ export async function POST(req: NextRequest) {
 
     const target: ConsentStatus = action === 'grant' ? 'granted' : 'revoked';
 
+    // Org data client resolved by agent authentication — Consent / ConsentLog /
+    // ConsentPolicy are org-owned (copied to the org DB at activation), so the
+    // transition must execute there, never on the platform DB after cutover.
+    const orgData = auth.orgData ?? db;
+
     try {
-      await db.$transaction(async (tx) => {
+      await orgData.$transaction(async (tx) => {
         const existing = await tx.consent.findFirst({
           where: { employeeId: employee.id, consentType },
         });

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
-import { authenticateRequest, getSessionOrg } from '@/lib/api';
+import { authenticateRequest, getPrismaForOrg, getSessionOrg } from '@/lib/api';
 import { hasRolePermission } from '@/lib/auth';
 import { applyConsentTransition, isValidConsentStatus } from '@/lib/consent';
 import type { ConsentStatus } from '@/lib/consent';
@@ -35,13 +35,16 @@ export async function PUT(
     }
 
     // Tenant isolation: the consent must belong to the caller's organization.
-    const consent = await db.consent.findUnique({ where: { id, organizationId: org.id } });
+    // Consent/ConsentLog/ConsentPolicy/WebcamSession are org-owned (copied at
+    // activation) — the whole mutation runs on the org client, never platform.
+    const orgData = (await getPrismaForOrg(org.id)).client;
+    const consent = await orgData.consent.findUnique({ where: { id, organizationId: org.id } });
     if (!consent) {
       return NextResponse.json({ error: 'Consent not found' }, { status: 404 });
     }
 
     try {
-      const updated = await db.$transaction(async (tx) =>
+      const updated = await orgData.$transaction(async (tx) =>
         applyConsentTransition(
           tx,
           { id: consent.id, status: consent.status as ConsentStatus, consentType: consent.consentType, organizationId: consent.organizationId },
@@ -64,7 +67,7 @@ export async function PUT(
       // for that employee and drops buffered relay frames IMMEDIATELY — frame
       // flow must not continue until the agent's next (≤5s) gate re-check.
       if (status === 'revoked' && consent.consentType === 'webcam_access') {
-        await endWebcamSessionsOnRevoke(consent.employeeId);
+        await endWebcamSessionsOnRevoke(consent.employeeId, orgData);
       }
 
       return NextResponse.json(updated);

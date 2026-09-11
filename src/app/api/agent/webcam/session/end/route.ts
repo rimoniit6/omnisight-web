@@ -25,6 +25,9 @@ export async function POST(req: NextRequest) {
     }
     const employee = authResult.employee;
     const deviceId = authResult.deviceId;
+    // ORG DATA BOUNDARY: WebcamSession + org-scoped AuditLog are org-owned and
+    // COPY to the org DB at cutover — route through the org data client.
+    const orgData = authResult.orgData ?? db;
 
     const body = (await req.json().catch(() => null)) as { sessionId?: unknown; endedReason?: unknown } | null;
     if (!body || typeof body !== 'object') {
@@ -39,7 +42,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: `endedReason must be one of: ${[...END_REASONS].join(', ')}` }, { status: 422 });
     }
 
-    const session = await db.webcamSession.findUnique({ where: { sessionId } });
+    const session = await orgData.webcamSession.findUnique({ where: { sessionId } });
     if (!session || session.deviceId !== deviceId || session.organizationId !== employee.organizationId) {
       return NextResponse.json({ error: 'Session not found' }, { status: 404 });
     }
@@ -48,7 +51,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ success: true, sessionId, status: session.status }); // idempotent
     }
 
-    await db.$transaction(async (tx) => {
+    await orgData.$transaction(async (tx) => {
       await tx.webcamSession.updateMany({
         where: { sessionId, status: 'active' },
         data: { status: endedReason === 'error' ? 'failed' : 'ended', endedAt: new Date(), endedReason },

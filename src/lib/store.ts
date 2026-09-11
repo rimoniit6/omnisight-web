@@ -40,7 +40,9 @@ export type PageType =
   | 'branding'
   | 'billing'
   | 'data-infrastructure'
-  | 'sa-infra-requests';
+  | 'sa-infra-requests'
+  | 'sa-pricing'
+  | 'sa-purchase-requests';
 
 function getInitialTourState(): boolean {
   if (typeof window === 'undefined') return false;

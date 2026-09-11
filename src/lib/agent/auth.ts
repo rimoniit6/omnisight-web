@@ -1,5 +1,7 @@
 import { createHash, randomBytes } from 'crypto';
+import type { PrismaClient } from '@prisma/client';
 import { db } from '@/lib/db';
+import { getPrismaForOrg } from '@/lib/org-db';
 import { hashPassword, verifyPassword } from '@/lib/auth';
 import { getClientIpFromHeaders } from '@/lib/rate-limit';
 import { log } from '@/lib/logger';
@@ -33,9 +35,13 @@ export function generateClaimSecret(): string {
 // Verify an agent password against the stored credential.
 // Stored values are bcrypt hashes; legacy plaintext values are verified and
 // automatically migrated to a bcrypt hash in place.
+// `data` is the org data client (see validateAgentToken) — Employee is
+// org-owned and COPYs to the org's own DB at activation, so the password
+// upgrade must land where the org's rows are authoritative.
 export async function verifyAgentPassword(
   employee: { id: string; agentPassword: string | null },
-  password: string
+  password: string,
+  data: PrismaClient = db
 ): Promise<boolean> {
   if (!employee.agentPassword) return false;
 
@@ -47,7 +53,7 @@ export async function verifyAgentPassword(
   // Legacy plaintext credential: verify, then upgrade to a bcrypt hash.
   if (employee.agentPassword === password) {
     const hashed = await hashPassword(password);
-    await db.employee.update({
+    await data.employee.update({
       where: { id: employee.id },
       data: { agentPassword: hashed },
     });
@@ -63,6 +69,8 @@ export async function validateAgentToken(req: Request): Promise<{
   valid: boolean;
   employee?: { id: string; employeeId: string; firstName: string; lastName: string; organizationId: string };
   deviceId?: string;
+  /** Org data client for COPIED (org-owned) tables — see boundary note. */
+  orgData?: PrismaClient;
   error?: string;
 }> {
   try {
@@ -78,19 +86,7 @@ export async function validateAgentToken(req: Request): Promise<{
 
     const agentToken = await db.agentToken.findUnique({
       where: { token },
-      include: {
-        employee: {
-          select: {
-            id: true,
-            employeeId: true,
-            firstName: true,
-            lastName: true,
-            organizationId: true,
-            status: true,
-            agentApproved: true,
-          },
-        },
-      },
+      select: { id: true, employeeId: true, deviceId: true, organizationId: true, expiresAt: true },
     });
 
     if (!agentToken) {
@@ -99,30 +95,57 @@ export async function validateAgentToken(req: Request): Promise<{
     }
 
     if (new Date(agentToken.expiresAt) < new Date()) {
-      // Clean up expired token
+      // Clean up expired token (control plane — stays platform-side)
       await db.agentToken.delete({ where: { id: agentToken.id } });
-      log.warn('agent.auth.expired_token', { employeeId: agentToken.employee.employeeId, ip: getClientIp(req) });
+      log.warn('agent.auth.expired_token', { employeeId: agentToken.employeeId.slice(0, 12), ip: getClientIp(req) });
       return { valid: false, error: 'Token expired' };
     }
 
-    if (!agentToken.employee.agentApproved) {
-      log.warn('agent.auth.not_approved', { employeeId: agentToken.employee.employeeId, ip: getClientIp(req) });
+    // ── ORG DATA BOUNDARY ─────────────────────────────────────────────────
+    // AgentToken / AgentAccount / Organization stay PLATFORM-side (control
+    // plane — deliberately never copied), but Employee and Device are org-owned
+    // and COPY to the org's own database at activation. After a cutover the org
+    // DB is their authoritative home, so every org-scoped read/write below (and
+    // the caller's org-scoped writes) resolves through this client. For an org
+    // that never opted in, `orgData === db` — unchanged behavior.
+    const orgData = (await getPrismaForOrg(agentToken.organizationId)).client;
+
+    const employee = await orgData.employee.findUnique({
+      where: { id: agentToken.employeeId },
+      select: {
+        id: true,
+        employeeId: true,
+        firstName: true,
+        lastName: true,
+        organizationId: true,
+        status: true,
+        agentApproved: true,
+      },
+    });
+
+    if (!employee) {
+      log.warn('agent.auth.invalid_token', { ip: getClientIp(req) });
+      return { valid: false, error: 'Invalid token' };
+    }
+
+    if (!employee.agentApproved) {
+      log.warn('agent.auth.not_approved', { employeeId: employee.employeeId, ip: getClientIp(req) });
       return { valid: false, error: 'Employee not approved by admin' };
     }
 
-    if (agentToken.employee.status !== 'active') {
-      log.warn('agent.auth.inactive', { employeeId: agentToken.employee.employeeId, ip: getClientIp(req) });
+    if (employee.status !== 'active') {
+      log.warn('agent.auth.inactive', { employeeId: employee.employeeId, ip: getClientIp(req) });
       return { valid: false, error: 'Employee is not active' };
     }
 
     // AgentAccount status check — a disabled AgentAccount must fail closed
     // even with a valid token (admin can disable an account mid-session).
     const agentAccount = await db.agentAccount.findUnique({
-      where: { employeeId: agentToken.employee.id },
+      where: { employeeId: employee.id },
       select: { status: true },
     });
     if (agentAccount && agentAccount.status !== 'active') {
-      log.warn('agent.auth.account_disabled', { employeeId: agentToken.employee.employeeId, ip: getClientIp(req) });
+      log.warn('agent.auth.account_disabled', { employeeId: employee.employeeId, ip: getClientIp(req) });
       return { valid: false, error: 'Agent account is disabled' };
     }
 
@@ -131,12 +154,12 @@ export async function validateAgentToken(req: Request): Promise<{
     // tokens — fail closed without waiting for the 24h expiry. This is what
     // stops heartbeat/activity/screenshot for a revoked device.
     if (agentToken.deviceId) {
-      const device = await db.device.findUnique({
+      const device = await orgData.device.findUnique({
         where: { id: agentToken.deviceId },
         select: { status: true },
       });
       if (!device || (device.status !== 'online' && device.status !== 'offline')) {
-        log.warn('agent.auth.device_inactive', { employeeId: agentToken.employee.employeeId, ip: getClientIp(req) });
+        log.warn('agent.auth.device_inactive', { employeeId: employee.employeeId, ip: getClientIp(req) });
         return { valid: false, error: 'Device is not active' };
       }
     }
@@ -144,18 +167,18 @@ export async function validateAgentToken(req: Request): Promise<{
     // Organization pause check: a paused/archived org must not
     // allow agent operations. Fail closed.
     const org = await db.organization.findUnique({
-      where: { id: agentToken.employee.organizationId },
+      where: { id: employee.organizationId },
       select: { status: true },
     });
     if (!org || org.status !== 'active') {
-      log.warn('agent.auth.org_not_active', { employeeId: agentToken.employee.employeeId, ip: getClientIp(req) });
+      log.warn('agent.auth.org_not_active', { employeeId: employee.employeeId, ip: getClientIp(req) });
       return { valid: false, error: 'Organization is not active' };
     }
 
     // Cross-org integrity: verify the token's organization matches the employee's.
     // organizationId is NOT NULL (schema enforced) — always present.
-    if (agentToken.organizationId !== agentToken.employee.organizationId) {
-      log.warn('agent.auth.org_mismatch', { employeeId: agentToken.employee.employeeId, ip: getClientIp(req) });
+    if (agentToken.organizationId !== employee.organizationId) {
+      log.warn('agent.auth.org_mismatch', { employeeId: employee.employeeId, ip: getClientIp(req) });
       return { valid: false, error: 'Token organization mismatch' };
     }
 
@@ -163,10 +186,10 @@ export async function validateAgentToken(req: Request): Promise<{
     // The server is authoritative for subscription state. The Agent must NOT
     // operate when the subscription is PAUSED, EXPIRED, CANCELLED, or PENDING.
     // Trial organizations are treated as having full access.
-    const entitlement = await checkAgentEntitlement(agentToken.employee.organizationId);
+    const entitlement = await checkAgentEntitlement(employee.organizationId);
     if (!entitlement.allowed) {
       log.warn('agent.auth.subscription_denied', {
-        employeeId: agentToken.employee.employeeId,
+        employeeId: employee.employeeId,
         subscriptionStatus: entitlement.subscriptionStatus,
         reason: entitlement.reason,
         ip: getClientIp(req),
@@ -174,7 +197,7 @@ export async function validateAgentToken(req: Request): Promise<{
       return { valid: false, error: entitlement.reason ?? 'Subscription not active' };
     }
 
-    // Update lastUsedAt
+    // Update lastUsedAt (control plane — stays platform-side)
     await db.agentToken.update({
       where: { id: agentToken.id },
       data: { lastUsedAt: new Date() },
@@ -183,13 +206,14 @@ export async function validateAgentToken(req: Request): Promise<{
     return {
       valid: true,
       employee: {
-        id: agentToken.employee.id,
-        employeeId: agentToken.employee.employeeId,
-        firstName: agentToken.employee.firstName,
-        lastName: agentToken.employee.lastName,
-        organizationId: agentToken.employee.organizationId,
+        id: employee.id,
+        employeeId: employee.employeeId,
+        firstName: employee.firstName,
+        lastName: employee.lastName,
+        organizationId: employee.organizationId,
       },
       deviceId: agentToken.deviceId ?? undefined,
+      orgData,
     };
   } catch (error) {
     log.error('agent.auth.error', { err: error, ip: getClientIp(req) });

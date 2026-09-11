@@ -1,16 +1,18 @@
 'use server';
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
-import { authError, requireSessionOrg } from '@/lib/api';
+import { authError, getPrismaForOrg, requireSessionOrg } from '@/lib/api';
 import { log, requestContext } from '@/lib/logger';
 
 export async function GET(req: NextRequest) {
   try {
     const scope = await requireSessionOrg(req, { allowGlobal: true });
     if (!scope.ok) return authError(scope);
+    const orgId = scope.organizationId;
+    const orgData = orgId ? (await getPrismaForOrg(orgId)).client : db;
 
     // Get all active employees with their department (org-scoped)
-    const employees = await db.employee.findMany({
+    const employees = await orgData.employee.findMany({
       where: { status: 'active', ...(scope.organizationId ? { organizationId: scope.organizationId } : {}) },
       select: {
         id: true,
@@ -23,7 +25,7 @@ export async function GET(req: NextRequest) {
 
     // Aggregate productive time per employee in SQL (single grouped query
     // instead of loading every productive activity row into memory).
-    const productiveAgg = await db.activity.groupBy({
+    const productiveAgg = await orgData.activity.groupBy({
       by: ['employeeId'],
       where: { employeeId: { in: employees.map((e) => e.id) }, category: 'productive' },
       _sum: { duration: true },

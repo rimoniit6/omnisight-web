@@ -3,7 +3,7 @@ import { db } from '@/lib/db';
 import { callAIProviderVision, type AIProviderResult, type ImageInput } from '@/lib/ai-provider-helper';
 import { meterAiCall } from '@/lib/ai-metering';
 import type { Prisma } from '@prisma/client';
-import { authError, requireAdminOrg } from '@/lib/api';
+import { authError, requireAdminOrg, getPrismaForOrg } from '@/lib/api';
 import { screenshotAiInput } from '@/lib/storage';
 import { log, requestContext } from '@/lib/logger';
 
@@ -31,6 +31,7 @@ export async function POST(req: NextRequest) {
     const scope = await requireAdminOrg(req);
     if (!scope.ok) return authError(scope);
     const orgId = scope.organizationId;
+    const orgData = (await getPrismaForOrg(orgId)).client;
 
     const body = await req.json();
     const { screenshotIds } = body as { screenshotIds: string[] };
@@ -134,7 +135,7 @@ Respond in valid JSON:
 
         // Queue the update; committed atomically after the loop
         updates.push(
-          db.screenshot.update({
+          orgData.screenshot.update({
             where: { id: screenshot.id },
             data: {
               ocrText,
@@ -168,7 +169,7 @@ Respond in valid JSON:
     }
 
     if (updates.length > 0) {
-      await db.$transaction(updates);
+      await orgData.$transaction(updates);
     }
 
     return NextResponse.json({ results, analyzed, failed });

@@ -1,7 +1,6 @@
 'use server';
 import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { authError, requireSessionOrg } from '@/lib/api';
+import { authError, requireSessionOrg, getPrismaForOrg } from '@/lib/api';
 import { log, requestContext } from '@/lib/logger';
 
 const ALLOWED_MOODS = ['positive', 'neutral', 'negative', 'critical', 'no-data'];
@@ -22,6 +21,7 @@ export async function GET(req: NextRequest) {
       });
     }
     const orgId = scope.organizationId;
+    const orgData = (await getPrismaForOrg(orgId)).client;
 
     // ── Query param validation (invalid input → 400, never a 500) ──
     const { searchParams } = new URL(req.url);
@@ -70,7 +70,7 @@ export async function GET(req: NextRequest) {
     // the project context (GET /api/projects/[id]/sentiment) and must not
     // appear here, where they would be presented without their project
     // context.
-    const allRecords = await db.sentimentRecord.findMany({
+    const allRecords = await orgData.sentimentRecord.findMany({
       where: { employee: { organizationId: orgId }, projectId: null },
       include: {
         employee: {
@@ -171,7 +171,7 @@ export async function GET(req: NextRequest) {
     const avgScore = scoredCount > 0 ? totalScore / scoredCount : 0;
 
     // Departments for the department filter dropdown — same org scope
-    const departments = await db.department.findMany({
+    const departments = await orgData.department.findMany({
       where: { organizationId: orgId },
       select: { id: true, name: true },
       orderBy: { name: 'asc' },

@@ -43,15 +43,18 @@ export async function GET(req: NextRequest) {
     }
     const deviceId = authResult.deviceId;
     const organizationId = authResult.employee!.organizationId;
+    // ORG DATA BOUNDARY: AgentCommand is org-owned and COPYs to the org DB at
+    // cutover — route the poll/claim through the org data client.
+    const orgData = authResult.orgData ?? db;
 
     // Opportunistic cleanup: expire overdue PENDING commands.
-    await db.agentCommand.updateMany({
+    await orgData.agentCommand.updateMany({
       where: { status: 'PENDING', expiresAt: { lte: new Date() } },
       data: { status: 'EXPIRED' },
     });
 
     // Candidates: this device's allowlisted, unexpired, still-PENDING commands.
-    const candidates = await db.agentCommand.findMany({
+    const candidates = await orgData.agentCommand.findMany({
       where: {
         deviceId,
         organizationId,
@@ -69,7 +72,7 @@ export async function GET(req: NextRequest) {
 
     // Atomic claim — only the winner of the guarded update is returned.
     const now = new Date();
-    const claimed = await db.agentCommand.updateMany({
+    const claimed = await orgData.agentCommand.updateMany({
       where: {
         id: { in: candidates.map((c) => c.id) },
         deviceId,
@@ -85,7 +88,7 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ data: [] }); // another poll won the race
     }
 
-    const delivered = await db.agentCommand.findMany({
+    const delivered = await orgData.agentCommand.findMany({
       where: {
         id: { in: candidates.map((c) => c.id) },
         deviceId,

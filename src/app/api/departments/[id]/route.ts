@@ -1,7 +1,7 @@
 'use server';
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
-import { authError, requireSessionOrg, requireAdminOrg } from '@/lib/api';
+import { authError, requireSessionOrg, requireAdminOrg, getPrismaForOrg } from '@/lib/api';
 import { getDepartmentDeleteImpact } from '@/lib/delete-impact';
 import { getClientIp } from '@/lib/agent/auth';
 import { log, requestContext } from '@/lib/logger';
@@ -43,8 +43,9 @@ export async function PUT(
 
     const { id } = await params;
     const body = await req.json();
+    const orgData = (await getPrismaForOrg(admin.organizationId)).client;
 
-    const existing = await db.department.findFirst({
+    const existing = await orgData.department.findFirst({
       where: { id, organizationId: admin.organizationId },
       select: { id: true },
     });
@@ -52,7 +53,7 @@ export async function PUT(
 
     // Cross-org validation: managerId must belong to the caller's org.
     if (body.managerId) {
-      const manager = await db.employee.findFirst({
+      const manager = await orgData.employee.findFirst({
         where: { id: body.managerId, organizationId: admin.organizationId },
         select: { id: true },
       });
@@ -61,7 +62,7 @@ export async function PUT(
       }
     }
 
-    const dept = await db.department.update({
+    const dept = await orgData.department.update({
       where: { id },
       data: { name: body.name, description: body.description, status: body.status, managerId: body.managerId || null },
       include: { _count: { select: { employees: true } } },
@@ -82,7 +83,8 @@ export async function DELETE(
     if (!admin.ok) return authError(admin);
 
     const { id } = await params;
-    const existing = await db.department.findFirst({
+    const orgData = (await getPrismaForOrg(admin.organizationId)).client;
+    const existing = await orgData.department.findFirst({
       where: { id, organizationId: admin.organizationId },
       select: { id: true, name: true },
     });
@@ -90,9 +92,9 @@ export async function DELETE(
 
     // Impact preview (informational): employees and projects are preserved —
     // their department pointer is cleared via SetNull, never the rows deleted.
-    const impact = await getDepartmentDeleteImpact(id, admin.organizationId);
+    const impact = await getDepartmentDeleteImpact(id, admin.organizationId, orgData);
 
-    await db.$transaction(async (tx) => {
+    await orgData.$transaction(async (tx) => {
       await tx.employee.updateMany({ where: { departmentId: id }, data: { departmentId: null } });
       await tx.department.delete({ where: { id } });
       await tx.auditLog.create({

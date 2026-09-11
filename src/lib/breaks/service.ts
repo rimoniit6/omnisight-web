@@ -24,6 +24,7 @@
 // supplied by the CALLER from verified server context (session / agent
 // token). This service never accepts or trusts client-supplied identity.
 
+import type { PrismaClient } from '@prisma/client';
 import { db } from '@/lib/db';
 import type { Prisma } from '@prisma/client';
 
@@ -147,13 +148,16 @@ function auditPayload(
  * simultaneous start roll back and resolve to the winner's session.
  *
  * Writes (single transaction): BreakSession + Activity mirror + AuditLog.
+ * `data` is the org data client (all three are org-owned and COPY to the
+ * org's DB at cutover) — agent routes pass the one from validateAgentToken.
  */
 export async function startBreak(
-  input: StartBreakInput
+  input: StartBreakInput,
+  data: PrismaClient = db
 ): Promise<{ session: BreakSessionRow; action: 'started' | 'already_active' }> {
   const now = input.now ?? new Date();
   try {
-    return await db.$transaction(async (tx) => {
+    return await data.$transaction(async (tx) => {
       const existing = await getCurrentBreak(input.employeeId, tx);
       if (existing) {
         return { session: existing, action: 'already_active' as const };
@@ -221,7 +225,7 @@ export async function startBreak(
     // rolled the transaction back (no orphan Activity/AuditLog). Resolve to
     // the winner's session (idempotent outcome).
     if (isUniqueViolation(err)) {
-      const winner = await getCurrentBreak(input.employeeId);
+      const winner = await getCurrentBreak(input.employeeId, data);
       if (winner) return { session: winner, action: 'already_active' };
     }
     throw err;
@@ -234,12 +238,14 @@ export async function startBreak(
  * conditional `updateMany` matches zero rows for the loser → no-op.
  *
  * Writes (single transaction): BreakSession close + Activity mirror + AuditLog.
+ * `data` is the org data client (see startBreak).
  */
 export async function endBreak(
-  input: EndBreakInput
+  input: EndBreakInput,
+  data: PrismaClient = db
 ): Promise<{ session: BreakSessionRow | null; action: 'ended' | 'no_active_break' }> {
   const now = input.now ?? new Date();
-  return db.$transaction(async (tx) => {
+  return data.$transaction(async (tx) => {
     const open = await getCurrentBreak(input.employeeId, tx);
     if (!open) {
       return { session: null, action: 'no_active_break' as const };

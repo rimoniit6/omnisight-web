@@ -113,6 +113,7 @@ async function seedOrg(opts: {
       slug: opts.slug,
       timezone: 'UTC',
       screenshotInterval: opts.screenshotInterval ?? 5,
+      trialEndsAt: new Date(Date.now() + 30 * 24 * 3600 * 1000),
     },
   });
   const emp = await db.employee.create({
@@ -174,7 +175,7 @@ before(async () => {
   signJWT = (await import('../src/lib/auth')).signJWT;
 
   orgA = await seedOrg({ name: 'Tenant A', slug: 'p4a-orga', empCode: 'P4A-A', devKey: 'p4a-device-a-0001' });
-  const orgB = await db.organization.create({ data: { name: 'Tenant B', slug: 'p4a-orgb', timezone: 'UTC' } });
+  const orgB = await db.organization.create({ data: { name: 'Tenant B', slug: 'p4a-orgb', timezone: 'UTC', trialEndsAt: new Date(Date.now() + 30 * 24 * 3600 * 1000) } });
   orgOff = await seedOrg({
     name: 'Off Org', slug: 'p4a-off', empCode: 'P4A-OFF', devKey: 'p4a-device-off-0001', screenshotEnabled: false,
   });

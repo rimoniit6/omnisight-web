@@ -1,8 +1,9 @@
 'use server';
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
-import { authError, requireSessionOrg, requireAdminOrg, validatePagination } from '@/lib/api';
+import { authError, requireSessionOrg, requireAdminOrg, validatePagination, getPrismaForOrg } from '@/lib/api';
 import { effectiveDeviceStatus } from '@/lib/device-status';
+import { checkDeviceEntitlement } from '@/lib/device-entitlement';
 import { log, requestContext } from '@/lib/logger';
 
 export async function GET(req: NextRequest) {
@@ -71,6 +72,18 @@ export async function POST(req: NextRequest) {
     // Admin-only mutation, org derived from the session.
     const admin = await requireAdminOrg(req);
     if (!admin.ok) return authError(admin);
+    const orgData = (await getPrismaForOrg(admin.organizationId)).client;
+
+    // V1 commercial device entitlement — server-authoritative enforcement.
+    // MANAGED: rejected at the entitlement ceiling. CUSTOMER_DB (and legacy
+    // PRIVATE) are ALWAYS unlimited — never capped by this check.
+    const entitlement = await checkDeviceEntitlement(admin.organizationId);
+    if (!entitlement.allowed) {
+      return NextResponse.json(
+        { error: entitlement.reason ?? 'Device entitlement reached', code: 'DEVICE_ENTITLEMENT_REACHED', currentCount: entitlement.currentCount, limit: entitlement.limit },
+        { status: 403 }
+      );
+    }
 
     const body = await req.json();
     const { name, hostname, operatingSystem, osVersion, processor, memory, ipAddress, macAddress, employeeId } = body;
@@ -78,7 +91,7 @@ export async function POST(req: NextRequest) {
 
     // Cross-org validation: an employeeId from another organization is rejected.
     if (employeeId) {
-      const employee = await db.employee.findFirst({
+      const employee = await orgData.employee.findFirst({
         where: { id: employeeId, organizationId: admin.organizationId },
         select: { id: true },
       });
@@ -87,7 +100,7 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    const device = await db.device.create({
+    const device = await orgData.device.create({
       data: {
         name, hostname, operatingSystem, osVersion, processor, memory,
         ipAddress, macAddress, employeeId: employeeId || null,

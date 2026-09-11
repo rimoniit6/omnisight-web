@@ -557,13 +557,13 @@ export async function runDatabaseMigration(
     // STEP 1: bring the destination schema up to date (full Prisma schema).
     const sync = await syncDestinationSchema(spec);
     if (!sync.ok) {
-      return { ok: false, errorStage: 'schema', errorMessage: `Destination schema could not be synchronized: ${sync.error}`, recordsDone, recordsTotal, tableProgress };
+      return { ok: false, errorStage: 'schema', errorMessage: `Destination schema could not be synchronized: ${sync.error}`, recordsDone, recordsTotal, tableProgress, zeroDrift: false };
     }
     // STEP 2: confirm the synced schema actually matches the migration plan
     // (defence-in-depth: never copy into tables the plan does not recognize).
     const schema = await verifyDestinationSchema(destination, orgId);
     if (!schema.ok) {
-      return { ok: false, errorStage: 'schema', errorMessage: schema.error, recordsDone, recordsTotal, tableProgress };
+      return { ok: false, errorStage: 'schema', errorMessage: schema.error, recordsDone, recordsTotal, tableProgress, zeroDrift: false };
     }
 
     const ctx: CopyContext = { sourceOrgId: orgId, destinationOrgId: orgId, onProgress, tableProgress };
@@ -644,6 +644,43 @@ export async function runDatabaseMigration(
   } catch (err) {
     log.error('migration.db.failed', { error: userSafeError(err) });
     return { ok: false, errorStage: 'migrate', errorMessage: userSafeError(err), recordsDone, recordsTotal, tableProgress, zeroDrift: false };
+  } finally {
+    try { await destination.$disconnect(); } catch { /* ignore */ }
+  }
+}
+
+/**
+ * Test/seed helper: copy an organization's data to a destination database
+ * identified by a full connection URL. This is a simplified entry point that
+ * reuses the same copyTable pipeline (idempotent, org-scoped, isolation-
+ * asserted) as runDatabaseMigration, but without the migration-runner state
+ * machine. Used by integration tests to seed an org's own DB before asserting
+ * runtime routing through getPrismaForOrg.
+ *
+ * The destination schema must already be synced (prisma db push) — this
+ * function only moves data. Returns true on success, false on failure.
+ */
+export async function copyOrgToDestination(orgId: string, destinationUrl: string): Promise<boolean> {
+  const destination = new PrismaClient({
+    datasources: { db: { url: destinationUrl } },
+    log: ['error'],
+  });
+  try {
+    const ctx: CopyContext = {
+      sourceOrgId: orgId,
+      destinationOrgId: orgId,
+      onProgress: async () => {},
+      tableProgress: {},
+    };
+    const snapshotTotals = new Map<string, number>();
+    await ensureDestinationOrgAnchor(destination, orgId);
+    for (const t of MIGRATION_TABLES) {
+      await copyTable(t, ctx, db, destination, snapshotTotals);
+    }
+    return true;
+  } catch (err) {
+    log.error('migration.db.copyOrgToDestination.failed', { error: userSafeError(err) });
+    return false;
   } finally {
     try { await destination.$disconnect(); } catch { /* ignore */ }
   }

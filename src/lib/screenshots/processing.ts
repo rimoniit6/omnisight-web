@@ -1,6 +1,8 @@
 import sharp from 'sharp';
 import { basename, extname } from 'path';
+import type { PrismaClient } from '@prisma/client';
 import { db } from '@/lib/db';
+import { getPrismaForOrg } from '@/lib/org-db';
 import { log } from '@/lib/logger';
 import { getScreenshot, putScreenshot, isNotFound } from '@/lib/storage';
 import type { AllowedScreenshotMime } from '@/lib/screenshots/storage';
@@ -134,16 +136,19 @@ export async function generateThumbnail(
  * update row. Never mutates the original object. Returns the outcome so the
  * batch loop can count successes/failures.
  */
-export async function processScreenshotRow(row: {
-  id: string;
-  organizationId: string;
-  employeeId: string;
-  filePath: string;
-  mimeType: string;
-  processingAttempts: number;
-  /** Original width — used to backfill JPEG/WebP rows that were never parsed. */
-  width: number | null;
-}): Promise<'processed' | 'failed' | 'skipped'> {
+export async function processScreenshotRow(
+  row: {
+    id: string;
+    organizationId: string;
+    employeeId: string;
+    filePath: string;
+    mimeType: string;
+    processingAttempts: number;
+    /** Original width — used to backfill JPEG/WebP rows that were never parsed. */
+    width: number | null;
+  },
+  data: PrismaClient = db
+): Promise<'processed' | 'failed' | 'skipped'> {
   const { id, organizationId, filePath, mimeType } = row;
 
   // Sanity: the physical original is required. A row whose object is missing
@@ -154,7 +159,7 @@ export async function processScreenshotRow(row: {
     sourceBytes = await getScreenshot(organizationId, filePath);
   } catch (error) {
     const message = isNotFound(error) ? 'original_missing' : 'storage_read_failed';
-    await markRowFailed(id, message, MAX_SCREENSHOT_PROCESSING_ATTEMPTS, organizationId);
+    await markRowFailed(id, message, MAX_SCREENSHOT_PROCESSING_ATTEMPTS, organizationId, false, data);
     return 'failed';
   }
 
@@ -170,7 +175,8 @@ export async function processScreenshotRow(row: {
       'decode_failed',
       attempts,
       organizationId,
-      attempts < MAX_SCREENSHOT_PROCESSING_ATTEMPTS
+      attempts < MAX_SCREENSHOT_PROCESSING_ATTEMPTS,
+      data
     );
     log.warn('screenshots.processing.retry', {
       screenshotId: id,
@@ -194,13 +200,16 @@ export async function processScreenshotRow(row: {
       'storage_write_failed',
       attemptsAfter,
       organizationId,
-      attemptsAfter < MAX_SCREENSHOT_PROCESSING_ATTEMPTS
+      attemptsAfter < MAX_SCREENSHOT_PROCESSING_ATTEMPTS,
+      data
     );
     return 'failed';
   }
 
   try {
-    await db.screenshot.update({
+    // Screenshot rows are org-owned (copied at activation) — the status
+    // update lands on the org's own client, never the platform DB after cutover.
+    await data.screenshot.update({
       where: { id },
       data: {
         processingStatus: 'processed',
@@ -237,11 +246,14 @@ export async function processScreenshotRow(row: {
 }
 
 /**
- * Bounded drain of rows awaiting thumbnail generation. Selects the oldest
- * 'uploaded' rows first (FIFO fairness across the whole tenant set — the scan
- * is index-backed on (processingStatus, capturedAt) and never touches
- * 'processed' rows). Each row is processed individually with its own
- * try/catch, so one corrupt screenshot can never abort the batch.
+ * Bounded drain of rows awaiting thumbnail generation. Scans each ACTIVE
+ * organization's OWN database (rows are org-owned and copied at activation —
+ * a global platform scan would miss post-cutover rows entirely), selects the
+ * oldest 'uploaded' rows first per org, and processes each row individually
+ * with its own try/catch so one corrupt screenshot can never abort the batch.
+ * `limit` bounds the run across the WHOLE tenant set (attempts counted toward
+ * it, so one org's backlog cannot starve the others) — never a global platform
+ * scan. Remaining rows are picked up by the next scheduler tick.
  */
 export async function processPendingScreenshots(limit = SCREENSHOT_PROCESSING_DEFAULT_LIMIT): Promise<{
   processed: number;
@@ -250,36 +262,55 @@ export async function processPendingScreenshots(limit = SCREENSHOT_PROCESSING_DE
 }> {
   const result = { processed: 0, failed: 0, errors: [] as string[] };
 
-  const pending = await db.screenshot.findMany({
-    where: { processingStatus: 'uploaded', processingAttempts: { lt: MAX_SCREENSHOT_PROCESSING_ATTEMPTS } },
-    orderBy: { capturedAt: 'asc' },
-    take: Math.min(limit, 500), // hard safety ceiling per run
-    select: {
-      id: true,
-      organizationId: true,
-      employeeId: true,
-      filePath: true,
-      mimeType: true,
-      processingAttempts: true,
-      width: true,
-    },
-  });
+  const perOrgTake = Math.min(limit, 500); // hard safety ceiling per run
+  const orgs = await db.organization.findMany({ where: { status: 'active' }, select: { id: true } });
+  if (orgs.length === 0) return result;
 
-  if (pending.length === 0) return result;
+  for (const org of orgs) {
+    // Global budget: once the run's total attempt count reaches `limit`, stop —
+    // the remainder is drained by the next scheduled run.
+    if (result.processed + result.failed >= limit) break;
 
-  log.info('screenshots.processing.batch_started', { count: pending.length });
+    const orgData = (await getPrismaForOrg(org.id)).client;
+    // Org filter: on a shared platform client (org not yet activated) this
+    // restricts the scan to THIS org's rows — otherwise every iteration would
+    // re-process the same rows (burning retry budgets N× per run).
+    const pending = await orgData.screenshot.findMany({
+      where: {
+        organizationId: org.id,
+        processingStatus: 'uploaded',
+        processingAttempts: { lt: MAX_SCREENSHOT_PROCESSING_ATTEMPTS },
+      },
+      orderBy: { capturedAt: 'asc' },
+      take: perOrgTake,
+      select: {
+        id: true,
+        organizationId: true,
+        employeeId: true,
+        filePath: true,
+        mimeType: true,
+        processingAttempts: true,
+        width: true,
+      },
+    });
 
-  for (const row of pending) {
-    try {
-      const outcome = await processScreenshotRow(row);
-      if (outcome === 'processed') result.processed += 1;
-      else result.failed += 1;
-    } catch (error) {
-      // processScreenshotRow throws only on a DB failure after the object was
-      // written. The row stays 'uploaded' (deterministic key ⇒ overwrite on
-      // the next run), so this is a retryable, isolated failure.
-      result.failed += 1;
-      result.errors.push(`${row.id}: ${String((error as Error)?.message ?? error)}`);
+    if (pending.length === 0) continue;
+
+    log.info('screenshots.processing.batch_started', { count: pending.length, orgId: org.id.slice(0, 8) });
+
+    for (const row of pending) {
+      if (result.processed + result.failed >= limit) break;
+      try {
+        const outcome = await processScreenshotRow(row, orgData);
+        if (outcome === 'processed') result.processed += 1;
+        else result.failed += 1;
+      } catch (error) {
+        // processScreenshotRow throws only on a DB failure after the object was
+        // written. The row stays 'uploaded' (deterministic key ⇒ overwrite on
+        // the next run), so this is a retryable, isolated failure.
+        result.failed += 1;
+        result.errors.push(`${row.id}: ${String((error as Error)?.message ?? error)}`);
+      }
     }
   }
 
@@ -304,10 +335,11 @@ async function markRowFailed(
   category: string,
   attempts: number,
   organizationId: string,
-  retryable = false
+  retryable = false,
+  data: PrismaClient = db
 ): Promise<void> {
   const permanent = attempts >= MAX_SCREENSHOT_PROCESSING_ATTEMPTS;
-  await db.screenshot.update({
+  await data.screenshot.update({
     where: { id },
     data: {
       processingStatus: permanent ? 'processing_failed' : 'uploaded',

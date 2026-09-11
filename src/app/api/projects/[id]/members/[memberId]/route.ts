@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
-import { authError, requireAdminOrg } from '@/lib/api';
+import { authError, requireAdminOrg, getPrismaForOrg } from '@/lib/api';
 import { log, requestContext } from '@/lib/logger';
 
 export async function PUT(
@@ -14,6 +14,7 @@ export async function PUT(
     const { id, memberId } = await params;
     const body = await req.json();
     const { role, hoursPerWeek } = body;
+    const orgData = (await getPrismaForOrg(admin.organizationId)).client;
 
     const PROJECT_ROLES = ['lead', 'member', 'reviewer', 'stakeholder'] as const;
     if (role !== undefined) {
@@ -32,7 +33,7 @@ export async function PUT(
     }
 
     // Project must belong to the caller's org; cross-org ids -> 404.
-    const project = await db.project.findFirst({
+    const project = await orgData.project.findFirst({
       where: { id, organizationId: admin.organizationId },
       select: { id: true },
     });
@@ -40,7 +41,7 @@ export async function PUT(
       return NextResponse.json({ error: 'Project not found' }, { status: 404 });
     }
 
-    const member = await db.projectMember.findFirst({
+    const member = await orgData.projectMember.findFirst({
       where: { id: memberId, projectId: id },
       // Employee fields are used for the audit description only — never load
       // the full row (it carries agentPassword).
@@ -58,7 +59,7 @@ export async function PUT(
     if (role !== undefined) updateData.role = role;
     if (hoursPerWeek !== undefined) updateData.hoursPerWeek = hoursPerWeek;
 
-    const updated = await db.projectMember.update({
+    const updated = await orgData.projectMember.update({
       where: { id: memberId },
       data: updateData,
       include: {
@@ -72,7 +73,7 @@ export async function PUT(
     });
 
     // Audit log
-    await db.auditLog.create({
+    await orgData.auditLog.create({
       data: {
         action: 'update',
         resource: 'project_member',
@@ -99,9 +100,10 @@ export async function DELETE(
     if (!admin.ok) return authError(admin);
 
     const { id, memberId } = await params;
+    const orgData = (await getPrismaForOrg(admin.organizationId)).client;
 
     // Project must belong to the caller's org; cross-org ids -> 404.
-    const project = await db.project.findFirst({
+    const project = await orgData.project.findFirst({
       where: { id, organizationId: admin.organizationId },
       select: { id: true },
     });
@@ -109,7 +111,7 @@ export async function DELETE(
       return NextResponse.json({ error: 'Project not found' }, { status: 404 });
     }
 
-    const member = await db.projectMember.findFirst({
+    const member = await orgData.projectMember.findFirst({
       where: { id: memberId, projectId: id },
       // Employee fields are used for the audit description + the
       // active-tracking-project check below — never load the full row (it
@@ -134,7 +136,7 @@ export async function DELETE(
     // project, it is cleared in the SAME transaction — a stale reference
     // must never survive a removal (the sync engine also rejects it, but the
     // field should stay honest).
-    const updated = await db.$transaction(async (tx) => {
+    const updated = await orgData.$transaction(async (tx) => {
       const saved = await tx.projectMember.update({
         where: { id: memberId },
         data: { leftAt: new Date() },

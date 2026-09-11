@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
-import { authError, requireManagerOrg, parseJsonBody, BodyParseError } from '@/lib/api';
+import { authError, requireManagerOrg, parseJsonBody, BodyParseError, getPrismaForOrg } from '@/lib/api';
 import { validateAlertRuleInput } from '@/lib/alerts/validation';
 import { MAX_RULES_PER_ORG } from '@/lib/alerts/conditions';
 import { log, requestContext } from '@/lib/logger';
@@ -62,6 +62,7 @@ export async function POST(req: NextRequest) {
     const scope = await requireManagerOrg(req);
     if (!scope.ok) return authError(scope);
     const orgId = scope.organizationId;
+    const orgData = (await getPrismaForOrg(orgId)).client;
 
     let body: Record<string, unknown>;
     try {
@@ -80,7 +81,7 @@ export async function POST(req: NextRequest) {
 
     // Bounded rule count per org — the evaluation job loads every enabled
     // rule per org each run, so an unbounded table would degrade the job.
-    const count = await db.alertRule.count({ where: { organizationId: orgId } });
+    const count = await orgData.alertRule.count({ where: { organizationId: orgId } });
     if (count >= MAX_RULES_PER_ORG) {
       return NextResponse.json(
         { error: `Maximum of ${MAX_RULES_PER_ORG} alert rules per organization` },
@@ -88,7 +89,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const rule = await db.alertRule.create({
+    const rule = await orgData.alertRule.create({
       data: {
         organizationId: orgId,
         name: parsed.value.name,

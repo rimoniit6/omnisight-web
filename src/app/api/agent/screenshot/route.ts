@@ -36,10 +36,13 @@ export async function POST(req: NextRequest) {
 
     // Privacy enforcement: screenshot capture requires a valid, unexpired
     // 'screenshot' consent. Revoked or missing consent fails closed — the
-    // agent must surface this to the employee and stop capturing.
+    // agent must surface this to the employee and stop capturing. Consent is
+    // org-owned (copied to the org DB at cutover) — enforce against the
+    // authoritative org data client resolved by the token.
     const employeeId = authResult.employee!.id;
     const organizationId = authResult.employee!.organizationId;
-    if (!(await hasActiveConsent(employeeId, 'screenshot'))) {
+    const orgData = authResult.orgData ?? db;
+    if (!(await hasActiveConsent(employeeId, 'screenshot', orgData))) {
       log.warn('agent.screenshot.consent_denied', {
         employeeId: authResult.employee!.employeeId,
         orgId: organizationId,
@@ -160,7 +163,10 @@ export async function POST(req: NextRequest) {
     await putScreenshot(orgId, filename, bytes, mimeType);
 
     try {
-      await db.$transaction(async (tx) => {
+      // ORG DATA BOUNDARY: Screenshot/Device/org AuditLog rows COPY to the
+      // org's own DB at cutover — the metadata transaction runs on the org data
+      // client, not the platform `db`.
+      await orgData.$transaction(async (tx) => {
         // Create screenshot record in database. processingStatus defaults to
         // 'uploaded' — that state IS the background thumbnail-processing queue:
         // the row is picked up by the bounded 'screenshot_processing' job and

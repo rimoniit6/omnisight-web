@@ -3,8 +3,8 @@
 import { spaceMono } from '@/lib/fonts';
 import { LandingNavbar } from './LandingNavbar';
 import { HeroSection } from './HeroSection';
-import { ProductOverview, LiveActivityPreview, FeatureSection } from './product-sections';
-import { ScreenshotPreview, AIInsightPreview, ArchitectureSection } from './intelligence-sections';
+import { LiveActivityPreview, FeatureSection } from './product-sections';
+import { ScreenshotPreview, AIInsightPreview } from './intelligence-sections';
 import { SecuritySection, DeploymentModes } from './trust-sections';
 import { PricingSection, FinalCTA, LandingFooter } from './commerce-sections';
 
@@ -17,7 +17,7 @@ export function LandingPage() {
   return (
     <div className={`omni-cinematic min-h-screen overflow-x-hidden ${spaceMono.variable}`}>
       <a
-        href="#product"
+        href="#features"
         className="sr-only focus:not-sr-only focus:fixed focus:left-4 focus:top-4 focus:z-[60] focus:rounded-full focus:bg-white focus:px-4 focus:py-2 focus:text-sm focus:text-black"
       >
         Skip to content
@@ -25,12 +25,10 @@ export function LandingPage() {
       <LandingNavbar />
       <main>
         <HeroSection />
-        <ProductOverview />
         <LiveActivityPreview />
         <FeatureSection />
         <ScreenshotPreview />
         <AIInsightPreview />
-        <ArchitectureSection />
         <SecuritySection />
         <DeploymentModes />
         <PricingSection />

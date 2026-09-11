@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
-import { authError, requireManagerOrg, parseJsonBody, BodyParseError } from '@/lib/api';
+import { authError, requireManagerOrg, parseJsonBody, BodyParseError, getPrismaForOrg } from '@/lib/api';
 import { validateCategoryRuleInput } from '@/lib/classification/validation';
 import { log, requestContext } from '@/lib/logger';
 
@@ -14,6 +14,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     const scope = await requireManagerOrg(req);
     if (!scope.ok) return authError(scope);
     const orgId = scope.organizationId;
+    const orgData = (await getPrismaForOrg(orgId)).client;
     const { id } = await params;
 
     let body: Record<string, unknown>;
@@ -33,7 +34,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
 
     // Org-scoped find: a rule belonging to another org is indistinguishable
     // from a missing one (404), preserving tenant isolation.
-    const existing = await db.categoryRule.findFirst({
+    const existing = await orgData.categoryRule.findFirst({
       where: { id, organizationId: orgId },
       select: { id: true },
     });
@@ -41,7 +42,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       return NextResponse.json({ error: 'Category rule not found' }, { status: 404 });
     }
 
-    const rule = await db.categoryRule.update({
+    const rule = await orgData.categoryRule.update({
       where: { id },
       data: {
         name: parsed.value.name,
@@ -65,9 +66,10 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
     const scope = await requireManagerOrg(req);
     if (!scope.ok) return authError(scope);
     const orgId = scope.organizationId;
+    const orgData = (await getPrismaForOrg(orgId)).client;
     const { id } = await params;
 
-    const existing = await db.categoryRule.findFirst({
+    const existing = await orgData.categoryRule.findFirst({
       where: { id, organizationId: orgId },
       select: { id: true },
     });
@@ -75,7 +77,7 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
       return NextResponse.json({ error: 'Category rule not found' }, { status: 404 });
     }
 
-    await db.categoryRule.delete({ where: { id } });
+    await orgData.categoryRule.delete({ where: { id } });
     return NextResponse.json({ success: true });
   } catch {
     log.error('api.category-rules.', { error: String('Category rule delete error:') }, requestContext(req));

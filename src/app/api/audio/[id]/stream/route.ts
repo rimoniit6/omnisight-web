@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { requireAdminOrg, authError } from '@/lib/api';
+import { requireAdminOrg, authError, getPrismaForOrg } from '@/lib/api';
 import { getAudio } from '@/lib/audio/storage';
 import { isNotFound } from '@/lib/storage';
 import { log, requestContext } from '@/lib/logger';
@@ -35,10 +34,11 @@ export async function GET(
   try {
     const admin = await requireAdminOrg(req);
     if (!admin.ok) return authError(admin);
+    const orgData = (await getPrismaForOrg(admin.organizationId)).client;
 
     const { id } = await params;
 
-    const recording = await db.audioRecording.findFirst({
+    const recording = await orgData.audioRecording.findFirst({
       where: { id, organizationId: admin.organizationId },
       select: { filePath: true, fileName: true, mimeType: true, status: true },
     });

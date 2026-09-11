@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { authenticateRequest, getSessionOrg, validatePagination } from '@/lib/api';
+import { authenticateRequest, getSessionOrg, validatePagination, getPrismaForOrg } from '@/lib/api';
 import { hasRolePermission } from '@/lib/auth';
 import { log, requestContext } from '@/lib/logger';
 import {
@@ -29,6 +28,7 @@ export async function GET(req: NextRequest) {
     }
     const org = await getSessionOrg(req);
     if (!org) return NextResponse.json({ error: 'No organization found' }, { status: 404 });
+    const orgData = (await getPrismaForOrg(org.id)).client;
 
     const { searchParams } = new URL(req.url);
 
@@ -93,7 +93,7 @@ export async function GET(req: NextRequest) {
     }
 
     const [anomalies, total, bySeverity, byStatus, byType] = await Promise.all([
-      db.anomaly.findMany({
+      orgData.anomaly.findMany({
         where,
         include: {
           employee: { select: { id: true, firstName: true, lastName: true, employeeId: true, avatar: true, designation: true } },
@@ -103,10 +103,10 @@ export async function GET(req: NextRequest) {
         skip,
         take: pageSize,
       }),
-      db.anomaly.count({ where }),
-      db.anomaly.groupBy({ by: ['severity'], where: { organizationId: org.id }, _count: { _all: true } }),
-      db.anomaly.groupBy({ by: ['status'], where: { organizationId: org.id }, _count: { _all: true } }),
-      db.anomaly.groupBy({ by: ['type'], where: { organizationId: org.id }, _count: { _all: true } }),
+      orgData.anomaly.count({ where }),
+      orgData.anomaly.groupBy({ by: ['severity'], where: { organizationId: org.id }, _count: { _all: true } }),
+      orgData.anomaly.groupBy({ by: ['status'], where: { organizationId: org.id }, _count: { _all: true } }),
+      orgData.anomaly.groupBy({ by: ['type'], where: { organizationId: org.id }, _count: { _all: true } }),
     ]);
 
     const bySeverityMap: Record<string, number> = { critical: 0, high: 0, medium: 0, low: 0 };
@@ -153,6 +153,7 @@ export async function POST(req: NextRequest) {
     }
     const org = await getSessionOrg(req);
     if (!org) return NextResponse.json({ error: 'No organization found' }, { status: 404 });
+    const orgData = (await getPrismaForOrg(org.id)).client;
 
     const body = await req.json();
     const { type, severity, title, description, score, confidence, employeeId, deviceId, metadata, aiAnalysis } = body as {
@@ -189,7 +190,7 @@ export async function POST(req: NextRequest) {
 
     // IDOR guard: a supplied employeeId must belong to the caller's org.
     if (employeeId) {
-      const emp = await db.employee.findFirst({
+      const emp = await orgData.employee.findFirst({
         where: { id: employeeId, organizationId: org.id },
         select: { id: true },
       });
@@ -199,7 +200,7 @@ export async function POST(req: NextRequest) {
     }
     // IDOR guard: a supplied deviceId must belong to the caller's org.
     if (deviceId) {
-      const dev = await db.device.findFirst({
+      const dev = await orgData.device.findFirst({
         where: { id: deviceId, organizationId: org.id },
         select: { id: true },
       });
@@ -219,7 +220,7 @@ export async function POST(req: NextRequest) {
       throw error;
     }
 
-    const anomaly = await db.$transaction(async (tx) => {
+    const anomaly = await orgData.$transaction(async (tx) => {
       const created = await tx.anomaly.create({
         data: {
           type,

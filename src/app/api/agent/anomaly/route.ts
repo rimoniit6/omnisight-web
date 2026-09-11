@@ -94,9 +94,13 @@ export async function POST(req: NextRequest) {
     // still land.
     const dedupeKey = anomalyDedupeKey(orgId, employee.id, type, new Date());
 
-    // Create anomaly + alert + notification atomically
+    // Create anomaly + alert + notification atomically. Anomaly / Alert /
+    // Notification / AuditLog are org-owned (copied to the org DB at
+    // activation) — run the transaction on the org data client resolved by
+    // agent authentication, never on the platform DB after cutover.
+    const orgData = authResult.orgData ?? db;
     try {
-      const anomaly = await db.$transaction(async (tx) => {
+      const anomaly = await orgData.$transaction(async (tx) => {
         const created = await tx.anomaly.create({
           data: {
             type,

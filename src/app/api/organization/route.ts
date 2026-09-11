@@ -1,7 +1,7 @@
 'use server';
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
-import { getSessionOrg, authenticateRequest } from '@/lib/api';
+import { getSessionOrg, authenticateRequest, getPrismaForOrg } from '@/lib/api';
 import { hasRolePermission } from '@/lib/auth';
 import { isValidTimezone } from '@/lib/timezone';
 import { log, requestContext } from '@/lib/logger';
@@ -16,13 +16,14 @@ export async function GET(req: NextRequest) {
     if (!org) {
       return NextResponse.json({ error: 'No organization found' }, { status: 404 });
     }
+    const orgData = (await getPrismaForOrg(org.id)).client;
 
     const [employeeCount, activeEmployeeCount, deviceCount, departments, recentAuditLogs, activeAlertsCount] =
       await Promise.all([
-        db.employee.count({ where: { organizationId: org.id } }),
-        db.employee.count({ where: { organizationId: org.id, status: 'active' } }),
-        db.device.count({ where: { organizationId: org.id } }),
-        db.department.findMany({
+        orgData.employee.count({ where: { organizationId: org.id } }),
+        orgData.employee.count({ where: { organizationId: org.id, status: 'active' } }),
+        orgData.device.count({ where: { organizationId: org.id } }),
+        orgData.department.findMany({
           where: { organizationId: org.id },
           include: {
             manager: { select: { id: true, firstName: true, lastName: true } },
@@ -30,12 +31,12 @@ export async function GET(req: NextRequest) {
           },
           orderBy: { name: 'asc' },
         }),
-        db.auditLog.findMany({
+        orgData.auditLog.findMany({
           where: { organizationId: org.id },
           orderBy: { createdAt: 'desc' },
           take: 10,
         }),
-        db.alert.count({ where: { organizationId: org.id, status: 'pending' } }),
+        orgData.alert.count({ where: { organizationId: org.id, status: 'pending' } }),
       ]);
 
     return NextResponse.json({

@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { authError, requireSessionOrg, requireAdminOrg } from '@/lib/api';
+import { authError, requireSessionOrg, requireAdminOrg, getPrismaForOrg } from '@/lib/api';
 import { getClientIp } from '@/lib/agent/auth';
 import { deleteScreenshot, isNotFound } from '@/lib/storage';
 import { log, requestContext } from '@/lib/logger';
@@ -17,9 +16,10 @@ export async function GET(
     if (!scope.organizationId) {
       return NextResponse.json({ error: 'Insufficient permissions' }, { status: 403 });
     }
+    const orgData = (await getPrismaForOrg(scope.organizationId)).client;
 
     const { id } = await params;
-    const screenshot = await db.screenshot.findFirst({
+    const screenshot = await orgData.screenshot.findFirst({
       where: { id, organizationId: scope.organizationId },
       include: {
         employee: {
@@ -57,9 +57,10 @@ export async function DELETE(
     // Admin-only mutation; the screenshot must belong to the caller's org.
     const admin = await requireAdminOrg(req);
     if (!admin.ok) return authError(admin);
+    const orgData = (await getPrismaForOrg(admin.organizationId)).client;
 
     const { id } = await params;
-    const screenshot = await db.screenshot.findFirst({
+    const screenshot = await orgData.screenshot.findFirst({
       where: { id, organizationId: admin.organizationId },
     });
 
@@ -90,7 +91,7 @@ export async function DELETE(
     // Delete the DB record AND write the audit log atomically: a failed
     // deletion rolls back the audit row too, so a success audit record is
     // never created unless the deletion itself succeeded.
-    await db.$transaction(async (tx) => {
+    await orgData.$transaction(async (tx) => {
       await tx.screenshot.delete({ where: { id } });
       await tx.auditLog.create({
         data: {

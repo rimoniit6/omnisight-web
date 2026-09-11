@@ -49,8 +49,11 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: authResult.error || 'Authentication failed' }, { status: 401 });
     }
     const employee = authResult.employee;
+    // ORG DATA BOUNDARY: Consent/LocationEvent are org-owned (COPY to the org
+    // DB at cutover) — resolve the org data client once and use it for both.
+    const orgData = authResult.orgData;
 
-    if (!(await hasActiveConsent(employee.id, 'location'))) {
+    if (!(await hasActiveConsent(employee.id, 'location', orgData))) {
       return NextResponse.json(
         { error: 'Location tracking requires consent. Consent is not granted or has been revoked.' },
         { status: 403 }
@@ -107,7 +110,7 @@ export async function POST(req: NextRequest) {
       accuracy,
       recordedAt,
       source: locationSource,
-    });
+    }, orgData);
 
     if (result.accepted) {
       return NextResponse.json({

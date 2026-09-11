@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { callAIProviderVision, type AIProviderResult, type ImageInput } from '@/lib/ai-provider-helper';
 import { meterAiCall } from '@/lib/ai-metering';
-import { authError, requireAdminOrg } from '@/lib/api';
+import { authError, requireAdminOrg, getPrismaForOrg } from '@/lib/api';
 import { screenshotAiInput } from '@/lib/storage';
 import { log, requestContext } from '@/lib/logger';
 
@@ -133,7 +133,8 @@ Respond in valid JSON:
     const flagged = category === 'Unproductive';
     const flagReason = flagged ? `Non-work activity detected: ${appName}` : null;
 
-    const updated = await db.screenshot.update({
+    const orgData = (await getPrismaForOrg(orgId)).client;
+    const updated = await orgData.screenshot.update({
       where: { id },
       data: {
         ocrText,

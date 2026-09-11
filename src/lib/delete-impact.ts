@@ -1,4 +1,5 @@
 import { db } from '@/lib/db';
+import type { PrismaClient } from '@prisma/client';
 
 // ─── Dependency-Aware Delete Impact Engine ───────────────────────────────────
 // Single source of truth for "what will this delete touch?".
@@ -54,8 +55,8 @@ export interface DeleteImpact {
   confirmRequired: boolean;
 }
 
-const countWhere = (model: string, where: Record<string, unknown>): Promise<number> =>
-  (db as unknown as Record<string, { count: (args: { where: Record<string, unknown> }) => Promise<number> }>)[model].count({ where });
+const countWhere = (client: PrismaClient, model: string, where: Record<string, unknown>): Promise<number> =>
+  (client as unknown as Record<string, { count: (args: { where: Record<string, unknown> }) => Promise<number> }>)[model].count({ where });
 
 // ─── Organization (super-admin only; cascade with mandatory confirmation) ────
 
@@ -106,10 +107,22 @@ const ORGANIZATION_ROWS: { model: string; label: string }[] = [
   { model: 'invoice', label: 'Invoices' },
 ];
 
-export async function getOrganizationDeleteImpact(organizationId: string): Promise<DeleteImpact> {
+const ORGANIZATION_CONTROL_PLANE_ROWS = new Set([
+  'organizationMembership',
+  'userSession',
+  'agentToken',
+  'organizationSetting',
+  'organizationSettings',
+  'licenseKey',
+  'subscription',
+  'invoice',
+]);
+
+export async function getOrganizationDeleteImpact(organizationId: string, data: PrismaClient = db): Promise<DeleteImpact> {
   const rows: ImpactRow[] = [];
   for (const def of ORGANIZATION_ROWS) {
-    const count = await countWhere(def.model, { organizationId });
+    const client = ORGANIZATION_CONTROL_PLANE_ROWS.has(def.model) ? db : data;
+    const count = await countWhere(client, def.model, { organizationId });
     if (count > 0) rows.push({ model: def.model, label: def.label, count });
   }
   const totalImpacted = rows.reduce((sum, r) => sum + r.count, 0);
@@ -119,7 +132,7 @@ export async function getOrganizationDeleteImpact(organizationId: string): Promi
   // via SetNull for compliance.
   const preserved: ImpactRow[] = [];
   const appUserCount = await db.organizationMembership.count({ where: { organizationId } });
-  const auditCount = await db.auditLog.count({ where: { organizationId } });
+  const auditCount = await data.auditLog.count({ where: { organizationId } });
   if (appUserCount > 0) preserved.push({ model: 'appUser', label: 'User accounts (kept, membership removed)', count: appUserCount });
   if (auditCount > 0) preserved.push({ model: 'auditLog', label: 'Audit log entries (kept for compliance)', count: auditCount });
 
@@ -157,10 +170,10 @@ const DEVICE_DEPENDENT_ROWS: { model: string; label: string }[] = [
   { model: 'deviceClaim', label: 'Device claims' },
 ];
 
-export async function getDeviceDeleteImpact(deviceId: string, organizationId: string): Promise<DeleteImpact> {
+export async function getDeviceDeleteImpact(deviceId: string, organizationId: string, data: PrismaClient = db): Promise<DeleteImpact> {
   const rows: ImpactRow[] = [];
   for (const def of DEVICE_DEPENDENT_ROWS) {
-    const count = await countWhere(def.model, { deviceId });
+    const count = await countWhere(data, def.model, { deviceId });
     if (count > 0) rows.push({ model: def.model, label: def.label, count });
   }
   const totalImpacted = rows.reduce((sum, r) => sum + r.count, 0);
@@ -197,10 +210,10 @@ const EMPLOYEE_DEPENDENT_ROWS: { model: string; label: string }[] = [
   { model: 'workDaySummary', label: 'Work-day summaries' },
 ];
 
-export async function getEmployeeDeleteImpact(employeeId: string, organizationId: string): Promise<DeleteImpact> {
+export async function getEmployeeDeleteImpact(employeeId: string, organizationId: string, data: PrismaClient = db): Promise<DeleteImpact> {
   const rows: ImpactRow[] = [];
   for (const def of EMPLOYEE_DEPENDENT_ROWS) {
-    const count = await countWhere(def.model, { employeeId });
+    const count = await countWhere(data, def.model, { employeeId });
     if (count > 0) rows.push({ model: def.model, label: def.label, count });
   }
 
@@ -230,14 +243,14 @@ const PROJECT_DEPENDENT_ROWS: { model: string; label: string }[] = [
   { model: 'sentimentRecord', label: 'Sentiment records' },
 ];
 
-export async function getProjectDeleteImpact(projectId: string, organizationId: string): Promise<DeleteImpact> {
+export async function getProjectDeleteImpact(projectId: string, organizationId: string, data: PrismaClient = db): Promise<DeleteImpact> {
   const rows: ImpactRow[] = [];
   for (const def of PROJECT_DEPENDENT_ROWS) {
-    const count = await countWhere(def.model, { projectId });
+    const count = await countWhere(data, def.model, { projectId });
     if (count > 0) rows.push({ model: def.model, label: def.label, count });
   }
 
-  const activeTracking = await db.employee.count({ where: { activeTrackingProjectId: projectId } });
+  const activeTracking = await data.employee.count({ where: { activeTrackingProjectId: projectId } });
   const preserved: ImpactRow[] = [];
   if (activeTracking > 0) preserved.push({ model: 'employee', label: 'Employees (active-tracking pointer cleared, rows kept)', count: activeTracking });
 
@@ -256,10 +269,10 @@ export async function getProjectDeleteImpact(projectId: string, organizationId: 
 
 // ─── Department (direct — data preserved via SetNull) ─────────────────────────
 
-export async function getDepartmentDeleteImpact(departmentId: string, organizationId: string): Promise<DeleteImpact> {
+export async function getDepartmentDeleteImpact(departmentId: string, organizationId: string, data: PrismaClient = db): Promise<DeleteImpact> {
   const [employees, projects] = await Promise.all([
-    db.employee.count({ where: { departmentId } }),
-    db.project.count({ where: { departmentId } }),
+    data.employee.count({ where: { departmentId } }),
+    data.project.count({ where: { departmentId } }),
   ]);
 
   const rows: ImpactRow[] = [];

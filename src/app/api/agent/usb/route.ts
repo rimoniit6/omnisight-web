@@ -29,6 +29,10 @@ export async function POST(req: NextRequest) {
     }
     const employee = authResult.employee!;
     const orgId = employee.organizationId;
+    // ORG DATA BOUNDARY: UsbEvent is org-owned and COPYs to the org DB at
+    // cutover — route the write (and the consent read) through the org data
+    // client resolved by the authenticated token.
+    const orgData = authResult.orgData ?? db;
 
     // Org config gate (fail closed): the org must enable USB monitoring.
     const monitoring = await resolveOrgMonitoring(orgId);
@@ -41,7 +45,7 @@ export async function POST(req: NextRequest) {
 
     // Consent gate (fail closed): the employee must hold active usb_monitoring
     // consent bound to the current published policy.
-    if (!(await hasActiveConsent(employee.id, 'usb_monitoring'))) {
+    if (!(await hasActiveConsent(employee.id, 'usb_monitoring', orgData))) {
       return NextResponse.json(
         { error: 'USB monitoring requires consent. Consent is not granted or has been revoked.' },
         { status: 403 }
@@ -72,7 +76,7 @@ export async function POST(req: NextRequest) {
     });
 
     try {
-      const created = await db.usbEvent.create({
+      const created = await orgData.usbEvent.create({
         data: {
           eventType: input.eventType,
           deviceName: input.deviceName,

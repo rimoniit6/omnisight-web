@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { authenticateRequest, getSessionOrg } from '@/lib/api';
+import { authenticateRequest, getSessionOrg, getPrismaForOrg } from '@/lib/api';
 import { hasRolePermission } from '@/lib/auth';
 import { log, requestContext } from '@/lib/logger';
 
@@ -18,6 +17,7 @@ export async function POST(req: NextRequest) {
     }
     const org = await getSessionOrg(req);
     if (!org) return NextResponse.json({ error: 'No organization found' }, { status: 404 });
+    const orgData = (await getPrismaForOrg(org.id)).client;
 
     const body = await req.json();
     const { ids, status } = body as { ids?: string[]; status?: string; resolvedBy?: string };
@@ -35,7 +35,7 @@ export async function POST(req: NextRequest) {
 
     // Tenant isolation: restrict the update to anomalies in the caller's org.
     const scopedIds = (
-      await db.anomaly.findMany({
+      await orgData.anomaly.findMany({
         where: { id: { in: ids }, organizationId: org.id },
         select: { id: true },
       })
@@ -58,7 +58,7 @@ export async function POST(req: NextRequest) {
       updateData.resolvedBy = null;
     }
 
-    const result = await db.$transaction(async (tx) => {
+    const result = await orgData.$transaction(async (tx) => {
       const updated = await tx.anomaly.updateMany({
         where: { id: { in: scopedIds } },
         data: updateData,

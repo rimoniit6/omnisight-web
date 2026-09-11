@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
-import { getSessionOrg } from '@/lib/api';
+import { getSessionOrg, getPrismaForOrg } from '@/lib/api';
 import { excludeInternalAgentActivities } from '@/lib/agent-process';
 import { isHeartbeatFresh } from '@/lib/presence';
 import { runAiInsightsAnalysis } from '@/lib/ai-insights/engine';
@@ -21,6 +21,7 @@ export async function GET(req: NextRequest) {
   try {
     const org = await getSessionOrg(req);
     if (!org) return NextResponse.json({ error: 'No organization found' }, { status: 400 });
+    const orgData = (await getPrismaForOrg(org.id)).client;
 
     // Org timezone for org-local day boundaries on the filters.
     const orgRow = await db.organization.findUnique({
@@ -37,7 +38,7 @@ export async function GET(req: NextRequest) {
       departmentId: searchParams.get('departmentId'),
       projectId: searchParams.get('projectId'),
     };
-    const parsed = await parseInsightFilters(org.id, orgTz, filterParams);
+    const parsed = await parseInsightFilters(org.id, orgTz, filterParams, orgData);
     if (!parsed.ok) return parsed.response;
 
     // ── Run the REAL AI analysis (engine) ─────────────────────────────────
@@ -53,7 +54,7 @@ export async function GET(req: NextRequest) {
     //    "Measured" view — explicitly NOT AI). Same filters as the AI run so
     //    both always describe the same dataset. ─────────────────────────────
     const f = parsed.filters;
-    const employees = await db.employee.findMany({
+    const employees = await orgData.employee.findMany({
       where: {
         status: 'active',
         organizationId: org.id,
@@ -72,7 +73,7 @@ export async function GET(req: NextRequest) {
       },
     });
 
-    const departments = await db.department.findMany({
+    const departments = await orgData.department.findMany({
       where: { organizationId: org.id },
       include: {
         employees: {

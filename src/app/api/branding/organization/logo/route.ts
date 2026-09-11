@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
-import { authError, requireAdminOrg, authenticateRequest } from '@/lib/api';
+import { authError, getPrismaForOrg, requireAdminOrg, authenticateRequest } from '@/lib/api';
 import { storage } from '@/lib/storage';
 import { invalidateBrandingCache, sanitizeSvg, validateSvgCode } from '@/lib/branding';
 import { log, requestContext } from '@/lib/logger';
@@ -88,7 +88,8 @@ export async function POST(req: NextRequest) {
     }
 
     // Read old logo URL before uploading (for safe cleanup after DB commit)
-    const existing = await db.organizationBranding.findUnique({
+    const orgData = (await getPrismaForOrg(orgId)).client;
+    const existing = await orgData.organizationBranding.findUnique({
       where: { organizationId: orgId },
     });
     const oldLogoUrl = existing?.logoUrl || null;
@@ -107,7 +108,7 @@ export async function POST(req: NextRequest) {
     // Update DB atomically — also set logoType to 'svg' for SVG code uploads
     const publicUrl = `/${storageKey}`;
     const logoTypeUpdate = svgCode ? 'svg' : undefined;
-    const { branding } = await db.$transaction(async (tx) => {
+    const { branding } = await orgData.$transaction(async (tx) => {
       let result;
       if (existing) {
         result = await tx.organizationBranding.update({
@@ -187,7 +188,9 @@ export async function DELETE(req: NextRequest) {
       }
     }
 
-    const existing = await db.organizationBranding.findUnique({
+    // OrganizationBranding is org-owned (copied at activation) — org client.
+    const orgData = (await getPrismaForOrg(orgId)).client;
+    const existing = await orgData.organizationBranding.findUnique({
       where: { organizationId: orgId },
     });
     if (!existing?.logoUrl) {
@@ -203,7 +206,7 @@ export async function DELETE(req: NextRequest) {
     }
 
     // Update DB
-    await db.$transaction(async (tx) => {
+    await orgData.$transaction(async (tx) => {
       await tx.organizationBranding.update({
         where: { organizationId: orgId },
         data: { logoUrl: null, updatedBy: auth.userId },

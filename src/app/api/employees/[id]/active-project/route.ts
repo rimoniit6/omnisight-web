@@ -1,7 +1,6 @@
 'use server';
 import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { authError, requireAdminOrg } from '@/lib/api';
+import { authError, requireAdminOrg, getPrismaForOrg } from '@/lib/api';
 import { log, requestContext } from '@/lib/logger';
 
 /**
@@ -33,6 +32,7 @@ export async function PUT(
   try {
     const admin = await requireAdminOrg(req);
     if (!admin.ok) return authError(admin);
+    const orgData = (await getPrismaForOrg(admin.organizationId)).client;
 
     const { id: employeeId } = await params;
 
@@ -54,7 +54,7 @@ export async function PUT(
     const targetProjectId = projectId as string | null;
 
     // Employee must exist in the caller's org; cross-org ids -> 404 (concealed).
-    const employee = await db.employee.findFirst({
+    const employee = await orgData.employee.findFirst({
       where: { id: employeeId, organizationId: admin.organizationId },
       select: { id: true, firstName: true, lastName: true, activeTrackingProjectId: true },
     });
@@ -68,7 +68,7 @@ export async function PUT(
     let project: { id: string; name: string; status: string } | null = null;
     if (targetProjectId !== null) {
       // Project must belong to the SAME org as the employee (and caller).
-      project = await db.project.findFirst({
+      project = await orgData.project.findFirst({
         where: { id: targetProjectId, organizationId: admin.organizationId },
         select: { id: true, name: true, status: true },
       });
@@ -83,7 +83,7 @@ export async function PUT(
       }
 
       // Active membership required: leftAt IS NULL.
-      const membership = await db.projectMember.findUnique({
+      const membership = await orgData.projectMember.findUnique({
         where: { projectId_employeeId: { projectId: targetProjectId, employeeId } },
         select: { leftAt: true },
       });
@@ -103,7 +103,7 @@ export async function PUT(
       const activeProject =
         targetProjectId === null
           ? null
-          : await db.project.findUnique({
+          : await orgData.project.findUnique({
               where: { id: targetProjectId },
               select: { id: true, name: true },
             });
@@ -123,7 +123,7 @@ export async function PUT(
           ? 'ACTIVE_TRACKING_PROJECT_CLEARED'
           : 'ACTIVE_TRACKING_PROJECT_CHANGED';
 
-    await db.$transaction(async (tx) => {
+    await orgData.$transaction(async (tx) => {
       await tx.employee.update({
         where: { id: employeeId },
         data: { activeTrackingProjectId: targetProjectId },
@@ -157,7 +157,7 @@ export async function PUT(
         activeProject: project
           ? { id: project.id, name: project.name }
           : targetProjectId
-            ? await db.project.findUnique({
+            ? await orgData.project.findUnique({
                 where: { id: targetProjectId },
                 select: { id: true, name: true },
               })

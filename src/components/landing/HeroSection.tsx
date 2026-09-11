@@ -1,130 +1,180 @@
 'use client';
 
 import { motion, useReducedMotion } from 'framer-motion';
-import { ArrowRight, Activity, Globe, Camera, Zap } from 'lucide-react';
+import {
+  ArrowRight,
+  Activity,
+  BrainCircuit,
+  TrendingUp,
+  AlertTriangle,
+  Users,
+  AlertOctagon,
+} from 'lucide-react';
 import { AnimatedBackground } from './AnimatedBackground';
 import { GlowButton, useLandingContent } from './shared';
 
-// ─── Synthetic hero dashboard visual (clearly illustrative, no real data) ──
-function HeroDashboard() {
-  const rows = [
-    { name: 'Rimon', app: 'VS Code', tag: 'Working', tone: 'text-cyan-300' },
-    { name: 'Tanvir', app: 'Chrome', tag: 'Research', tone: 'text-emerald-300' },
-    { name: 'Nabila', app: 'Figma', tag: 'Designing', tone: 'text-cyan-300' },
-    { name: 'Hasan', app: 'Slack', tag: 'Comm.', tone: 'text-amber-300' },
-  ];
-  const apps = [
-    { name: 'Chrome', pct: 82, tone: 'bg-cyan-400/80' },
-    { name: 'VS Code', pct: 64, tone: 'bg-sky-400/80' },
-    { name: 'Slack', pct: 47, tone: 'bg-indigo-400/70' },
-    { name: 'Figma', pct: 38, tone: 'bg-emerald-400/70' },
-  ];
-
+// ─── Hero visual: 3-panel composition (See → Understand → Act) ──────────────
+function HeroVisual() {
   return (
-    <div className="omni-float relative mx-auto mt-14 w-full max-w-3xl" aria-hidden>
-      <div className="glass-panel relative overflow-hidden p-5 sm:p-6">
-        {/* Header bar */}
-        <div className="flex items-center justify-between border-b border-white/10 pb-4">
-          <span className="tech-font text-[11px] font-bold uppercase tracking-[0.24em] text-white/70">
-            OmniSight
-          </span>
-          <span className="tech-font inline-flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-[0.2em] text-emerald-300">
-            <span className="omni-pulse inline-block h-1.5 w-1.5 rounded-full bg-emerald-400" />
-            Live
-          </span>
-        </div>
+    <div className="relative mx-auto mt-14 w-full max-w-5xl" aria-hidden>
+      <div className="grid gap-4 sm:grid-cols-[0.85fr_1.15fr_0.85fr] sm:items-center">
+        {/* Left panel — SEE (activity feed) */}
+        <motion.div
+          initial={{ opacity: 0, x: -20, rotateY: 6 }}
+          animate={{ opacity: 1, x: 0, rotateY: 0 }}
+          transition={{ duration: 0.9, delay: 1.0, ease: [0.22, 1, 0.36, 1] }}
+          className="glass-panel overflow-hidden rounded-2xl p-4 sm:translate-y-4 sm:scale-[0.92]"
+          style={{ transformStyle: 'preserve-3d', perspective: '1200px' }}
+        >
+          <div className="flex items-center justify-between border-b border-white/10 pb-3">
+            <span className="tech-font text-[10px] font-bold uppercase tracking-[0.22em] text-white/60">
+              <Activity size={11} className="mr-1 inline text-emerald-300" />
+              Live Activity
+            </span>
+            <span className="tech-font inline-flex items-center gap-1 text-[9px] font-bold uppercase tracking-[0.18em] text-emerald-300">
+              <span className="inline-block h-1.5 w-1.5 rounded-full bg-emerald-400" />
+              Live
+            </span>
+          </div>
+          <div className="mt-3 space-y-2">
+            {[
+              { name: 'Rimon', app: 'VS Code', tag: 'Working', color: 'text-cyan-300' },
+              { name: 'Tanvir', app: 'Chrome', tag: 'Research', color: 'text-emerald-300' },
+              { name: 'Nabila', app: 'Figma', tag: 'Designing', color: 'text-cyan-300' },
+              { name: 'Hasan', app: 'Slack', tag: 'Comm.', color: 'text-amber-300' },
+              { name: 'Sadia', app: 'Notion', tag: 'Writing', color: 'text-cyan-300' },
+            ].map((r, i) => (
+              <motion.div
+                key={r.name}
+                initial={{ opacity: 0, x: -8 }}
+                animate={{ opacity: 1, x: 0 }}
+                transition={{ delay: 1.3 + i * 0.08 }}
+                className="flex items-center justify-between text-[10px]"
+              >
+                <span className="text-white/80">{r.name}</span>
+                <span className="text-white/40">{r.app}</span>
+                <span className={`tech-font font-bold ${r.color}`}>{r.tag}</span>
+              </motion.div>
+            ))}
+          </div>
+          <div className="mt-3 flex items-center gap-3 border-t border-white/10 pt-3">
+            <div className="flex items-center gap-1.5">
+              <span className="h-2 w-2 rounded-full bg-emerald-400" />
+              <span className="text-[9px] text-white/45">24 online</span>
+            </div>
+            <div className="flex items-center gap-1.5">
+              <span className="h-2 w-2 rounded-full bg-cyan-400" />
+              <span className="text-[9px] text-white/45">18 active</span>
+            </div>
+          </div>
+        </motion.div>
 
-        <div className="grid gap-5 pt-5 sm:grid-cols-[1.15fr_1fr]">
-          {/* Left: online + activity bars */}
-          <div>
-            <div className="flex items-baseline gap-3">
-              <span className="text-4xl font-semibold tracking-tight text-white">24</span>
-              <span className="tech-font text-[10px] font-bold uppercase tracking-[0.22em] text-white/45">
-                Employees online
+        {/* Center panel — UNDERSTAND (AI insight, focal point) */}
+        <motion.div
+          initial={{ opacity: 0, y: 20, scale: 0.95 }}
+          animate={{ opacity: 1, y: 0, scale: 1 }}
+          transition={{ duration: 0.9, delay: 0.8, ease: [0.22, 1, 0.36, 1] }}
+          className="glass-panel relative overflow-hidden rounded-2xl p-5 shadow-[0_0_40px_rgba(0,180,255,0.12)] sm:z-10 sm:scale-105"
+          style={{ transformStyle: 'preserve-3d', perspective: '1200px' }}
+        >
+          <div className="absolute -right-8 -top-8 h-32 w-32 rounded-full bg-cyan-500/10 blur-[60px]" />
+          <div className="relative">
+            <div className="flex items-center justify-between border-b border-white/10 pb-3">
+              <span className="tech-font text-[10px] font-bold uppercase tracking-[0.22em] text-white/60">
+                <BrainCircuit size={11} className="mr-1 inline text-cyan-300" />
+                AI Intelligence
+              </span>
+              <span className="tech-font text-[9px] font-bold uppercase tracking-[0.16em] text-cyan-300">
+                Deep Analysis
               </span>
             </div>
-            <p className="tech-font mt-1 text-[10px] uppercase tracking-[0.18em] text-white/35">
-              Synthetic preview
-            </p>
-
-            <div className="mt-5 space-y-3">
-              {apps.map((a) => (
-                <div key={a.name}>
-                  <div className="flex items-center justify-between text-[11px]">
-                    <span className="text-white/70">{a.name}</span>
-                    <span className="tech-font text-white/40">{a.pct}%</span>
-                  </div>
-                  <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-white/10">
-                    <motion.div
-                      initial={{ width: 0 }}
-                      animate={{ width: `${a.pct}%` }}
-                      transition={{ duration: 1.2, delay: 0.6, ease: 'easeOut' }}
-                      className={`h-full rounded-full ${a.tone}`}
-                    />
-                  </div>
+            <div className="mt-4 space-y-3">
+              <div className="flex items-start gap-2.5">
+                <div className="mt-0.5 h-5 w-5 shrink-0 rounded bg-emerald-500/20 flex items-center justify-center">
+                  <TrendingUp size={11} className="text-emerald-300" />
                 </div>
-              ))}
-            </div>
-          </div>
-
-          {/* Right: live activity rows */}
-          <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4">
-            <p className="tech-font mb-3 text-[10px] font-bold uppercase tracking-[0.22em] text-white/45">
-              Live activity
-            </p>
-            <div className="space-y-2.5">
-              {rows.map((r, i) => (
-                <motion.div
-                  key={r.name}
-                  initial={{ opacity: 0, x: 12 }}
-                  animate={{ opacity: 1, x: 0 }}
-                  transition={{ delay: 0.5 + i * 0.12 }}
-                  className="flex items-center justify-between gap-2 text-[11px]"
-                >
-                  <span className="text-white/85">{r.name}</span>
-                  <span className="text-white/45">{r.app}</span>
-                  <span className={`tech-font ${r.tone}`}>{r.tag}</span>
-                </motion.div>
-              ))}
-            </div>
-          </div>
-        </div>
-
-        {/* Bottom stat chips */}
-        <div className="mt-5 grid grid-cols-3 gap-2 border-t border-white/10 pt-4">
-          {[
-            { icon: Activity, label: 'Productivity', value: 'Real-time' },
-            { icon: Globe, label: 'Websites', value: 'Tracked' },
-            { icon: Camera, label: 'Screenshots', value: 'Policy' },
-          ].map((s) => (
-            <div key={s.label} className="flex items-center gap-2">
-              <s.icon size={14} className="shrink-0 text-cyan-300/80" aria-hidden />
-              <div className="min-w-0">
-                <p className="truncate text-[10px] text-white/40">{s.label}</p>
-                <p className="tech-font truncate text-[10px] font-bold uppercase tracking-wider text-white/75">
-                  {s.value}
-                </p>
+                <div>
+                  <p className="text-[11px] font-semibold text-white/90">Productivity trend improving</p>
+                  <p className="text-[10px] text-white/45">Engineering focus increased 12% this week</p>
+                </div>
+              </div>
+              <div className="flex items-start gap-2.5">
+                <div className="mt-0.5 h-5 w-5 shrink-0 rounded bg-amber-500/20 flex items-center justify-center">
+                  <AlertTriangle size={11} className="text-amber-300" />
+                </div>
+                <div>
+                  <p className="text-[11px] font-semibold text-white/90">Context switching detected</p>
+                  <p className="text-[10px] text-white/45">3 employees above threshold</p>
+                </div>
+              </div>
+              <div className="flex items-start gap-2.5">
+                <div className="mt-0.5 h-5 w-5 shrink-0 rounded bg-cyan-500/20 flex items-center justify-center">
+                  <Users size={11} className="text-cyan-300" />
+                </div>
+                <div>
+                  <p className="text-[11px] font-semibold text-white/90">Team capacity at 82%</p>
+                  <p className="text-[10px] text-white/45">Optimal range for sprint velocity</p>
+                </div>
               </div>
             </div>
-          ))}
-        </div>
-      </div>
+            <div className="mt-4 flex items-center gap-2 border-t border-white/10 pt-3">
+              <span className="inline-block h-1.5 w-1.5 rounded-full bg-cyan-300" />
+              <span className="tech-font text-[9px] uppercase tracking-[0.16em] text-white/35">
+                Generated from measured activity
+              </span>
+            </div>
+          </div>
+        </motion.div>
 
-      {/* Floating corner chips */}
-      <div className="absolute -right-3 -top-3 hidden rounded-full border border-white/15 bg-black/70 px-3 py-1.5 sm:block">
-        <span className="tech-font text-[10px] font-bold uppercase tracking-[0.18em] text-cyan-300">
-          <Zap size={11} className="mr-1 inline" aria-hidden />
-          Real-time
-        </span>
+        {/* Right panel — ACT (alert/anomaly) */}
+        <motion.div
+          initial={{ opacity: 0, x: 20, rotateY: -6 }}
+          animate={{ opacity: 1, x: 0, rotateY: 0 }}
+          transition={{ duration: 0.9, delay: 1.1, ease: [0.22, 1, 0.36, 1] }}
+          className="glass-panel overflow-hidden rounded-2xl p-4 sm:translate-y-4 sm:scale-[0.92]"
+          style={{ transformStyle: 'preserve-3d', perspective: '1200px' }}
+        >
+          <div className="flex items-center justify-between border-b border-white/10 pb-3">
+            <span className="tech-font text-[10px] font-bold uppercase tracking-[0.22em] text-white/60">
+              <AlertOctagon size={11} className="mr-1 inline text-amber-300" />
+              Anomaly Detected
+            </span>
+            <span className="rounded bg-amber-500/20 px-1.5 py-0.5 text-[9px] font-bold text-amber-300">
+              HIGH
+            </span>
+          </div>
+          <div className="mt-3 space-y-2.5">
+            <div className="rounded-lg border border-amber-500/20 bg-amber-500/5 p-2.5">
+              <p className="text-[11px] font-semibold text-white/90">Off-hours activity</p>
+              <p className="text-[10px] text-white/45">Active session detected outside working hours</p>
+            </div>
+            <div className="rounded-lg border border-rose-500/20 bg-rose-500/5 p-2.5">
+              <p className="text-[11px] font-semibold text-white/90">Policy breach attempt</p>
+              <p className="text-[10px] text-white/45">Restricted application access blocked</p>
+            </div>
+            <div className="rounded-lg border border-white/10 bg-white/[0.02] p-2.5">
+              <p className="text-[11px] font-semibold text-white/90">Productivity drop</p>
+              <p className="text-[10px] text-white/45">Below baseline for 2 consecutive hours</p>
+            </div>
+          </div>
+          <div className="mt-3 flex gap-2">
+            <span className="flex-1 rounded-md bg-white/5 py-1.5 text-center text-[9px] font-bold text-white/60">
+              Investigate
+            </span>
+            <span className="flex-1 rounded-md bg-cyan-500/15 py-1.5 text-center text-[9px] font-bold text-cyan-300">
+              Resolve
+            </span>
+          </div>
+        </motion.div>
       </div>
     </div>
   );
 }
 
 // ─── Hero ──────────────────────────────────────────────────────────────────
-const HEADING_LINES = ['Understand How Work Happens.', 'Monitor Activity.', 'Protect Productivity.'];
+const HEADING_LINES = ['See Everything.', 'Understand Why.', 'Act on Intelligence.'];
 const HERO_DEFAULT_SUBTITLE =
-  'OmniSight gives organizations real-time visibility into workforce\nactivity, productivity, applications, websites, screenshots, attendance\nand operational performance — all from one secure control center.';
+  'OmniSight captures workforce activity — applications, websites, screenshots\nand attendance — then transforms it into AI-powered insights your\norganization can actually act on. Every capability is policy-controlled,\nconsent-aware and enforced server-side.';
 
 export function HeroSection() {
   const reduce = useReducedMotion();
@@ -195,7 +245,7 @@ export function HeroSection() {
           transition={{ duration: 0.8, delay: 0.95 }}
           className="w-full"
         >
-          <HeroDashboard />
+          <HeroVisual />
         </motion.div>
       </div>
 

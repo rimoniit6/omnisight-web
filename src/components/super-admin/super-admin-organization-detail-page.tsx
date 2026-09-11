@@ -41,6 +41,7 @@ import {
   Download,
   Eye,
   Ban,
+  FileText,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
@@ -109,11 +110,16 @@ interface OrganizationDetail {
   trialEndsAt: string | null;
   createdAt: string;
   memberCount: number;
+  deviceCount: number;
   subscription: {
     id: string;
     status: string;
     startDate: string;
     endDate: string | null;
+    billingPeriod: string | null;
+    deviceQuantity: number | null;
+    deploymentModeSnapshot: string | null;
+    priceSnapshot: { final?: number; currency?: string; unlimitedDevices?: boolean; includedDevices?: number } | null;
     plan: { id: string; name: string; priceMonthly: number; currency: string };
     invoices: {
       id: string;
@@ -128,6 +134,17 @@ interface OrganizationDetail {
       notes: string | null;
     }[];
   } | null;
+  subscriptions: {
+    id: string;
+    status: string;
+    startDate: string;
+    endDate: string | null;
+    billingPeriod: string | null;
+    deviceQuantity: number | null;
+    deploymentModeSnapshot: string | null;
+    createdAt: string;
+    plan: { name: string };
+  }[];
   licenseKey: { id: string; isActive: boolean; isRevoked: boolean; validUntil: string } | null;
 }
 
@@ -817,6 +834,19 @@ export function SuperAdminOrganizationDetailPage() {
 
   const orgStatus = orgData?.status ? ORG_STATUS_CONFIG[orgData.status] || ORG_STATUS_CONFIG.active : null;
 
+  // ─── Device entitlement (§6): Managed shows usage/limit, Customer DB shows
+  // Unlimited. Never sourced from LicenseKey — the entitlement comes from the
+  // subscription snapshot via the device-entitlement service semantics.
+  const deviceEntitlementLabel = (() => {
+    if (!orgData) return '—';
+    const isCustomerDb =
+      orgData.deploymentMode === 'CUSTOMER_DB' || orgData.subscription?.deploymentModeSnapshot === 'CUSTOMER_DB';
+    if (isCustomerDb) return 'Unlimited';
+    const qty = orgData.subscription?.deviceQuantity;
+    if (qty != null) return `${orgData.deviceCount ?? 0} / ${qty}`;
+    return `${orgData.deviceCount ?? 0}`;
+  })();
+
   if (orgLoading) {
     return (
       <div className="space-y-6">
@@ -922,6 +952,18 @@ export function SuperAdminOrganizationDetailPage() {
                 <p className="font-medium mt-0.5">{orgData.subscription?.status ?? 'none'}</p>
               </div>
               <div>
+                <p className="text-xs text-muted-foreground">Billing</p>
+                <p className="font-medium mt-0.5">
+                  {orgData.subscription?.billingPeriod
+                    ? orgData.subscription.billingPeriod === 'YEARLY' ? 'Yearly' : 'Monthly'
+                    : '—'}
+                </p>
+              </div>
+              <div>
+                <p className="text-xs text-muted-foreground">Devices</p>
+                <p className="font-medium mt-0.5">{deviceEntitlementLabel}</p>
+              </div>
+              <div>
                 <p className="text-xs text-muted-foreground">License</p>
                 <p className="font-medium mt-0.5">
                   {!orgData.licenseKey
@@ -960,6 +1002,87 @@ export function SuperAdminOrganizationDetailPage() {
                 </Button>
               )}
             </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* ─── Subscription History — full commercial record (§4) ────────── */}
+      {orgData && (
+        <Card>
+          <CardHeader className="pb-3">
+            <CardTitle className="text-base flex items-center gap-2">
+              <FileText className="w-4 h-4" />
+              Subscription History
+            </CardTitle>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              Every subscription ever created for this organization, including superseded ones — historical terms are never overwritten.
+            </p>
+          </CardHeader>
+          <CardContent>
+            {orgData.subscriptions.length === 0 ? (
+              <p className="text-sm text-muted-foreground py-4 text-center">
+                No subscriptions yet. Subscriptions appear here when a purchase request is activated or one is provisioned directly.
+              </p>
+            ) : (
+              <div className="overflow-x-auto">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Package</TableHead>
+                      <TableHead>Mode</TableHead>
+                      <TableHead>Billing</TableHead>
+                      <TableHead>Devices</TableHead>
+                      <TableHead>Period</TableHead>
+                      <TableHead>Status</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {orgData.subscriptions.map((s) => (
+                      <TableRow key={s.id}>
+                        <TableCell><span className="text-sm font-medium">{s.plan.name}</span></TableCell>
+                        <TableCell>
+                          <span className="text-sm">
+                            {s.deploymentModeSnapshot === 'CUSTOMER_DB' ? 'Customer DB' : s.deploymentModeSnapshot === 'MANAGED' ? 'Managed' : (s.deploymentModeSnapshot ?? '—')}
+                          </span>
+                        </TableCell>
+                        <TableCell>
+                          <span className="text-sm">{s.billingPeriod === 'YEARLY' ? 'Yearly' : s.billingPeriod === 'MONTHLY' ? 'Monthly' : '—'}</span>
+                        </TableCell>
+                        <TableCell>
+                          <span className="text-sm">
+                            {s.deploymentModeSnapshot === 'CUSTOMER_DB'
+                              ? 'Unlimited'
+                              : s.deviceQuantity != null
+                                ? s.deviceQuantity
+                                : '—'}
+                          </span>
+                        </TableCell>
+                        <TableCell>
+                          <span className="text-xs text-muted-foreground">
+                            {new Date(s.startDate).toLocaleDateString()} → {s.endDate ? new Date(s.endDate).toLocaleDateString() : '—'}
+                          </span>
+                        </TableCell>
+                        <TableCell>
+                          <Badge
+                            variant="outline"
+                            className={cn(
+                              'text-[10px] h-5 px-1.5 border',
+                              s.status === 'ACTIVE'
+                                ? 'border-emerald-200 bg-emerald-100 text-emerald-700 dark:border-emerald-900/30 dark:bg-emerald-900/30 dark:text-emerald-400'
+                                : s.status === 'PENDING'
+                                  ? 'border-amber-200 bg-amber-100 text-amber-700 dark:border-amber-900/30 dark:bg-amber-900/30 dark:text-amber-400'
+                                  : 'border-slate-200 bg-slate-100 text-slate-600 dark:border-slate-800 dark:bg-slate-900/40 dark:text-slate-400'
+                            )}
+                          >
+                            {s.status}
+                          </Badge>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+            )}
           </CardContent>
         </Card>
       )}

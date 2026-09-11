@@ -100,12 +100,16 @@ test('CLEANUP-8: Platform-ops pages are gone from the SA product; Landing Page i
   assert.equal(canAccessPage('org_admin', 'sa-landing'), false, 'org_admin denied Landing Page');
 });
 
-test('CLEANUP-3: org-less SA sidebar is exactly Overview / Organizations / Packages / Landing Page', () => {
-  // Packages stays a standalone configuration menu; the other manual-sales
-  // surfaces (Subscriptions / Payments / Licenses) are NOT standalone menus —
-  // they are managed from the Organization (org detail). Their backend APIs
-  // and gating registries remain intact.
-  const standalone = ['sa-overview', 'super-admin-organizations', 'sa-packages', 'sa-landing'];
+test('CLEANUP-3: org-less SA sidebar is exactly the Control Center entries', () => {
+  // Packages / Pricing & Offers / Purchase Requests stay standalone Control
+  // Center configuration menus; the other manual-sales surfaces
+  // (Subscriptions / Payments / Licenses) are NOT standalone menus — they are
+  // managed from the Organization (org detail). Their backend APIs and gating
+  // registries remain intact.
+  const standalone = [
+    'sa-overview', 'super-admin-organizations', 'sa-packages',
+    'sa-pricing', 'sa-purchase-requests', 'sa-infra-requests', 'sa-landing',
+  ];
   const saVisible = visibleGroupsFor('super_admin', false).flatMap((g) => g.items);
   assert.deepEqual(
     saVisible.map((i) => i.page),
@@ -277,7 +281,10 @@ test('CLEANUP-15: Super Admin has exactly one Organization creation path', () =>
   const orgsList = readFileSync(resolve(ROOT, 'src/components/super-admin/super-admin-organizations-page.tsx'), 'utf8');
   assert.ok(orgsList.includes('sa-create-organization'), 'orgs list links into the canonical provisioning flow');
   // The full provisioning flow (with Service Type + Package + admin) is intact.
+  // V1 commercial model: PRIVATE must never be a customer-facing option — the
+  // flow offers exactly MANAGED and CUSTOMER_DB.
   const flow = readFileSync(resolve(ROOT, 'src/components/super-admin/organization-provision-flow.tsx'), 'utf8');
-  assert.ok(flow.includes("value: 'MANAGED'") && flow.includes("value: 'CUSTOMER_DB'") && flow.includes("value: 'PRIVATE'"), 'provisioning flow keeps Service Type selection');
+  assert.ok(flow.includes("value: 'MANAGED'") && flow.includes("value: 'CUSTOMER_DB'"), 'provisioning flow keeps the two V1 Service Type options');
+  assert.ok(!flow.includes("value: 'PRIVATE'"), 'PRIVATE must not be selectable in customer-facing provisioning (V1)');
   assert.ok(flow.includes("'/api/admin/organizations/create'"), 'provisioning flow calls the canonical create API');
 });

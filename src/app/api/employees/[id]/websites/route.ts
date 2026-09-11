@@ -1,7 +1,7 @@
 'use server';
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
-import { authError, requireSessionOrg } from '@/lib/api';
+import { authError, requireSessionOrg, getPrismaForOrg } from '@/lib/api';
 import { NON_INTERNAL_AGENT_ACTIVITY_FILTER } from '@/lib/agent-process';
 import { safeTimezone, zonedDayStart, zonedDayEnd, localDayKey } from '@/lib/timezone';
 import { subDays } from 'date-fns';
@@ -69,8 +69,9 @@ export async function GET(
   try {
     const scope = await requireSessionOrg(request, { allowGlobal: true });
     if (!scope.ok) return authError(scope);
+    const orgData = scope.organizationId ? (await getPrismaForOrg(scope.organizationId)).client : db;
 
-    const employee = await db.employee.findFirst({
+    const employee = await orgData.employee.findFirst({
       where: { id, ...(scope.organizationId ? { organizationId: scope.organizationId } : {}) },
       select: { id: true, organizationId: true },
     });
@@ -113,7 +114,7 @@ export async function GET(
       ...NON_INTERNAL_AGENT_ACTIVITY_FILTER,
     };
 
-    const rows = await db.activity.findMany({
+    const rows = await orgData.activity.findMany({
       where,
       select: { url: true, duration: true, timestamp: true },
       orderBy: { timestamp: 'desc' },

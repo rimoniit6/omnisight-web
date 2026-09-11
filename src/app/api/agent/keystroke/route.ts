@@ -110,9 +110,13 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: authResult.error || 'Authentication failed' }, { status: 401 });
     }
     const employee = authResult.employee;
+    // ORG DATA BOUNDARY: KeyboardActivity is org-owned and COPYs to the org DB
+    // at cutover — route the write (and the consent read) through the org
+    // data client resolved by the authenticated token.
+    const orgData = authResult.orgData ?? db;
 
     // Consent gate — fail closed on missing/revoked/outdated keystroke consent.
-    if (!(await hasActiveConsent(employee.id, 'keystroke'))) {
+    if (!(await hasActiveConsent(employee.id, 'keystroke', orgData))) {
       return NextResponse.json(
         { error: 'Keystroke logging requires consent. Consent is not granted or has been revoked.' },
         { status: 403 }
@@ -159,7 +163,7 @@ export async function POST(req: NextRequest) {
       validated.push(result.interval);
     }
 
-    const created = await db.keyboardActivity.createMany({
+    const created = await orgData.keyboardActivity.createMany({
       data: validated.map((v) => ({
         employeeId: employee.id,
         deviceId: authResult.deviceId || null,

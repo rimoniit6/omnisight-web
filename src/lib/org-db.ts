@@ -29,6 +29,19 @@ export type OrgDbClient =
   | { mode: 'cloud'; client: PrismaClient }
   | { mode: 'own'; client: PrismaClient; orgId: string };
 
+/**
+ * Thrown when an organization has ENABLED its own database (useOwnDb) but its
+ * connection config is incomplete. Resolution FAILS CLOSED on purpose: silently
+ * re-routing to the platform DB would read/write the wrong dataset after a
+ * cutover, and would mask infrastructure damage behind working-looking data.
+ */
+export class OrgDbMisconfigurationError extends Error {
+  constructor(public readonly orgId: string) {
+    super(`Organization ${orgId} has useOwnDb enabled but its database configuration is incomplete`);
+    this.name = 'OrgDbMisconfigurationError';
+  }
+}
+
 // Cache of dedicated analytics clients keyed by organizationId.
 const orgDbClients = new Map<string, PrismaClient>();
 
@@ -103,10 +116,19 @@ export async function getPrismaForOrg(
     settings = row ?? null;
   }
 
-  const canUseOwn = Boolean(settings?.useOwnDb && settings.dbHost && settings.dbName && settings.dbUser);
-
-  if (!canUseOwn) {
+  // An org that has NOT opted into its own database uses the platform
+  // cloud DB (and one with no settings row at all is still platform).
+  if (!settings?.useOwnDb) {
     return { mode: 'cloud', client: db };
+  }
+
+  // The org DID opt in (useOwnDb=true) — its config must be complete. NEVER
+  // silently fall back to the platform DB from here: after a cutover that would
+  // read/write the wrong dataset, and before a cutover it would mask a broken
+  // pre-flight. Fail closed; the caller can surface or retry the classified
+  // misconfiguration.
+  if (!settings.dbHost || !settings.dbName || !settings.dbUser) {
+    throw new OrgDbMisconfigurationError(orgId);
   }
 
   const cached = orgDbClients.get(orgId);
@@ -114,12 +136,12 @@ export async function getPrismaForOrg(
     return { mode: 'own', client: cached, orgId };
   }
 
-  const host = settings!.dbHost!;
-  const port = settings!.dbPort ?? 5432;
-  const name = settings!.dbName!;
-  const user = settings!.dbUser!;
-  const password = decryptSecret(settings!.dbPassword ?? '');
-  const sslParams = settings!.dbSsl ? '?sslmode=require' : '';
+  const host = settings.dbHost;
+  const port = settings.dbPort ?? 5432;
+  const name = settings.dbName;
+  const user = settings.dbUser;
+  const password = decryptSecret(settings.dbPassword ?? '');
+  const sslParams = settings.dbSsl ? '?sslmode=require' : '';
 
   const connectionString = `postgresql://${encodeURIComponent(user)}:${encodeURIComponent(password)}@${host}:${port}/${name}${sslParams}`;
 
@@ -132,4 +154,44 @@ export async function getPrismaForOrg(
   pruneCache();
 
   return { mode: 'own', client, orgId };
+}
+
+/**
+ * RARE-path lookup: find a device by its agent key across organizations that
+ * have ACTIVATED their own database (useOwnDb). The platform Device table is the
+ * authoritative home only until the org cut over — devices first discovered
+ * afterwards exist solely in the org DB, so an anonymous re-discover (no login
+ * session slide) cannot see them on the platform table.
+ *
+ * Bounded by design: the scan is capped at `limit` activated orgs and each org
+ * client is cached, so the hot authenticated path never touches this. Returns
+ * null when not found (the caller keeps its fail-closed 422).
+ */
+export async function findDeviceAcrossActivatedOrgDbs(
+  agentKey: string,
+  limit = 25
+): Promise<{ id: string; organizationId: string; employeeId: string | null } | null> {
+  const activated = await db.organizationSettings.findMany({
+    where: { useOwnDb: true },
+    select: { organizationId: true },
+    take: limit,
+  });
+  for (const s of activated) {
+    let client: PrismaClient;
+    try {
+      client = (await getPrismaForOrg(s.organizationId)).client;
+    } catch {
+      continue; // misconfigured org — skip; its own requests fail closed
+    }
+    try {
+      const device = await client.device.findFirst({
+        where: { agentKey },
+        select: { id: true, organizationId: true, employeeId: true },
+      });
+      if (device) return device;
+    } catch {
+      continue;
+    }
+  }
+  return null;
 }

@@ -88,7 +88,17 @@ after(async () => {
 
 
 async function seedOrg(name: string) {
-  return db.organization.create({ data: { name, slug: name.toLowerCase().replace(/[^a-z0-9]+/g, '-') } });
+  return db.organization.create({
+    data: {
+      name,
+      slug: name.toLowerCase().replace(/[^a-z0-9]+/g, '-'),
+      // Trial orgs are treated as fully entitled for agent auth in these
+      // tests, allowing the consent checks to be exercised without an explicit
+      // subscription fixture. This keeps the test focused on the consent
+      // fail-closed behavior instead of a separate billing entitlement gate.
+      trialEndsAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
+    },
+  });
 }
 
 async function seedEmployee(orgId: string, code: string, status = 'active') {

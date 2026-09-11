@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { callAIProvider } from '@/lib/ai-provider-helper';
 import { meterAiCall } from '@/lib/ai-metering';
-import { requireManagerOrg, authError } from '@/lib/api';
+import { requireManagerOrg, authError, getPrismaForOrg } from '@/lib/api';
 import { hasActiveConsent } from '@/lib/consent';
 import { checkRateLimit, getClientIpFromHeaders, RATE_LIMITS } from '@/lib/rate-limit';
 import { log, requestContext } from '@/lib/logger';
@@ -99,6 +99,7 @@ export async function POST(
   const scope = await requireManagerOrg(req);
   if (!scope.ok) return authError(scope);
   const orgId = scope.organizationId;
+  const orgData = (await getPrismaForOrg(orgId)).client;
 
   // Rate limit (AI-class): 10 runs/min/IP — the proxy rate-limits the
   // employee-level analyze route centrally; project analysis is per-project so
@@ -154,7 +155,7 @@ export async function POST(
   }
 
   // ── Project + membership resolution (tenant-scoped) ──
-  const project = await db.project.findFirst({
+  const project = await orgData.project.findFirst({
     where: { id, organizationId: orgId },
     select: { id: true, name: true, status: true },
   });
@@ -163,7 +164,7 @@ export async function POST(
   }
 
   // Active members only — sentiment is derived from project-assigned work.
-  const memberships = await db.projectMember.findMany({
+  const memberships = await orgData.projectMember.findMany({
     where: { projectId: id, leftAt: null, organizationId: orgId },
     include: { employee: { select: { id: true, firstName: true, lastName: true, status: true } } },
   });
@@ -210,7 +211,7 @@ export async function POST(
   try {
     // ── Consent gate (fail-closed, same semantics as employee-level) ──
     const consentResults = await Promise.all(
-      members.map(async (e) => ({ employee: e, consented: await hasActiveConsent(e.id, 'activity_tracking') }))
+      members.map(async (e) => ({ employee: e, consented: await hasActiveConsent(e.id, 'activity_tracking', orgData) }))
     );
     const consented = consentResults.filter((r) => r.consented).map((r) => r.employee);
     const consentSkipped = members.length - consented.length;
@@ -232,7 +233,7 @@ export async function POST(
     // This is the privacy/data-truth boundary: an employee's hours on OTHER
     // projects (or general Activity rows) never enter project sentiment.
     const [currentEntries, previousEntries] = await Promise.all([
-      db.timeEntry.findMany({
+      orgData.timeEntry.findMany({
         where: {
           projectId: id,
           employeeId: { in: employeeIdList },
@@ -240,7 +241,7 @@ export async function POST(
         },
         select: { employeeId: true, date: true, hours: true, category: true, billable: true },
       }),
-      db.timeEntry.findMany({
+      orgData.timeEntry.findMany({
         where: {
           projectId: id,
           employeeId: { in: employeeIdList },
@@ -376,7 +377,7 @@ export async function POST(
     // ── Atomic replace of this (project, employee, period) window ──
     // Reruns replace, never accumulate; other periods/projects are untouched.
     const writeOps = [
-      db.sentimentRecord.deleteMany({
+      orgData.sentimentRecord.deleteMany({
         where: {
           organizationId: orgId,
           projectId: project.id,
@@ -385,8 +386,8 @@ export async function POST(
         },
       }),
       ...valid.map(({ data }) =>
-        db.sentimentRecord.create({
-          data: data as Parameters<typeof db.sentimentRecord.create>[0]['data'],
+        orgData.sentimentRecord.create({
+          data: data as Parameters<typeof orgData.sentimentRecord.create>[0]['data'],
           include: {
             employee: {
               select: {
@@ -403,11 +404,11 @@ export async function POST(
       ),
     ];
 
-    const txResults = await db.$transaction(writeOps);
+    const txResults = await orgData.$transaction(writeOps);
     const results = txResults.slice(1) as unknown[];
 
     // Audit log for the run.
-    await db.auditLog.create({
+    await orgData.auditLog.create({
       data: {
         action: 'create',
         resource: 'sentiment_record',

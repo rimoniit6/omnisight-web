@@ -24,11 +24,16 @@ function src(rel: string): string {
 describe('SA-UI sidebar contract', () => {
   const nav = src('lib/sidebar-nav.ts');
 
-  test('SA-UI-01: Control Center group has exactly the 4 primary items', () => {
+  test('SA-UI-01: Control Center group has exactly the V1 commercial items', () => {
     const groupMatch = nav.match(/id: 'control-center',[\s\S]*?items: \[([\s\S]*?)\n    \]/);
     assert.ok(groupMatch, 'control-center group found');
     const pages = [...groupMatch[1].matchAll(/page: '([^']+)'/g)].map((m) => m[1]);
-    assert.deepEqual(pages, ['sa-overview', 'super-admin-organizations', 'sa-packages', 'sa-landing']);
+    // V1 Control Center: Overview / Organizations / Packages / Pricing &
+    // Offers / Purchase Requests / Infrastructure Requests / Landing Page.
+    assert.deepEqual(pages, [
+      'sa-overview', 'super-admin-organizations', 'sa-packages',
+      'sa-pricing', 'sa-purchase-requests', 'sa-infra-requests', 'sa-landing',
+    ]);
   });
 
   test('SA-UI-02: no standalone Subscriptions/Payments/Licenses/Agents/Storage/AI/Health/Leads nav items', () => {
@@ -121,7 +126,7 @@ describe('SA-UI landing page contract', () => {
     const hero = src('components/landing/HeroSection.tsx');
     // Defaults are used when the override is absent (no empty landing page)
     assert.ok(hero.includes('h.title && h.title.length > 0 ? h.title : HEADING_LINES'), 'hero falls back to built-in copy');
-    assert.ok(hero.includes('Understand How Work Happens.'), 'demo content present');
+    assert.ok(hero.includes("'See Everything.', 'Understand Why.', 'Act on Intelligence.'"), 'demo content present');
   });
 
   test('SA-UI-16: landing editor keeps Save + Restore defaults', () => {

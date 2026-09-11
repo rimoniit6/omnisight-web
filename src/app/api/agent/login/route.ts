@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
+import { getPrismaForOrg } from '@/lib/org-db';
 import { createAgentSession } from '@/lib/agent/session';
 import { verifyAgentCredential } from '@/lib/agent-account';
 import { checkRateLimit, RATE_LIMITS, getClientIpFromHeaders } from '@/lib/rate-limit';
@@ -71,12 +72,19 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Invalid credentials' }, { status: 401 });
     }
 
-    // Fetch employee name for the response.
-    const employeeRecord = await db.employee.findUnique({
+    // Employee is org-owned (copied at activation) — read the authoritative
+    // record from the org's own DB, never the platform copy. AgentAccount
+    // itself stays platform-side (credential row) — the orgId above comes from
+    // the account's stable employee identity.
+    const orgData = (await getPrismaForOrg(empVerified.organizationId)).client;
+    const employeeRecord = await orgData.employee.findUnique({
       where: { id: empVerified.id },
-      select: { id: true, employeeId: true, firstName: true, lastName: true, organizationId: true },
+      select: { id: true, employeeId: true, firstName: true, lastName: true, organizationId: true, status: true },
     });
     if (!employeeRecord) {
+      return NextResponse.json({ error: 'Invalid credentials' }, { status: 401 });
+    }
+    if (employeeRecord.status !== 'active') {
       return NextResponse.json({ error: 'Invalid credentials' }, { status: 401 });
     }
 
@@ -91,7 +99,8 @@ export async function POST(req: NextRequest) {
 
     // Audit the login (safe fields only — never the password or token value).
     // S-08: capture the sanitized User-Agent (the agent sends WorkLensAgent/x).
-    await db.auditLog.create({
+    // Org-scoped audit rows land on the org client after activation.
+    await orgData.auditLog.create({
       data: {
         action: 'login',
         resource: 'agent_account',

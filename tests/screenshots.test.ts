@@ -114,8 +114,12 @@ before(async () => {
   createAgentAccount = (await import('../src/lib/agent-account')).createAgentAccount;
   loginApi = await import('../src/app/api/agent/login/route');
 
-  orgA = await db.organization.create({ data: { name: 'Screenshots Org A', slug: 'shots-a' } });
-  orgB = await db.organization.create({ data: { name: 'Screenshots Org B', slug: 'shots-b' } });
+  // trialEndsAt grants full agent entitlement (hasValidTrial) — same fixture
+  // convention as activity-dedupe / full-org-cutover / reconciliation suites;
+  // without it checkAgentEntitlement rejects every agent upload with 401.
+  const trial = { trialEndsAt: new Date(Date.now() + 30 * 24 * 3600 * 1000) };
+  orgA = await db.organization.create({ data: { name: 'Screenshots Org A', slug: 'shots-a', ...trial } });
+  orgB = await db.organization.create({ data: { name: 'Screenshots Org B', slug: 'shots-b', ...trial } });
 });
 
 after(async () => {

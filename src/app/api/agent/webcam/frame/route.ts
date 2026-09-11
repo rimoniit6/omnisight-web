@@ -3,7 +3,7 @@ import { db } from '@/lib/db';
 import { validateAgentToken } from '@/lib/agent/auth';
 import { hasActiveConsent } from '@/lib/consent';
 import { resolveOrgMonitoring } from '@/lib/jobs/settings';
-import { requireAdminOrg } from '@/lib/api';
+import { requireAdminOrg, getPrismaForOrg } from '@/lib/api';
 import { log, requestContext } from '@/lib/logger';
 import {
   setLatestFrame,
@@ -41,13 +41,16 @@ export async function POST(req: NextRequest) {
     }
     const employee = authResult.employee;
     const deviceId = authResult.deviceId;
+    // ORG DATA BOUNDARY: WebcamSession is org-owned and COPYs to the org DB
+    // at cutover — route through the org data client resolved by the token.
+    const orgData = authResult.orgData ?? db;
 
     const sessionId = new URL(req.url).searchParams.get('sessionId');
     if (!sessionId || sessionId.length === 0 || sessionId.length > 128) {
       return NextResponse.json({ error: 'sessionId is required' }, { status: 422 });
     }
 
-    const session = await db.webcamSession.findUnique({ where: { sessionId } });
+    const session = await orgData.webcamSession.findUnique({ where: { sessionId } });
     if (!session || session.deviceId !== deviceId || session.organizationId !== employee.organizationId) {
       return NextResponse.json({ error: 'Session not found' }, { status: 404 });
     }
@@ -63,7 +66,7 @@ export async function POST(req: NextRequest) {
       const monitoring = await resolveOrgMonitoring(employee.organizationId);
       if (!consentOk || monitoring.webcam_capture_enabled !== true) {
         clearSession(sessionId);
-        await db.webcamSession.updateMany({
+        await orgData.webcamSession.updateMany({
           where: { sessionId, status: 'active' },
           data: { status: 'ended', endedAt: new Date(), endedReason: consentOk ? 'config_disabled' : 'consent_revoked' },
         });
@@ -86,7 +89,7 @@ export async function POST(req: NextRequest) {
     }
 
     setLatestFrame(sessionId, bytes);
-    await db.webcamSession.updateMany({
+    await orgData.webcamSession.updateMany({
       where: { sessionId, status: 'active' },
       data: { lastFrameAt: new Date() },
     });
@@ -104,13 +107,16 @@ export async function GET(req: NextRequest) {
     if (!auth.ok) {
       return NextResponse.json({ error: auth.status === 401 ? 'Unauthorized. Please sign in.' : 'Insufficient permissions' }, { status: auth.status });
     }
+    // ORG DATA BOUNDARY: WebcamSession is org-owned — resolve the org data
+    // client (platform `db` when the org never opted in).
+    const orgData = (await getPrismaForOrg(auth.organizationId)).client;
     const sessionId = new URL(req.url).searchParams.get('sessionId');
     if (!sessionId || sessionId.length === 0 || sessionId.length > 128) {
       return NextResponse.json({ error: 'sessionId is required' }, { status: 422 });
     }
 
     // Org-scoped session lookup — a foreign session is concealed as 404.
-    const session = await db.webcamSession.findFirst({
+    const session = await orgData.webcamSession.findFirst({
       where: { sessionId, organizationId: auth.organizationId, status: 'active' },
       select: { sessionId: true },
     });

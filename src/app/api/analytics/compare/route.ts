@@ -2,7 +2,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { Prisma } from '@prisma/client';
 import { db } from '@/lib/db';
-import { authError, requireSessionOrg } from '@/lib/api';
+import { authError, getPrismaForOrg, requireSessionOrg } from '@/lib/api';
 import { NON_INTERNAL_AGENT_ACTIVITY_FILTER, INTERNAL_AGENT_PROCESS_NAMES } from '@/lib/agent-process';
 import { zonedDayStart, zonedDayEnd } from '@/lib/timezone';
 import { log, requestContext } from '@/lib/logger';
@@ -28,7 +28,7 @@ const utcTs = (d: Date) => d.toISOString().slice(0, 19).replace('T', ' ');
  * timezone — never as a raw UTC day (Asia/Dhaka +06 would shift the window
  * and the active-day count back by a day).
  */
-async function getAnalyticsForPeriod(startStr: string, endStr: string, orgId: string, orgTz: string) {
+async function getAnalyticsForPeriod(startStr: string, endStr: string, orgId: string, orgTz: string, data: import('@prisma/client').PrismaClient) {
   const startDate = zonedDayStart(startStr, orgTz);
   const endDate = zonedDayEnd(endStr, orgTz);
 
@@ -42,16 +42,16 @@ async function getAnalyticsForPeriod(startStr: string, endStr: string, orgId: st
   };
 
   const [byCategory, empGroups, dayRows, appRows] = await Promise.all([
-    db.activity.groupBy({
+    data.activity.groupBy({
       by: ['category'],
       where,
       _sum: { duration: true },
       _count: { _all: true },
     }),
-    db.activity.groupBy({ by: ['employeeId'], where }),
+    data.activity.groupBy({ by: ['employeeId'], where }),
     // Active days in the ORGANIZATION-local calendar (COUNT DISTINCT of the
     // org-local day) — identical to the old Set(localDayKey(...)).size.
-    db.$queryRaw<Array<{ days: bigint }>>`
+    data.$queryRaw<Array<{ days: bigint }>>`
       SELECT COUNT(DISTINCT (a."timestamp" AT TIME ZONE 'UTC' AT TIME ZONE ${orgTz})::date)::bigint AS "days"
       FROM "Activity" a
       INNER JOIN "Employee" e ON e."id" = a."employeeId"
@@ -64,7 +64,7 @@ async function getAnalyticsForPeriod(startStr: string, endStr: string, orgId: st
     // category (order = createdAt,id, the old insertion-order scan), except
     // 'productive' wins when ANY row is productive (the old JS overwrote the
     // category on sight of a productive row).
-    db.$queryRaw<Array<{ key: string; category: string | null; duration: bigint }>>`
+    data.$queryRaw<Array<{ key: string; category: string | null; duration: bigint }>>`
       SELECT
         COALESCE(a."applicationName", a."url", a."title", 'Unknown') AS "key",
         CASE
@@ -120,17 +120,17 @@ async function getAnalyticsForPeriod(startStr: string, endStr: string, orgId: st
   };
 }
 
-async function getDepartmentAnalytics(deptId: string, orgId: string, startDate?: Date, endDate?: Date) {
+async function getDepartmentAnalytics(deptId: string, orgId: string, data: import('@prisma/client').PrismaClient, startDate?: Date, endDate?: Date) {
   // Tenant isolation: the department and its employees must belong to the
   // caller's organization.
-  const dept = await db.department.findFirst({
+  const dept = await data.department.findFirst({
     where: { id: deptId, organizationId: orgId },
     select: { id: true },
   });
   if (!dept) {
     throw new OrgScopeError();
   }
-  const employees = await db.employee.findMany({
+  const employees = await data.employee.findMany({
     where: { departmentId: deptId, organizationId: orgId, status: 'active' },
     select: { id: true },
   });
@@ -156,13 +156,13 @@ async function getDepartmentAnalytics(deptId: string, orgId: string, startDate?:
   };
 
   const [byCategory, appRows] = await Promise.all([
-    db.activity.groupBy({
+    data.activity.groupBy({
       by: ['category'],
       where,
       _sum: { duration: true },
       _count: { _all: true },
     }),
-    db.$queryRaw<Array<{ key: string; category: string | null; duration: bigint }>>`
+    data.$queryRaw<Array<{ key: string; category: string | null; duration: bigint }>>`
       SELECT
         COALESCE(a."applicationName", a."url", a."title", 'Unknown') AS "key",
         CASE
@@ -227,6 +227,10 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: 'No organization context' }, { status: 403 });
     }
     const orgId = scope.organizationId;
+    // Org data client: Activity / Department / Employee are org-owned (copied
+    // at activation) — all analytics queries run there, never on the platform
+    // DB after cutover. Organization itself is platform-owned and stays on `db`.
+    const orgData = (await getPrismaForOrg(orgId)).client;
 
     // Organization timezone — authoritative for calendar-day interpretation.
     const org = await db.organization.findUnique({
@@ -263,8 +267,8 @@ export async function GET(req: NextRequest) {
       }
 
       const [dept1, dept2] = await Promise.all([
-        db.department.findFirst({ where: { id: id1, organizationId: orgId }, select: { id: true, name: true } }),
-        db.department.findFirst({ where: { id: id2, organizationId: orgId }, select: { id: true, name: true } }),
+        orgData.department.findFirst({ where: { id: id1, organizationId: orgId }, select: { id: true, name: true } }),
+        orgData.department.findFirst({ where: { id: id2, organizationId: orgId }, select: { id: true, name: true } }),
       ]);
 
       if (!dept1 || !dept2) {
@@ -273,8 +277,8 @@ export async function GET(req: NextRequest) {
       }
 
       const [data1, data2] = await Promise.all([
-        getDepartmentAnalytics(id1, orgId, deptStart, deptEnd),
-        getDepartmentAnalytics(id2, orgId, deptStart, deptEnd),
+        getDepartmentAnalytics(id1, orgId, orgData, deptStart, deptEnd),
+        getDepartmentAnalytics(id2, orgId, orgData, deptStart, deptEnd),
       ]);
 
       return NextResponse.json({
@@ -304,8 +308,8 @@ export async function GET(req: NextRequest) {
       }
 
       const [data1, data2] = await Promise.all([
-        getAnalyticsForPeriod(startDate1, endDate1, orgId, orgTz),
-        getAnalyticsForPeriod(startDate2, endDate2, orgId, orgTz),
+        getAnalyticsForPeriod(startDate1, endDate1, orgId, orgTz, orgData),
+        getAnalyticsForPeriod(startDate2, endDate2, orgId, orgTz, orgData),
       ]);
 
       // Format the label from the YYYY-MM-DD strings directly — never via

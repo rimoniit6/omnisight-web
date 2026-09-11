@@ -1,7 +1,7 @@
 'use server';
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
-import { authError, requireSessionOrg } from '@/lib/api';
+import { authError, requireSessionOrg, getPrismaForOrg } from '@/lib/api';
 import { parseISO, startOfDay, subDays } from 'date-fns';
 import { log, requestContext } from '@/lib/logger';
 import { reverseGeocode } from '@/lib/geocoding';
@@ -59,8 +59,9 @@ export async function GET(
   try {
     const scope = await requireSessionOrg(request, { allowGlobal: true });
     if (!scope.ok) return authError(scope);
+    const orgData = scope.organizationId ? (await getPrismaForOrg(scope.organizationId)).client : db;
 
-    const employee = await db.employee.findFirst({
+    const employee = await orgData.employee.findFirst({
       where: { id, ...(scope.organizationId ? { organizationId: scope.organizationId } : {}) },
       select: { id: true },
     });
@@ -87,14 +88,14 @@ export async function GET(
     const where = { employeeId: id, recordedAt: { gte: startDate, lte: endDate } };
 
     const [history, total, latest] = await Promise.all([
-      db.locationEvent.findMany({
+      orgData.locationEvent.findMany({
         where,
         orderBy: { recordedAt: 'desc' },
         skip: (page - 1) * pageSize,
         take: pageSize,
       }),
-      db.locationEvent.count({ where }),
-      db.locationEvent.findFirst({ where, orderBy: { recordedAt: 'desc' } }),
+      orgData.locationEvent.count({ where }),
+      orgData.locationEvent.findFirst({ where, orderBy: { recordedAt: 'desc' } }),
     ]);
 
     const totalPages = Math.ceil(total / pageSize);

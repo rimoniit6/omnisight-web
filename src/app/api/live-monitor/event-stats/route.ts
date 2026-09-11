@@ -1,7 +1,7 @@
 'use server';
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
-import { authError, requireSessionOrg } from '@/lib/api';
+import { authError, getPrismaForOrg, requireSessionOrg } from '@/lib/api';
 import { localDayKey, zonedDayStart } from '@/lib/timezone';
 import { log, requestContext } from '@/lib/logger';
 
@@ -40,6 +40,7 @@ export async function GET(req: NextRequest) {
     if (!scope.organizationId) return emptyStats();
 
     const orgId = scope.organizationId;
+    const orgData = (await getPrismaForOrg(orgId)).client;
 
     // Validate the time range (default "today").
     const { searchParams } = new URL(req.url);
@@ -73,8 +74,8 @@ export async function GET(req: NextRequest) {
     // organizationId column); the rest carry organizationId directly. All
     // filters are indexed (createdAt / organizationId+createdAt).
     const [devices, activity, notifications, screenshot, usb, breakCount, projectTime, deviceClaim, alertCount] = await Promise.all([
-      db.device.count({ where: { organizationId: orgId, updatedAt: { gte: from } } }),
-      db.activity.count({
+      orgData.device.count({ where: { organizationId: orgId, updatedAt: { gte: from } } }),
+      orgData.activity.count({
         where: {
           type: { in: ['application', 'website'] },
           // Break-mode rows are counted under `break`, never here — each row
@@ -84,19 +85,19 @@ export async function GET(req: NextRequest) {
           employee: { organizationId: orgId },
         },
       }),
-      db.notification.count({ where: { organizationId: orgId, createdAt: { gte: from } } }),
-      db.screenshot.count({ where: { organizationId: orgId, createdAt: { gte: from } } }),
-      db.usbEvent.count({ where: { organizationId: orgId, createdAt: { gte: from } } }),
-      db.activity.count({
+      orgData.notification.count({ where: { organizationId: orgId, createdAt: { gte: from } } }),
+      orgData.screenshot.count({ where: { organizationId: orgId, createdAt: { gte: from } } }),
+      orgData.usbEvent.count({ where: { organizationId: orgId, createdAt: { gte: from } } }),
+      orgData.activity.count({
         where: {
           title: { contains: 'Break Mode' },
           createdAt: { gte: from },
           employee: { organizationId: orgId },
         },
       }),
-      db.timeEntry.count({ where: { organizationId: orgId, source: 'ACTIVITY_AUTO', createdAt: { gte: from } } }),
-      db.deviceClaim.count({ where: { organizationId: orgId, createdAt: { gte: from } } }),
-      db.alert.count({ where: { organizationId: orgId, createdAt: { gte: from } } }),
+      orgData.timeEntry.count({ where: { organizationId: orgId, source: 'ACTIVITY_AUTO', createdAt: { gte: from } } }),
+      orgData.deviceClaim.count({ where: { organizationId: orgId, createdAt: { gte: from } } }),
+      orgData.alert.count({ where: { organizationId: orgId, createdAt: { gte: from } } }),
     ]);
 
     return NextResponse.json({

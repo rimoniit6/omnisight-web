@@ -12,8 +12,9 @@
  * - High/critical detections auto-create an Alert (preserved behavior).
  * - One AuditLog per run that created anomalies (F-24) — bounded volume.
  */
-import { Prisma } from '@prisma/client';
+import { Prisma, type PrismaClient } from '@prisma/client';
 import { db } from '@/lib/db';
+import { getPrismaForOrg } from '@/lib/org-db';
 import { getOrgSetting } from '@/lib/jobs/settings';
 import { createOrgAlert, createOrgNotification } from '@/lib/notifications/service';
 import { detectAnomaliesForEmployees, type DetectedAnomaly } from './detect';
@@ -73,10 +74,11 @@ async function loadOrgContext(orgId: string) {
 export async function persistAnomaly(
   a: DetectedAnomaly,
   orgId: string,
-  dedupeKey: string
+  dedupeKey: string,
+  data: PrismaClient = db
 ): Promise<{ created: boolean; anomalyId: string }> {
   try {
-    return await db.$transaction(async (tx) => {
+    return await data.$transaction(async (tx) => {
       const created = await tx.anomaly.create({
         data: {
           type: a.type,
@@ -142,6 +144,12 @@ export async function runAnomalyDetection(options: RunAnomalyDetectionOptions): 
   const { orgId, employeeId } = options;
   const now = options.now ?? new Date();
 
+  // Org data client: Employee/Activity/Anomaly/Alert/Notification/AuditLog are
+  // org-owned (copied at activation) — every org-scoped read/write below goes
+  // through it, never the platform DB after cutover. Organization identity and
+  // OrganizationSetting (control plane) stay on the platform DB.
+  const orgData = (await getPrismaForOrg(orgId)).client;
+
   const ctx = await loadOrgContext(orgId);
   if (!ctx) return { status: 'disabled', reason: 'organization not found' };
 
@@ -149,7 +157,7 @@ export async function runAnomalyDetection(options: RunAnomalyDetectionOptions): 
   if (!enabled) return { status: 'disabled', reason: 'ai_anomaly_detection setting is disabled' };
 
   // Tenant-scoped target employees.
-  const employees = await db.employee.findMany({
+  const employees = await orgData.employee.findMany({
     where: {
       status: 'active',
       organizationId: orgId,
@@ -177,11 +185,11 @@ export async function runAnomalyDetection(options: RunAnomalyDetectionOptions): 
   // Batch 1: activities in the last 7 days. Batch 2: baseline window.
   const [recentActivities, baselineActivities] = employeeIds.length
     ? await Promise.all([
-        db.activity.findMany({
+        orgData.activity.findMany({
           where: { employeeId: { in: employeeIds }, timestamp: { gte: sevenDaysAgo } },
           select: { employeeId: true, timestamp: true, duration: true, category: true, type: true },
         }),
-        db.activity.findMany({
+        orgData.activity.findMany({
           where: { employeeId: { in: employeeIds }, timestamp: { gte: thirtyDaysAgo, lt: sevenDaysAgo } },
           select: { employeeId: true, timestamp: true, duration: true, category: true, type: true },
         }),
@@ -219,7 +227,7 @@ export async function runAnomalyDetection(options: RunAnomalyDetectionOptions): 
   // the unique index catch any concurrent race.
   const candidateKeys = anomalies.map((a) => anomalyDedupeKey(orgId, a.employeeId, a.type, now));
   const existing = candidateKeys.length
-    ? await db.anomaly.findMany({
+    ? await orgData.anomaly.findMany({
         where: { dedupeKey: { in: candidateKeys } },
         select: { dedupeKey: true },
       })
@@ -235,14 +243,14 @@ export async function runAnomalyDetection(options: RunAnomalyDetectionOptions): 
       skipped += 1;
       continue;
     }
-    const result = await persistAnomaly(a, orgId, key);
+    const result = await persistAnomaly(a, orgId, key, orgData);
     if (result.created) createdIds.push(result.anomalyId);
     else skipped += 1;
   }
 
   // F-24: one audit entry per run that created anomalies (bounded volume).
   if (createdIds.length > 0) {
-    await db.auditLog.create({
+    await orgData.auditLog.create({
       data: {
         action: 'detect',
         resource: 'anomaly',

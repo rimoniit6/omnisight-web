@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { requireAdminOrg, authError } from '@/lib/api';
+import { requireAdminOrg, authError, getPrismaForOrg } from '@/lib/api';
 import { recordingProgress, type RecordingStatus } from '@/lib/audio/types';
 
 // GET /api/audio/[id]/status — poll processing status
@@ -11,9 +10,10 @@ export async function GET(
   try {
     const admin = await requireAdminOrg(request);
     if (!admin.ok) return authError(admin);
+    const orgData = (await getPrismaForOrg(admin.organizationId)).client;
 
     const { id } = await params;
-    const recording = await db.audioRecording.findFirst({
+    const recording = await orgData.audioRecording.findFirst({
       where: { id, organizationId: admin.organizationId },
       select: {
         id: true,

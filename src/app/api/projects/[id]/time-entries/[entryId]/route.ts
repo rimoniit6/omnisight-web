@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { Prisma } from '@prisma/client';
-import { authError, requireAdminOrg } from '@/lib/api';
+import { authError, requireAdminOrg, getPrismaForOrg } from '@/lib/api';
 import { log, requestContext } from '@/lib/logger';
 
 // Authoritative value set (mirror of the TimeEntry model comment + POST route).
@@ -24,9 +24,10 @@ export async function PUT(
     if (!admin.ok) return authError(admin);
 
     const { id, entryId } = await params;
+    const orgData = (await getPrismaForOrg(admin.organizationId)).client;
 
     // Project must belong to the caller's org; cross-org ids -> 404.
-    const project = await db.project.findFirst({
+    const project = await orgData.project.findFirst({
       where: { id, organizationId: admin.organizationId },
       select: { id: true, name: true },
     });
@@ -35,7 +36,7 @@ export async function PUT(
     }
 
     // Entry must exist, belong to this project, and belong to this org.
-    const existing = await db.timeEntry.findFirst({
+    const existing = await orgData.timeEntry.findFirst({
       where: { id: entryId, projectId: id, organizationId: admin.organizationId },
     });
     if (!existing) {
@@ -62,7 +63,7 @@ export async function PUT(
       }
       // Employee must be an active member of this project AND belong to the
       // caller's org (same constraint as creation).
-      const membership = await db.projectMember.findFirst({
+      const membership = await orgData.projectMember.findFirst({
         where: { projectId: id, employeeId: body.employeeId, leftAt: null, organizationId: admin.organizationId },
       });
       if (!membership) {
@@ -114,7 +115,7 @@ export async function PUT(
       updateData.billable = body.billable;
     }
 
-    const timeEntry = await db.timeEntry.update({
+    const timeEntry = await orgData.timeEntry.update({
       where: { id: entryId },
       data: updateData,
       include: {
@@ -123,7 +124,7 @@ export async function PUT(
     });
 
     // Audit log
-    await db.auditLog.create({
+    await orgData.auditLog.create({
       data: {
         action: 'update',
         resource: 'time_entry',
@@ -157,9 +158,10 @@ export async function DELETE(
     if (!admin.ok) return authError(admin);
 
     const { id, entryId } = await params;
+    const orgData = (await getPrismaForOrg(admin.organizationId)).client;
 
     // Project must belong to the caller's org; cross-org ids -> 404.
-    const project = await db.project.findFirst({
+    const project = await orgData.project.findFirst({
       where: { id, organizationId: admin.organizationId },
       select: { id: true, name: true },
     });
@@ -168,17 +170,17 @@ export async function DELETE(
     }
 
     // Entry must exist, belong to this project, and belong to this org.
-    const existing = await db.timeEntry.findFirst({
+    const existing = await orgData.timeEntry.findFirst({
       where: { id: entryId, projectId: id, organizationId: admin.organizationId },
     });
     if (!existing) {
       return NextResponse.json({ error: 'Time entry not found' }, { status: 404 });
     }
 
-    await db.timeEntry.delete({ where: { id: entryId } });
+    await orgData.timeEntry.delete({ where: { id: entryId } });
 
     // Audit log
-    await db.auditLog.create({
+    await orgData.auditLog.create({
       data: {
         action: 'delete',
         resource: 'time_entry',

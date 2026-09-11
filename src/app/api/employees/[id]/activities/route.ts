@@ -1,7 +1,7 @@
 'use server';
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
-import { authError, requireSessionOrg } from '@/lib/api';
+import { authError, requireSessionOrg, getPrismaForOrg } from '@/lib/api';
 import { NON_INTERNAL_AGENT_ACTIVITY_FILTER } from '@/lib/agent-process';
 import { safeTimezone, zonedDayStart, addDaysToKey, localDayKey } from '@/lib/timezone';
 import { subDays } from 'date-fns';
@@ -64,9 +64,10 @@ export async function GET(
   try {
     const scope = await requireSessionOrg(request, { allowGlobal: true });
     if (!scope.ok) return authError(scope);
+    const orgData = scope.organizationId ? (await getPrismaForOrg(scope.organizationId)).client : db;
 
     // Org-scoped employee lookup — foreign/nonexistent ids are concealed as 404.
-    const employee = await db.employee.findFirst({
+    const employee = await orgData.employee.findFirst({
       where: { id, ...(scope.organizationId ? { organizationId: scope.organizationId } : {}) },
       select: { id: true, organizationId: true },
     });
@@ -107,7 +108,7 @@ export async function GET(
       : { gte: startDate, lt: endExclusive };
 
     const [activities, total] = await Promise.all([
-      db.activity.findMany({
+      orgData.activity.findMany({
         where: {
           employeeId: id,
           timestamp: timestampFilter,
@@ -120,7 +121,7 @@ export async function GET(
           device: { select: { id: true, name: true } },
         },
       }),
-      db.activity.count({
+      orgData.activity.count({
         where: {
           employeeId: id,
           timestamp: timestampFilter,

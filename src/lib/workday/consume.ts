@@ -25,6 +25,7 @@
  */
 
 import { db } from '@/lib/db';
+import { getPrismaForOrg } from '@/lib/org-db';
 import { localDayKey, zonedDayStart, zonedDayEnd, safeTimezone } from '@/lib/timezone';
 import { aggregateEmployeeDay, type WorkDayActivityRow } from './summary';
 
@@ -80,10 +81,14 @@ export async function readOrgDayTotals(options: ReadOrgDayTotalsOptions): Promis
   }
   if (validKeys.length === 0) return { rows, source, skippedFutureKeys };
 
+  // WorkDaySummary and Activity are org-owned (copied at activation) — both
+  // reads below run on the org's own client, never the platform DB after cutover.
+  const orgData = (await getPrismaForOrg(options.organizationId)).client;
+
   // Rollup rows for the covered keys (today is NEVER served from the rollup —
   // its summary is partial until the day completes).
   const coveredKeys = validKeys.filter((key) => key !== todayKey);
-  const summaryRows = await db.workDaySummary.findMany({
+  const summaryRows = await orgData.workDaySummary.findMany({
     where: { organizationId: options.organizationId, workDate: { in: coveredKeys } },
     select: {
       employeeId: true,
@@ -128,7 +133,7 @@ export async function readOrgDayTotals(options: ReadOrgDayTotalsOptions): Promis
     for (const key of rawKeys) {
       const dayStart = zonedDayStart(key, tz);
       const dayEndExclusive = new Date(zonedDayEnd(key, tz).getTime() + 1);
-      const activityRows = await db.activity.findMany({
+      const activityRows = await orgData.activity.findMany({
         where: {
           employee: { organizationId: options.organizationId },
           timestamp: { gte: dayStart, lt: dayEndExclusive },

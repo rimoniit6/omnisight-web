@@ -1,2 +1,3 @@
 -- Full-organization cutover: deterministic cutover boundary timestamp.
-ALTER TABLE "InfrastructureMigration" ADD COLUMN "cutoverAt" TIMESTAMP(3);
+-- Column "cutoverAt" is now created with the InfrastructureMigration table in 20260909000000_org_infrastructure_change_requests
+-- No action needed.

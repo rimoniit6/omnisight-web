@@ -4,7 +4,7 @@ import { useQuery } from '@tanstack/react-query';
 import { useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { Check, Crown, Sparkles, Building2 } from 'lucide-react';
+import { Check, Sparkles } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -22,6 +22,17 @@ interface Plan {
   retentionDays: number;
   features: string[];
   isSelfHosted: boolean;
+  // V1 additive pricing rows from /api/plans — the SAME PlanPricing source
+  // used by the landing PricingSection and the checkout purchase flow.
+  pricing?: Array<{
+    deploymentMode: 'MANAGED' | 'CUSTOMER_DB';
+    billingPeriod: 'MONTHLY' | 'YEARLY';
+    basePrice: number;
+    currency: string;
+    includedDevices: number | null;
+    additionalDevicePrice: number | null;
+    unlimitedDevices: boolean;
+  }>;
 }
 
 const FEATURE_LABELS: Record<string, string> = {
@@ -54,16 +65,16 @@ export default function PricingPage() {
 
   const plans = data?.plans ?? [];
   const paid = plans.filter((p) => !p.isSelfHosted);
-  const selfHosted = plans.filter((p) => p.isSelfHosted);
 
   const goToPlan = (plan: Plan) => {
     const isFree = plan.priceMonthly === 0 && !plan.isSelfHosted;
-    // Paid plans go through the Contact Sales flow (manual payment); Free keeps
-    // a self-serve trial path into the app.
+    // B-1 fix: paid plans enter the V1 public Purchase Request flow — the
+    // same destination as the landing pricing section's CTA. Free keeps the
+    // self-serve trial path into the app.
     if (isFree) {
       router.push('/login');
     } else {
-      router.push(`/contact?plan=${encodeURIComponent(plan.name)}`);
+      router.push(`/checkout?planId=${plan.id}`);
     }
   };
 
@@ -114,7 +125,16 @@ export default function PricingPage() {
         ) : (
           <div className="grid md:grid-cols-3 gap-6">
             {paid.map((plan) => {
-              const price = period === 'YEARLY' && plan.priceYearly != null ? plan.priceYearly : plan.priceMonthly;
+              // B-1 fix: display prices come from the V1 PlanPricing rows
+              // (same source as landing + checkout). Legacy plan columns are
+              // only a last-resort fallback when Super Admin has not configured
+              // V1 pricing for the plan — identical to the landing
+              // PricingSection behavior, so the two pages can never diverge
+              // once pricing is configured.
+              const managed = plan.pricing?.find((r) => r.deploymentMode === 'MANAGED' && r.billingPeriod === period);
+              const customerDb = plan.pricing?.find((r) => r.deploymentMode === 'CUSTOMER_DB' && r.billingPeriod === period);
+              const price = managed?.basePrice ?? customerDb?.basePrice ?? (period === 'YEARLY' && plan.priceYearly != null ? plan.priceYearly : plan.priceMonthly);
+              const currency = managed?.currency ?? customerDb?.currency ?? plan.currency;
               const recommended = plan.name.toLowerCase().includes('business') || plan.name.toLowerCase().includes('pro');
               return (
                 <Card key={plan.id} className={recommended ? 'border-primary shadow-lg' : ''}>
@@ -130,7 +150,7 @@ export default function PricingPage() {
                   <CardContent>
                     <div className="mb-4">
                       <span className="text-3xl font-bold">
-                        {plan.currency} {price}
+                        {currency} {price.toLocaleString()}
                       </span>
                       <span className="text-muted-foreground text-sm">
                         {period === 'YEARLY' ? '/ year' : '/ month'}
@@ -139,12 +159,24 @@ export default function PricingPage() {
                     <ul className="space-y-2 text-sm">
                       <li className="flex items-center gap-2">
                         <Check className="w-4 h-4 text-primary" />
-                        {plan.maxDevices <= 0 ? 'Unlimited' : plan.maxDevices} devices
+                        {managed
+                          ? managed.includedDevices != null
+                            ? `${managed.includedDevices} devices included${managed.additionalDevicePrice ? ` · +${currency} ${managed.additionalDevicePrice}/additional device` : ''}`
+                            : 'Unlimited devices'
+                          : customerDb
+                            ? 'Unlimited devices'
+                            : `${plan.maxDevices <= 0 ? 'Unlimited' : plan.maxDevices} devices`}
                       </li>
                       <li className="flex items-center gap-2">
                         <Check className="w-4 h-4 text-primary" />
                         {plan.retentionDays <= 0 ? 'Unlimited' : `${plan.retentionDays}-day`} retention
                       </li>
+                      {customerDb && (
+                        <li className="flex items-center gap-2">
+                          <Check className="w-4 h-4 text-primary" />
+                          Customer Database: {customerDb.currency} {customerDb.basePrice.toLocaleString()}/{period === 'YEARLY' ? 'yr' : 'mo'} · unlimited devices
+                        </li>
+                      )}
                       {plan.features.map((f) => (
                         <li key={f} className="flex items-center gap-2">
                           <Check className="w-4 h-4 text-primary" />
@@ -155,43 +187,12 @@ export default function PricingPage() {
                   </CardContent>
                   <CardFooter>
                     <Button className="w-full" onClick={() => goToPlan(plan)}>
-                      {plan.priceMonthly === 0 && !plan.isSelfHosted ? 'Start Free Trial' : 'Contact Sales'}
+                      {plan.priceMonthly === 0 && !plan.isSelfHosted ? 'Start Free Trial' : 'Request Pricing'}
                     </Button>
                   </CardFooter>
                 </Card>
               );
             })}
-          </div>
-        )}
-
-        {selfHosted.length > 0 && (
-          <div className="mt-12">
-            <div className="flex items-center gap-2 mb-4">
-              <Crown className="w-5 h-5 text-primary" />
-              <h2 className="text-xl font-semibold">Self-Hosted / Enterprise</h2>
-            </div>
-            <div className="grid md:grid-cols-1 gap-6">
-              {selfHosted.map((plan) => (
-                <Card key={plan.id}>
-                  <CardHeader>
-                    <CardTitle className="flex items-center gap-2">
-                      <Building2 className="w-5 h-5 text-primary" />
-                      {plan.name}
-                    </CardTitle>
-                    <CardDescription>{plan.description}</CardDescription>
-                  </CardHeader>
-                  <CardContent className="text-sm text-muted-foreground">
-                    Deploy on your own infrastructure with full data control.
-                    Contact our team for an enterprise license.
-                  </CardContent>
-                  <CardFooter>
-                    <Button variant="outline" asChild>
-                      <a href="mailto:sales@omnisight.local">Contact Sales</a>
-                    </Button>
-                  </CardFooter>
-                </Card>
-              ))}
-            </div>
           </div>
         )}
       </main>
