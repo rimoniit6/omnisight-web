@@ -280,14 +280,14 @@ test('D: suspending an org blocks an already-authenticated web-admin session', a
   assert.equal(before.status, 200);
 
   // Super admin suspends Org A
-  const suspendApi = await import('../src/app/api/super-admin/organizations/[id]/route');
+  const suspendApi = await import('../src/app/api/super-admin/organizations/[orgId]/route');
   const pauseRes = await suspendApi.PATCH(
     new NextRequest(`http://localhost:3000/api/super-admin/organizations/${orgA.id}`, {
       method: 'PATCH',
       headers: { 'content-type': 'application/json', authorization: `Bearer ${await signTestJWT(superAdmin.id, superAdmin.email, 'super_admin', orgA.id)}` },
       body: JSON.stringify({ status: 'paused' }),
     }),
-    { params: Promise.resolve({ id: orgA.id }) }
+    { params: Promise.resolve({ orgId: orgA.id }) }
   );
   assert.equal(pauseRes.status, 200);
 
@@ -311,14 +311,14 @@ test('E: archiving an org blocks an already-authenticated web-admin session', as
   const { token } = await login('archive@test.local', 'Archive123');
   const employeesApi = await import('../src/app/api/employees/route');
 
-  const suspendApi = await import('../src/app/api/super-admin/organizations/[id]/route');
+  const suspendApi = await import('../src/app/api/super-admin/organizations/[orgId]/route');
   const archRes = await suspendApi.PATCH(
     new NextRequest(`http://localhost:3000/api/super-admin/organizations/${orgB.id}`, {
       method: 'PATCH',
       headers: { 'content-type': 'application/json', authorization: `Bearer ${await signTestJWT(superAdmin.id, superAdmin.email, 'super_admin', orgB.id)}` },
       body: JSON.stringify({ status: 'archived' }),
     }),
-    { params: Promise.resolve({ id: orgB.id }) }
+    { params: Promise.resolve({ orgId: orgB.id }) }
   );
   assert.equal(archRes.status, 200);
 
@@ -540,14 +540,14 @@ test('L: refresh-token rejects when organization is paused', async () => {
   assert.equal(before.status, 200, 'pre-suspension refresh must succeed');
 
   // Super Admin suspends the org
-  const suspendApi = await import('../src/app/api/super-admin/organizations/[id]/route');
+  const suspendApi = await import('../src/app/api/super-admin/organizations/[orgId]/route');
   const pauseRes = await suspendApi.PATCH(
     new NextRequest(`http://localhost:3000/api/super-admin/organizations/${pauseOrg.id}`, {
       method: 'PATCH',
       headers: { 'content-type': 'application/json', authorization: `Bearer ${await signTestJWT(superAdmin.id, superAdmin.email, 'super_admin', pauseOrg.id)}` },
       body: JSON.stringify({ status: 'paused' }),
     }),
-    { params: Promise.resolve({ id: pauseOrg.id }) }
+    { params: Promise.resolve({ orgId: pauseOrg.id }) }
   );
   assert.equal(pauseRes.status, 200);
 

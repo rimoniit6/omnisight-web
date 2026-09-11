@@ -14,6 +14,17 @@
 //   - no privilege escalation: an actor may only assign a role whose level is
 //     <= their own. Global super_admin may assign any non-super_admin role.
 //   - super_admin is a platform role and is never a per-org membership value.
+//
+// ─── Manager Granular Permissions (PLANNED — Pending Product Decision) ─────
+// The ORG_ROLES array defines assignable membership roles. The ROLE_LEVELS
+// hierarchy is used by canAssignRole() for privilege-elevation checks.
+//
+// Future per-user Manager permission overrides will be stored in a separate
+// junction table (e.g., ManagerPermission) linking userId + organizationId
+// + permission. The ROLE_PERMISSIONS map in permissions.ts defines the
+// DEFAULT permission set; per-user overrides will be additive (never
+// subtractive from the base role). This module remains unchanged — it
+// handles role assignment, not permission configuration.
 import { db } from '@/lib/db';
 import { authenticateRequest } from '@/lib/api';
 import type { NextRequest } from 'next/server';

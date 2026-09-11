@@ -20,8 +20,6 @@ import { NextRequest } from 'next/server';
 import { db } from '@/lib/db';
 import {
   authenticateRequest,
-  requireActiveSessionOrg,
-  type ActiveSessionOrgResult,
 } from '@/lib/api';
 import {
   getOrganizationDeploymentMode,
@@ -35,10 +33,6 @@ export type ControlPlaneResult =
 
 export type ManagedTenantResult =
   | { ok: true; userId: string; email: string; organizationId: string; mode: DeploymentMode }
-  | { ok: false; status: 401 | 403 | 503; code: string };
-
-export type TenantDataResult =
-  | { ok: true; userId: string; email: string; organizationId: string; mode: DeploymentMode; via: 'membership' | 'managed_super_admin' }
   | { ok: false; status: 401 | 403 | 503; code: string };
 
 /**
@@ -86,58 +80,4 @@ export async function requireManagedTenantAccess(
     return { ok: false, status: 403, code: 'TENANT_ACCESS_DENIED_FOR_MODE' };
   }
   return { ok: true, userId: control.userId, email: control.email, organizationId, mode };
-}
-
-/**
- * requireTenantDataAccess — the single choke point for data-plane reads/
- * writes on behalf of web sessions. Grants access when EITHER:
- *   (a) the caller has an active session scoped to the target org
- *       (membership path — any deployment mode), OR
- *   (b) the caller is a DB-verified super_admin AND the target org is MANAGED
- *       (managed_super_admin path).
- * Everything else is denied. Organization identity comes from the verified
- * session or the explicit target id — never from client-supplied org claims.
- */
-export async function requireTenantDataAccess(
-  req: NextRequest,
-  organizationId: string,
-): Promise<TenantDataResult> {
-  const scope: ActiveSessionOrgResult = await requireActiveSessionOrg(req, {
-    allowGlobal: true,
-  }).catch(() => ({ ok: false, status: 401 }) as const);
-  if (!scope.ok) return { ok: false, status: scope.status, code: 'UNAUTHENTICATED' };
-
-  // Path (a): session already scoped to the target org.
-  if (scope.organizationId !== null && scope.organizationId === organizationId) {
-    let mode: DeploymentMode;
-    try {
-      mode = await getOrganizationDeploymentMode(organizationId);
-    } catch {
-      return { ok: false, status: 503, code: 'MODE_UNRESOLVABLE' };
-    }
-    return {
-      ok: true,
-      userId: scope.userId,
-      email: scope.email,
-      organizationId,
-      mode,
-      via: 'membership',
-    };
-  }
-
-  // Path (b): org-less super_admin global scope — MANAGED tenants only.
-  if (scope.organizationId === null && scope.role === 'super_admin') {
-    const managed = await requireManagedTenantAccess(req, organizationId);
-    if (!managed.ok) return managed;
-    return {
-      ok: true,
-      userId: managed.userId,
-      email: managed.email,
-      organizationId,
-      mode: managed.mode,
-      via: 'managed_super_admin',
-    };
-  }
-
-  return { ok: false, status: 403, code: 'TENANT_ACCESS_DENIED' };
 }

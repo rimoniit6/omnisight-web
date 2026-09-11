@@ -10,6 +10,19 @@
  *   org_admin    — Organization-level admin (OrganizationMembership.role)
  *   manager      — Organization-level operational (OrganizationMembership.role)
  *   viewer       — Organization-level read-only (OrganizationMembership.role)
+ *
+ * ─── Manager Granular Permissions (PLANNED — Pending Product Decision) ─────
+ * The Manager role is designed to support configurable granular permissions.
+ * Current implementation uses a fixed default permission set (MANAGER_PERMISSIONS).
+ * Future implementation: Organization Admin will select a Manager and configure
+ * allowed organization-level permissions per user. Server will enforce.
+ *
+ * Architecture requirement: The ROLE_PERMISSIONS map and permission-check helpers
+ * must be designed so individual Manager permissions can later be configured per
+ * user without redesigning the authorization system. The permission type system
+ * (OrganizationPermission) is intentionally exhaustive — all future granular
+ * permissions will be drawn from this existing set. No new permission categories
+ * need to be invented.
  */
 
 // ─── Permission Types ──────────────────────────────────────────────────────

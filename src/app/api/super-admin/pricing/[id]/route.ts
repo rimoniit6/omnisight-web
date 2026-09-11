@@ -110,6 +110,23 @@ export async function DELETE(
     );
   }
 
+  // Prevent deleting the last row for a (plan, deploymentMode) pair.
+  // The Landing Page needs at least one row per combo to show "Not configured"
+  // or actual pricing. Deletion should never remove the placeholder entirely.
+  const sameModeCount = await db.planPricing.count({
+    where: {
+      planId: existing.planId,
+      deploymentMode: existing.deploymentMode,
+    },
+  });
+  if (sameModeCount <= 1) {
+    return apiError(
+      `Cannot delete the last ${existing.deploymentMode} pricing row for "${existing.plan.name}". ` +
+      `Deactivate it (isActive=false) instead — the landing page needs at least one row per deployment mode.`,
+      409,
+    );
+  }
+
   await db.$transaction(async (tx) => {
     await tx.planPricing.delete({ where: { id } });
     await tx.auditLog.create({

@@ -166,30 +166,30 @@ const HEALTH_PREFIX = '/api/health';
 // ─── RBAC rules: prefix -> minimum role (longest prefix wins) ──────────────
 interface RoleRule {
   prefix: string;
-  minRole: 'admin' | 'manager';
+  minRole: 'org_admin' | 'manager';
 }
 const ROLE_RULES: RoleRule[] = [
   // Manager+ read-only settings sub-routes (defense-in-depth: retention
   // policies and monitoring config reveal operational data lifecycles but
   // are read-only). Longest-prefix match wins over the general /api/settings
-  // admin rule below.
+  // org_admin rule below.
   { prefix: '/api/settings/retention', minRole: 'manager' },
   { prefix: '/api/settings/monitoring', minRole: 'manager' },
-  // Admin+ only (super_admin, owner, admin)
-  { prefix: '/api/settings', minRole: 'admin' },
-  { prefix: '/api/organization', minRole: 'admin' },
-  { prefix: '/api/branding/organization', minRole: 'admin' },
-  // Device claims are admin workflows (the Agent
-  // Approvals page is admin-gated in navigation.ts). The list
+  // org_admin+ only (super_admin, org_admin)
+  { prefix: '/api/settings', minRole: 'org_admin' },
+  { prefix: '/api/organization', minRole: 'org_admin' },
+  { prefix: '/api/branding/organization', minRole: 'org_admin' },
+  // Device claims are org_admin workflows (the Agent
+  // Approvals page is org_admin-gated in navigation.ts). The list
   // exposes pending-device identities, so reads must match the
-  // actions' admin gate. The device-owned {id}/cancel path is unaffected:
+  // actions' org_admin gate. The device-owned {id}/cancel path is unaffected:
   // it is proxy-public by design (claim-secret authenticated inside the
   // route) and short-circuits before this RBAC section.
-  { prefix: '/api/device-claims', minRole: 'admin' },
-  { prefix: '/api/auth/users', minRole: 'admin' },
-  { prefix: '/api/ai-provider', minRole: 'admin' },
-  { prefix: '/api/import', minRole: 'admin' },
-  // Manager+ only (super_admin, owner, admin, manager). The audit-logs rule
+  { prefix: '/api/device-claims', minRole: 'org_admin' },
+  { prefix: '/api/auth/users', minRole: 'org_admin' },
+  { prefix: '/api/ai-provider', minRole: 'org_admin' },
+  { prefix: '/api/import', minRole: 'org_admin' },
+  // Manager+ only (super_admin, org_admin, manager). The audit-logs rule
   // covers BOTH the list and the export (longest-prefix wins) — security
   // telemetry (hostnames, employee codes, IPs, admin emails) is not exposed to
   // the lowest-privilege role (S-05).

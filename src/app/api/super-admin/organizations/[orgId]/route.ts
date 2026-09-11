@@ -7,22 +7,22 @@ import { deleteScreenshot, isNotFound } from '@/lib/storage';
 import { log, requestContext } from '@/lib/logger';
 
 /**
- * GET /api/super-admin/organizations/[id]
+ * GET /api/super-admin/organizations/[orgId]
  *
  * View detailed organization information. Super Admin only.
  * Returns full org details with counts for employees, devices, members, projects, etc.
  */
 export async function GET(
   req: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
+  { params }: { params: Promise<{ orgId: string }> }
 ) {
   const adminResult = await requireSuperAdmin(req);
   if (!adminResult.ok) return authError(adminResult);
 
-  const { id } = await params;
+  const { orgId } = await params;
 
   const organization = await prisma.organization.findUnique({
-    where: { id },
+    where: { id: orgId },
     select: {
       id: true,
       name: true,
@@ -36,6 +36,7 @@ export async function GET(
       status: true,
       deploymentMode: true,
       deploymentModeUnresolved: true,
+      screenshotInterval: true,
       trialEndsAt: true,
       createdAt: true,
       updatedAt: true,
@@ -129,7 +130,7 @@ export async function GET(
 }
 
 /**
- * PATCH /api/super-admin/organizations/[id]
+ * PATCH /api/super-admin/organizations/[orgId]
  *
  * Control-plane mutations. Super Admin only (DB-verified).
  * Body: {
@@ -145,14 +146,14 @@ export async function GET(
  */
 export async function PATCH(
   req: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
+  { params }: { params: Promise<{ orgId: string }> }
 ) {
   // P2/P3 #11: DB-verified role for sensitive org lifecycle mutations.
   const adminResult = await requireDbVerifiedRole(req, { requireSuperAdmin: true });
   if (!adminResult.ok) return authError(adminResult);
   const admin = adminResult;
 
-  const { id } = await params;
+  const { orgId } = await params;
 
   let body: Record<string, unknown>;
   try {
@@ -176,7 +177,7 @@ export async function PATCH(
     return apiError('Nothing to update. Provide status and/or deploymentMode', 422);
   }
 
-  const organization = await prisma.organization.findUnique({ where: { id } });
+  const organization = await prisma.organization.findUnique({ where: { id: orgId } });
   if (!organization) {
     return apiError('Organization not found', 404);
   }
@@ -202,7 +203,7 @@ export async function PATCH(
   }
 
   const updated = await prisma.organization.update({
-    where: { id },
+    where: { id: orgId },
     data,
     select: { id: true, name: true, slug: true, status: true, deploymentMode: true, deploymentModeUnresolved: true, updatedAt: true },
   });
@@ -215,10 +216,10 @@ export async function PATCH(
     data: {
       action: 'update',
       resource: 'organization',
-      resourceId: id,
+      resourceId: orgId,
       description: `Organization "${organization.name}" updated: ${changes.join('; ')}`,
       userId: admin.userId,
-      organizationId: id,
+      organizationId: orgId,
     },
   });
 
@@ -226,7 +227,7 @@ export async function PATCH(
 }
 
 /**
- * DELETE /api/super-admin/organizations/[id]
+ * DELETE /api/super-admin/organizations/[orgId]
  *
  * Full tenant deletion (Super Admin only, DB-verified). This is the ONLY
  * route that performs a hard cascade across an entire tenant, so it is
@@ -243,16 +244,16 @@ export async function PATCH(
  */
 export async function DELETE(
   req: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
+  { params }: { params: Promise<{ orgId: string }> }
 ) {
   try {
     const adminResult = await requireDbVerifiedRole(req, { requireSuperAdmin: true });
     if (!adminResult.ok) return authError(adminResult);
     const admin = adminResult;
 
-    const { id } = await params;
+    const { orgId } = await params;
 
-    const organization = await prisma.organization.findUnique({ where: { id } });
+    const organization = await prisma.organization.findUnique({ where: { id: orgId } });
     if (!organization) {
       return apiError('Organization not found', 404);
     }
@@ -265,7 +266,7 @@ export async function DELETE(
     }
 
     if (body.confirmed !== true) {
-      const impact = await getOrganizationDeleteImpact(id);
+      const impact = await getOrganizationDeleteImpact(orgId);
       return NextResponse.json(
         {
           error: 'Organization deletion requires explicit confirmation.',
@@ -278,16 +279,16 @@ export async function DELETE(
 
     // Snapshot the impact + screenshot artifacts BEFORE the transaction so the
     // returned summary is truthful and the storage cleanup has the paths.
-    const impact = await getOrganizationDeleteImpact(id);
+    const impact = await getOrganizationDeleteImpact(orgId);
     const screenshotArtifacts = await prisma.screenshot.findMany({
-      where: { organizationId: id },
+      where: { organizationId: orgId },
       select: { filePath: true, thumbnailPath: true },
     });
 
     await prisma.$transaction(async (tx) => {
       // Leave no live web/agent session pointing at a deleted tenant.
       await tx.userSession.updateMany({
-        where: { OR: [{ organizationId: id }, { activeOrganizationId: id }], revokedAt: null },
+        where: { OR: [{ organizationId: orgId }, { activeOrganizationId: orgId }], revokedAt: null },
         data: { revokedAt: new Date() },
       });
 
@@ -297,14 +298,14 @@ export async function DELETE(
         data: {
           action: 'delete',
           resource: 'organization',
-          resourceId: id,
+          resourceId: orgId,
           description: `Organization "${organization.name}" (${organization.slug}) permanently deleted by Super Admin ${admin.email}. Impact: ${impact.totalImpacted} rows across ${impact.rows.length} table(s). Memberships for user accounts and prior audit history are preserved.`,
           userId: admin.userId,
-          organizationId: id,
+          organizationId: orgId,
         },
       });
 
-      await tx.organization.delete({ where: { id } });
+      await tx.organization.delete({ where: { id: orgId } });
     });
 
     // Best-effort storage cleanup for the deleted screenshot rows. Original +
@@ -314,19 +315,19 @@ export async function DELETE(
     for (const { filePath, thumbnailPath } of screenshotArtifacts) {
       for (const artifactPath of [thumbnailPath, filePath].filter((p): p is string => Boolean(p))) {
         try {
-          await deleteScreenshot(id, artifactPath);
+          await deleteScreenshot(orgId, artifactPath);
           filesRemoved++;
         } catch (error) {
-          if (!isNotFound(error)) log.warn('sa.orgs.delete.storage', { error: String(error), organizationId: id });
+          if (!isNotFound(error)) log.warn('sa.orgs.delete.storage', { error: String(error), organizationId: orgId });
         }
       }
     }
 
-    log.info('sa.orgs.delete', { organizationId: id, totalImpacted: impact.totalImpacted, filesRemoved });
+    log.info('sa.orgs.delete', { organizationId: orgId, totalImpacted: impact.totalImpacted, filesRemoved });
 
     return apiSuccess({
       deleted: true,
-      organizationId: id,
+      organizationId: orgId,
       impact,
       filesRemoved,
       preserved: {

@@ -56,6 +56,7 @@ export async function GET(req: NextRequest) {
         deploymentMode: true,
         deploymentModeUnresolved: true,
         trialEndsAt: true,
+        activeDeviceCount: true,
         createdAt: true,
         updatedAt: true,
         subscription: {
@@ -64,12 +65,15 @@ export async function GET(req: NextRequest) {
             status: true,
             startDate: true,
             endDate: true,
-            plan: { select: { id: true, name: true, priceMonthly: true, currency: true } },
+            billingPeriod: true,
+            deviceQuantity: true,
+            plan: { select: { id: true, name: true, priceMonthly: true, currency: true, maxDevices: true } },
+            planId: true,
             // Manual-payment ledger — newest invoice only (list view).
             invoices: {
               orderBy: { createdAt: 'desc' },
               take: 1,
-              select: { id: true, status: true, amount: true, currency: true, paymentMethod: true },
+              select: { id: true, status: true, amount: true, currency: true, paymentMethod: true, paidAt: true },
             },
           },
         },
@@ -91,14 +95,59 @@ export async function GET(req: NextRequest) {
     prisma.organization.count({ where }),
   ]);
 
-  return apiSuccess({
-    data: organizations.map((o: typeof organizations[number]) => ({
+  // Enrich with device entitlement + outstanding dues per org.
+  const enriched = await Promise.all(organizations.map(async (o) => {
+    const deviceCount = o.activeDeviceCount;
+
+    // Resolve included devices from subscription → PlanPricing → Plan.maxDevices.
+    let includedDevices = o.subscription?.plan.maxDevices ?? 0;
+    if (o.subscription?.id && o.subscription.billingPeriod) {
+      const pricing = await prisma.planPricing.findUnique({
+        where: {
+          planId_deploymentMode_billingPeriod: {
+            planId: o.subscription.planId,
+            deploymentMode: o.deploymentMode,
+            billingPeriod: o.subscription.billingPeriod as 'MONTHLY' | 'YEARLY',
+          },
+        },
+        select: { includedDevices: true, additionalDevicePrice: true },
+      });
+      if (pricing) {
+        includedDevices = pricing.includedDevices;
+      }
+    }
+
+    const extraDevices = Math.max(0, deviceCount - includedDevices);
+
+    // Outstanding dues from unpaid invoices.
+    const unpaidInvoices = await prisma.invoice.findMany({
+      where: { organizationId: o.id, status: { in: ['PENDING', 'OVERDUE'] } },
+      select: { amount: true, currency: true },
+    });
+    const outstandingAmount = unpaidInvoices.reduce((sum, inv) => sum + inv.amount, 0);
+    const outstandingCurrency = unpaidInvoices[0]?.currency ?? o.subscription?.plan.currency ?? 'BDT';
+
+    // Days remaining.
+    const daysRemaining = o.subscription?.endDate
+      ? Math.max(0, Math.ceil((o.subscription.endDate.getTime() - Date.now()) / (1000 * 60 * 60 * 24)))
+      : null;
+
+    return {
       ...o,
       memberCount: o._count.memberships,
       employeeCount: o._count.employees,
-      deviceCount: o._count.devices,
+      deviceCount,
+      includedDevices,
+      extraDevices,
+      outstandingAmount,
+      outstandingCurrency,
+      daysRemaining,
       _count: undefined,
-    })),
+    };
+  }));
+
+  return apiSuccess({
+    data: enriched,
     pagination: {
       page,
       pageSize,

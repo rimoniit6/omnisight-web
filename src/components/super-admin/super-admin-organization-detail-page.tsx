@@ -107,6 +107,7 @@ interface OrganizationDetail {
   status: string;
   deploymentMode: 'MANAGED' | 'CUSTOMER_DB' | 'PRIVATE';
   deploymentModeUnresolved: boolean;
+  screenshotInterval: number;
   trialEndsAt: string | null;
   createdAt: string;
   memberCount: number;
@@ -384,6 +385,43 @@ export function SuperAdminOrganizationDetailPage() {
       toast.error('Network error. Please try again.');
     } finally {
       setActivatingSub(false);
+    }
+  };
+
+  // ─── Screenshot frequency (MANAGED orgs only) ────────────────────────
+  const [ssInterval, setSsInterval] = useState<number>(5);
+  const [ssLoaded, setSsLoaded] = useState(false);
+  const [ssSaving, setSsSaving] = useState(false);
+
+  // Seed the interval from org data once loaded.
+  useEffect(() => {
+    if (orgData && !ssLoaded) {
+      setSsInterval(orgData.screenshotInterval);
+      setSsLoaded(true);
+    }
+  }, [orgData, ssLoaded]);
+
+  const saveScreenshotInterval = async () => {
+    if (!orgId || ssSaving) return;
+    setSsSaving(true);
+    try {
+      const res = await fetch(`/api/admin/organizations/${orgId}/settings`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify({ screenshotInterval: ssInterval }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        toast.error(json.error ?? 'Failed to save screenshot interval');
+        return;
+      }
+      toast.success('Screenshot interval saved.');
+      refetchOrg();
+    } catch {
+      toast.error('Network error. Please try again.');
+    } finally {
+      setSsSaving(false);
     }
   };
 
@@ -976,6 +1014,39 @@ export function SuperAdminOrganizationDetailPage() {
                 </p>
               </div>
             </div>
+
+            {/* Screenshot frequency — MANAGED orgs only (§75.3) */}
+            {orgData.deploymentMode === 'MANAGED' && (
+              <div className="mt-4 border-t border-border/60 pt-4">
+                <div className="flex items-end gap-3">
+                  <div className="space-y-1">
+                    <label htmlFor="ss-interval" className="text-xs text-muted-foreground">
+                      Screenshot Frequency (minutes)
+                    </label>
+                    <Input
+                      id="ss-interval"
+                      type="number"
+                      min={1}
+                      max={1440}
+                      value={ssInterval}
+                      onChange={(e) => {
+                        const n = parseInt(e.target.value, 10);
+                        setSsInterval(Number.isNaN(n) ? 1 : Math.max(1, Math.min(1440, n)));
+                      }}
+                      className="w-28"
+                    />
+                  </div>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={saveScreenshotInterval}
+                    disabled={ssSaving || ssInterval === orgData.screenshotInterval}
+                  >
+                    {ssSaving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : 'Save'}
+                  </Button>
+                </div>
+              </div>
+            )}
 
             {/* Subscription period + license validity + lifecycle action */}
             <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-border/60 pt-4">

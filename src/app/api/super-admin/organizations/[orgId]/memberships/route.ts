@@ -3,28 +3,28 @@ import { db as prisma } from '@/lib/db';
 import { requireDbVerifiedRole, apiError, apiSuccess, authError, parseJsonBody, BodyParseError, validatePagination } from '@/lib/api';
 
 /**
- * GET /api/super-admin/organizations/[id]/memberships
+ * GET /api/super-admin/organizations/[orgId]/memberships
  *
  * View memberships for any organization. Super Admin only.
  * No membership required — platform-level authority.
  */
 export async function GET(
   req: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
+  { params }: { params: Promise<{ orgId: string }> }
 ) {
   const adminResult = await requireDbVerifiedRole(req, { requireSuperAdmin: true });
   if (!adminResult.ok) return authError(adminResult);
 
-  const { id } = await params;
+  const { orgId } = await params;
 
-  const org = await prisma.organization.findUnique({ where: { id }, select: { id: true } });
+  const org = await prisma.organization.findUnique({ where: { id: orgId }, select: { id: true } });
   if (!org) return apiError('Organization not found', 404);
 
   const { searchParams } = new URL(req.url);
   const pagination = validatePagination(searchParams, { defaultPageSize: 20, maxPageSize: 200 });
   if (!pagination.ok) return apiError(pagination.error, pagination.status);
 
-  const where: Record<string, unknown> = { organizationId: id };
+  const where: Record<string, unknown> = { organizationId: orgId };
 
   const [memberships, total] = await Promise.all([
     prisma.organizationMembership.findMany({
@@ -53,22 +53,22 @@ export async function GET(
 }
 
 /**
- * POST /api/super-admin/organizations/[id]/memberships
+ * POST /api/super-admin/organizations/[orgId]/memberships
  *
  * Add a user to an organization. Super Admin only (DB-verified).
  * Body: { userId: string, role: string }
  */
 export async function POST(
   req: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
+  { params }: { params: Promise<{ orgId: string }> }
 ) {
   const adminResult = await requireDbVerifiedRole(req, { requireSuperAdmin: true });
   if (!adminResult.ok) return authError(adminResult);
   const admin = adminResult;
 
-  const { id } = await params;
+  const { orgId } = await params;
 
-  const org = await prisma.organization.findUnique({ where: { id }, select: { id: true, status: true } });
+  const org = await prisma.organization.findUnique({ where: { id: orgId }, select: { id: true, status: true } });
   if (!org) return apiError('Organization not found', 404);
 
   let body: Record<string, unknown>;
@@ -94,9 +94,9 @@ export async function POST(
   // Upsert membership (idempotent)
   const membership = await prisma.organizationMembership.upsert({
     where: {
-      userId_organizationId: { userId, organizationId: id },
+      userId_organizationId: { userId, organizationId: orgId },
     },
-    create: { userId, organizationId: id, role, status: 'ACTIVE' },
+    create: { userId, organizationId: orgId, role, status: 'ACTIVE' },
     update: { role, status: 'ACTIVE' },
     include: {
       user: { select: { id: true, email: true, name: true } },
@@ -111,7 +111,7 @@ export async function POST(
       resourceId: membership.id,
       description: `Super Admin added ${user.email} to organization with role ${role}`,
       userId: admin.userId,
-      organizationId: id,
+      organizationId: orgId,
     },
   });
 

@@ -4,21 +4,21 @@ import { apiError, apiSuccess, validatePagination } from '@/lib/api';
 import { requireManagedTenantAccess } from '@/lib/control-plane';
 
 /**
- * GET /api/super-admin/organizations/[id]/audit-logs
+ * GET /api/super-admin/organizations/[orgId]/audit-logs
  *
  * View audit logs for a MANAGED organization. Super Admin only.
  * Phase 2 privacy: CUSTOMER_DB / PRIVATE organizations are rejected with 403.
  */
 export async function GET(
   req: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
+  { params }: { params: Promise<{ orgId: string }> }
 ) {
-  const { id } = await params;
+  const { orgId } = await params;
 
-  const org = await prisma.organization.findUnique({ where: { id }, select: { id: true } });
+  const org = await prisma.organization.findUnique({ where: { id: orgId }, select: { id: true } });
   if (!org) return apiError('Organization not found', 404);
 
-  const access = await requireManagedTenantAccess(req, id);
+  const access = await requireManagedTenantAccess(req, orgId);
   if (!access.ok) {
     if (access.status === 401) return apiError('Unauthorized. Please sign in.', 401);
     return apiError(
@@ -36,7 +36,7 @@ export async function GET(
   const action = searchParams.get('action') || '';
   const resource = searchParams.get('resource') || '';
 
-  const where: Record<string, unknown> = { organizationId: id };
+  const where: Record<string, unknown> = { organizationId: orgId };
   if (action) where.action = action;
   if (resource) where.resource = resource;
 

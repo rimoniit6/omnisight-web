@@ -4,7 +4,7 @@ import { apiError, apiSuccess, validatePagination } from '@/lib/api';
 import { requireManagedTenantAccess } from '@/lib/control-plane';
 
 /**
- * GET /api/super-admin/organizations/[id]/employees
+ * GET /api/super-admin/organizations/[orgId]/employees
  *
  * List employees for a MANAGED organization. Super Admin only.
  * Phase 2 privacy: CUSTOMER_DB / PRIVATE organizations are rejected with
@@ -13,15 +13,15 @@ import { requireManagedTenantAccess } from '@/lib/control-plane';
  */
 export async function GET(
   req: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
+  { params }: { params: Promise<{ orgId: string }> }
 ) {
-  const { id } = await params;
+  const { orgId } = await params;
 
   // Verify organization exists (conceal nothing: 404 before authz).
-  const org = await prisma.organization.findUnique({ where: { id }, select: { id: true } });
+  const org = await prisma.organization.findUnique({ where: { id: orgId }, select: { id: true } });
   if (!org) return apiError('Organization not found', 404);
 
-  const access = await requireManagedTenantAccess(req, id);
+  const access = await requireManagedTenantAccess(req, orgId);
   if (!access.ok) {
     if (access.status === 401) return apiError('Unauthorized. Please sign in.', 401);
     return apiError(
@@ -39,7 +39,7 @@ export async function GET(
   const search = searchParams.get('search') || '';
   const status = searchParams.get('status') || '';
 
-  const where: Record<string, unknown> = { organizationId: id };
+  const where: Record<string, unknown> = { organizationId: orgId };
   if (status && ['active', 'inactive', 'archived'].includes(status)) {
     where.status = status;
   }

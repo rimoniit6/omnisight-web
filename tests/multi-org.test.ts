@@ -308,7 +308,7 @@ test('MO-5: Organization settings are isolated between orgs', async () => {
 // ─── MO-6: Super Admin org management ────────────────────────────────────────
 
 test('MO-6: Super Admin can suspend and reactivate organizations', async () => {
-  const suspendApi = await import('../src/app/api/super-admin/organizations/[id]/route');
+  const suspendApi = await import('../src/app/api/super-admin/organizations/[orgId]/route');
 
   // Suspend Org A
   const suspendReq = new NextRequest(`http://localhost:3000/api/super-admin/organizations/${orgA.id}`, {
@@ -320,7 +320,7 @@ test('MO-6: Super Admin can suspend and reactivate organizations', async () => {
     body: JSON.stringify({ status: 'paused' }),
   });
 
-  const suspendRes = await suspendApi.PATCH(suspendReq, { params: Promise.resolve({ id: orgA.id }) });
+  const suspendRes = await suspendApi.PATCH(suspendReq, { params: Promise.resolve({ orgId: orgA.id }) });
   assert.equal(suspendRes.status, 200, 'Suspend should succeed');
 
   const orgAfterSuspend = await db.organization.findUnique({ where: { id: orgA.id } });
@@ -336,7 +336,7 @@ test('MO-6: Super Admin can suspend and reactivate organizations', async () => {
     body: JSON.stringify({ status: 'active' }),
   });
 
-  const reactivateRes = await suspendApi.PATCH(reactivateReq, { params: Promise.resolve({ id: orgA.id }) });
+  const reactivateRes = await suspendApi.PATCH(reactivateReq, { params: Promise.resolve({ orgId: orgA.id }) });
   assert.equal(reactivateRes.status, 200, 'Reactivate should succeed');
 
   const orgAfterReactivate = await db.organization.findUnique({ where: { id: orgA.id } });

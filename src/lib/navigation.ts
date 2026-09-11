@@ -14,7 +14,7 @@
 import type { PageType } from '@/lib/store';
 import { hasRolePermission } from '@/lib/auth';
 
-export type NavMinRole = 'viewer' | 'manager' | 'admin' | 'org_admin' | 'super_admin';
+export type NavMinRole = 'viewer' | 'manager' | 'org_admin' | 'super_admin';
 
 export const PAGE_MIN_ROLE: Record<PageType, NavMinRole> = {
   // viewer — monitoring / analytics surface
@@ -38,8 +38,8 @@ export const PAGE_MIN_ROLE: Record<PageType, NavMinRole> = {
   anomalies: 'viewer',
   projects: 'viewer',
   sentiment: 'viewer',
-  // admin+ — audio transcription management
-  audio: 'admin',
+  // org_admin+ — audio transcription management
+  audio: 'org_admin',
   // manager+ — consent exposes org-wide employee PII (matches /api/consent)
   consent: 'manager',
   // manager+
@@ -67,8 +67,8 @@ export const PAGE_MIN_ROLE: Record<PageType, NavMinRole> = {
   // Control-plane audit log viewer — super_admin only. Reached from Overview
   // (Recent Activity → View Audit Logs); NOT a primary sidebar item.
   'sa-audit': 'super_admin',
-  // Branding: admin+ for org branding, super_admin for platform branding
-  branding: 'admin',
+  // Branding: org_admin+ for org branding, super_admin for platform branding
+  branding: 'org_admin',
   // URL-routed external page (rendered outside the SPA shell)
   billing: 'org_admin',
   // Organization Admin data infrastructure configuration (DB + Storage)

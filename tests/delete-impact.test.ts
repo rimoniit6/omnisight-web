@@ -45,8 +45,8 @@ type DbModule = typeof import('../src/lib/db');
 let db: DbModule['db'];
 let signJWT: (payload: { userId: string; email: string; role: string; organizationId?: string }) => Promise<string>;
 
-type OrgIdApi = typeof import('../src/app/api/super-admin/organizations/[id]/route');
-type OrgImpactApi = typeof import('../src/app/api/super-admin/organizations/[id]/delete-impact/route');
+type OrgIdApi = typeof import('../src/app/api/super-admin/organizations/[orgId]/route');
+type OrgImpactApi = typeof import('../src/app/api/super-admin/organizations/[orgId]/delete-impact/route');
 type AdminImpactApi = typeof import('../src/app/api/admin/delete-impact/route');
 type DeviceIdApi = typeof import('../src/app/api/devices/[id]/route');
 type EmployeeIdApi = typeof import('../src/app/api/employees/[id]/route');
@@ -65,8 +65,8 @@ before(async () => {
   signJWT = (await import('../src/lib/auth')).signJWT;
 
   [orgIdApi, orgImpactApi, adminImpactApi, deviceIdApi, employeeIdApi, memberIdApi] = await Promise.all([
-    import('../src/app/api/super-admin/organizations/[id]/route'),
-    import('../src/app/api/super-admin/organizations/[id]/delete-impact/route'),
+    import('../src/app/api/super-admin/organizations/[orgId]/route'),
+    import('../src/app/api/super-admin/organizations/[orgId]/delete-impact/route'),
     import('../src/app/api/admin/delete-impact/route'),
     import('../src/app/api/devices/[id]/route'),
     import('../src/app/api/employees/[id]/route'),
@@ -175,7 +175,7 @@ test('DI-01: Super Admin sees a live-counted org delete impact preview', async (
     data: { action: 'create', resource: 'organization', resourceId: org.id, description: 'org created', organizationId: org.id },
   });
 
-  const res = await orgImpactApi.GET(req(sa.token), { params: Promise.resolve({ id: org.id }) });
+  const res = await orgImpactApi.GET(req(sa.token), { params: Promise.resolve({ orgId: org.id }) });
   const body = await res.json();
   assert.equal(res.status, 200, JSON.stringify(body));
   assert.equal(body.impact.entity, 'organization');
@@ -197,11 +197,11 @@ test('DI-02: org delete preview + DELETE are Super-Admin only', async () => {
   const org = await seedOrg('di02-org');
   const admin = await makeOrgAdmin(org.id, 'di02-admin@test.local');
 
-  const preview = await orgImpactApi.GET(req(admin.token), { params: Promise.resolve({ id: org.id }) });
+  const preview = await orgImpactApi.GET(req(admin.token), { params: Promise.resolve({ orgId: org.id }) });
   assert.equal(preview.status, 403, 'non-SA must not preview tenant deletion');
 
   const del = await orgIdApi.DELETE(req(admin.token, { method: 'DELETE', body: { confirmed: true } }), {
-    params: Promise.resolve({ id: org.id }),
+    params: Promise.resolve({ orgId: org.id }),
   });
   assert.equal(del.status, 403, 'non-SA must not delete an organization');
   assert.ok(await db.organization.findUnique({ where: { id: org.id } }), 'org untouched');
@@ -213,7 +213,7 @@ test('DI-03: org DELETE without confirmed:true returns 409 with the impact', asy
   await seedEmployee(org.id, 'DI03-E');
 
   const res = await orgIdApi.DELETE(req(sa.token, { method: 'DELETE', body: {} }), {
-    params: Promise.resolve({ id: org.id }),
+    params: Promise.resolve({ orgId: org.id }),
   });
   const body = await res.json();
   assert.equal(res.status, 409, JSON.stringify(body));
@@ -235,7 +235,7 @@ test('DI-04: confirmed org DELETE cascades tenant data, keeps users + audit hist
   });
 
   const res = await orgIdApi.DELETE(req(sa.token, { method: 'DELETE', body: { confirmed: true } }), {
-    params: Promise.resolve({ id: org.id }),
+    params: Promise.resolve({ orgId: org.id }),
   });
   const body = await res.json();
   assert.equal(res.status, 200, JSON.stringify(body));

@@ -16,6 +16,9 @@ function serializeSubscription(
     startDate: Date;
     endDate: Date | null;
     trialEndDate: Date | null;
+    billingPeriod: string | null;
+    deviceQuantity: number | null;
+    priceSnapshot: unknown;
     plan: {
       id: string;
       name: string;
@@ -37,6 +40,8 @@ function serializeSubscription(
     endDate: sub.endDate ? sub.endDate.toISOString() : null,
     trialEndDate: sub.trialEndDate ? sub.trialEndDate.toISOString() : null,
     trialEndsAt: orgTrialEndsAt ? orgTrialEndsAt.toISOString() : null,
+    billingPeriod: sub.billingPeriod,
+    deviceQuantity: sub.deviceQuantity,
     plan: {
       id: sub.plan.id,
       name: sub.plan.name,
@@ -77,7 +82,7 @@ export async function GET(
 
     const org = await db.organization.findUnique({
       where: { id: orgId },
-      select: { trialEndsAt: true, activeDeviceCount: true },
+      select: { trialEndsAt: true, activeDeviceCount: true, deploymentMode: true },
     });
     if (!org) return apiError('Organization not found', 404);
 
@@ -97,12 +102,89 @@ export async function GET(
       ? Math.max(0, Math.ceil((org.trialEndsAt.getTime() - Date.now()) / (1000 * 60 * 60 * 24)))
       : 0;
 
+    // Days remaining on subscription (0 when none/expired).
+    const daysRemaining = current?.endDate
+      ? Math.max(0, Math.ceil((current.endDate.getTime() - Date.now()) / (1000 * 60 * 60 * 24)))
+      : null;
+
+    // Latest invoice for payment info.
+    const latestInvoice = current
+      ? await db.invoice.findFirst({
+          where: { subscriptionId: current.id },
+          orderBy: { createdAt: 'desc' },
+          select: {
+            id: true,
+            invoiceNumber: true,
+            amount: true,
+            currency: true,
+            status: true,
+            paidAt: true,
+            paymentMethod: true,
+            dueDate: true,
+          },
+        })
+      : null;
+
+    // Outstanding dues (unpaid invoices).
+    const outstandingInvoices = current
+      ? await db.invoice.findMany({
+          where: { subscriptionId: current.id, status: { in: ['PENDING', 'OVERDUE'] } },
+          select: { amount: true, currency: true },
+        })
+      : [];
+    const outstandingAmount = outstandingInvoices.reduce((sum, inv) => sum + inv.amount, 0);
+    const outstandingCurrency = outstandingInvoices[0]?.currency ?? current?.plan.currency ?? 'BDT';
+
+    // PlanPricing for device entitlement info.
+    let planPricing = null;
+    if (current && current.billingPeriod) {
+      planPricing = await db.planPricing.findUnique({
+        where: {
+          planId_deploymentMode_billingPeriod: {
+            planId: current.planId,
+            deploymentMode: org.deploymentMode,
+            billingPeriod: current.billingPeriod as 'MONTHLY' | 'YEARLY',
+          },
+        },
+        select: {
+          includedDevices: true,
+          additionalDevicePrice: true,
+          basePrice: true,
+          currency: true,
+        },
+      });
+    }
+
+    // Device overage calculation.
+    const includedDevices = planPricing?.includedDevices ?? current?.deviceQuantity ?? current?.plan.maxDevices ?? 0;
+    const deviceCount = org.activeDeviceCount;
+    const extraDevices = Math.max(0, deviceCount - includedDevices);
+    const extraDevicePrice = planPricing?.additionalDevicePrice ?? 0;
+    const overageAmount = extraDevices * extraDevicePrice;
+
     return NextResponse.json({
       subscription: current ? serializeSubscription(current, org.trialEndsAt) : null,
       isOnTrial: org.trialEndsAt !== null && org.trialEndsAt > new Date(),
       trialEndsAt: org.trialEndsAt ? org.trialEndsAt.toISOString() : null,
       trialRemainingDays,
       activeDeviceCount: org.activeDeviceCount,
+      daysRemaining,
+      latestInvoice,
+      outstandingAmount,
+      outstandingCurrency,
+      planPricing: planPricing ? {
+        includedDevices: planPricing.includedDevices,
+        additionalDevicePrice: planPricing.additionalDevicePrice,
+        basePrice: planPricing.basePrice,
+        currency: planPricing.currency,
+      } : null,
+      deviceEntitlement: {
+        includedDevices,
+        activeDeviceCount: deviceCount,
+        extraDevices,
+        extraDevicePrice,
+        overageAmount,
+      },
     });
   } catch (error) {
     log.error('api.org.subscription.get', { error: String(error) }, requestContext(req));

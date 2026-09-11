@@ -21,6 +21,8 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { PdfDownloadButton } from '@/components/reports/pdf-download-button';
 import { pushUnique } from '@/lib/live-ticker';
 import { format } from 'date-fns';
+import { useCurrentUser } from '@/hooks/use-current-user';
+import { SuspensionScreen } from '@/components/suspension-screen';
 
 // Dashboard response type — matches the API response shape from /api/dashboard
 export type DashboardData = {
@@ -103,6 +105,14 @@ const fadeVariants = {
 const TICKER_MAX = 3;
 
 export function DashboardPage() {
+  const { org } = useCurrentUser();
+
+  // Server-side enforcement blocks suspended orgs at the API level.
+  // This client-side check provides the user-facing suspension screen.
+  if (org && org.status !== 'active') {
+    return <SuspensionScreen />;
+  }
+
   const { data, isLoading, error } = useQuery<DashboardData>({
     queryKey: ['dashboard'],
     queryFn: async () => {

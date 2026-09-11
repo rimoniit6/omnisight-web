@@ -31,11 +31,11 @@ const ROOT = resolve(__dirname, '..');
 const DETAIL_SRC = resolve(ROOT, 'src/components/super-admin/super-admin-organization-detail-page.tsx');
 const MEMBERS_ROUTE = resolve(ROOT, 'src/app/api/organizations/[orgId]/members/route.ts');
 const MEMBER_ID_ROUTE = resolve(ROOT, 'src/app/api/organizations/[orgId]/members/[memberId]/route.ts');
-const EMPLOYEES_API = resolve(ROOT, 'src/app/api/super-admin/organizations/[id]/employees/route.ts');
-const DEVICES_API = resolve(ROOT, 'src/app/api/super-admin/organizations/[id]/devices/route.ts');
-const PROJECTS_API = resolve(ROOT, 'src/app/api/super-admin/organizations/[id]/projects/route.ts');
-const AUDIT_LOGS_API = resolve(ROOT, 'src/app/api/super-admin/organizations/[id]/audit-logs/route.ts');
-const MEMBERSHIPS_API = resolve(ROOT, 'src/app/api/super-admin/organizations/[id]/memberships/route.ts');
+const EMPLOYEES_API = resolve(ROOT, 'src/app/api/super-admin/organizations/[orgId]/employees/route.ts');
+const DEVICES_API = resolve(ROOT, 'src/app/api/super-admin/organizations/[orgId]/devices/route.ts');
+const PROJECTS_API = resolve(ROOT, 'src/app/api/super-admin/organizations/[orgId]/projects/route.ts');
+const AUDIT_LOGS_API = resolve(ROOT, 'src/app/api/super-admin/organizations/[orgId]/audit-logs/route.ts');
+const MEMBERSHIPS_API = resolve(ROOT, 'src/app/api/super-admin/organizations/[orgId]/memberships/route.ts');
 
 let detailSrc: string;
 

@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
-import { authenticateRequest, getSessionOrg, requireManagerOrg, authError } from '@/lib/api';
-import { hasRolePermission } from '@/lib/auth';
+import { requireManagerOrg, requireActiveSessionOrg, authError } from '@/lib/api';
 import {
   MONITORING_KEYS,
   validateMonitoringValue,
@@ -70,19 +69,14 @@ export async function GET(req: NextRequest) {
   }
 }
 
-// PUT /api/settings/monitoring — update one monitoring setting (admin+).
+// PUT /api/settings/monitoring — update one monitoring setting (org_admin+).
 // Validated against the typed registry, tenant-scoped, and audited.
 export async function PUT(req: NextRequest) {
   try {
-    const auth = await authenticateRequest(req);
-    if (!auth) {
-      return NextResponse.json({ error: 'Unauthorized. Please sign in.' }, { status: 401 });
+    const auth = await requireActiveSessionOrg(req, { minRole: 'org_admin' });
+    if (!auth.ok) {
+      return authError(auth);
     }
-    if (!hasRolePermission(auth.role, 'admin')) {
-      return NextResponse.json({ error: 'Insufficient permissions' }, { status: 403 });
-    }
-    const org = await getSessionOrg(req);
-    if (!org) return NextResponse.json({ error: 'No organization found' }, { status: 404 });
 
     const body = await req.json();
     const { key, value } = body as { key?: string; value?: unknown };
@@ -105,6 +99,9 @@ export async function PUT(req: NextRequest) {
       );
     }
 
+    // organizationId is guaranteed non-null here because minRole was specified.
+    const orgId = auth.organizationId!;
+
     // Central typed validation: booleans, whole numbers in range, HH:MM times.
     const validation = validateMonitoringValue(key as MonitoringKey, value);
     if (!validation.ok) {
@@ -113,9 +110,9 @@ export async function PUT(req: NextRequest) {
 
     const setting = await db.$transaction(async (tx) => {
       const upserted = await tx.organizationSetting.upsert({
-        where: { organizationId_key: { organizationId: org.id, key } },
+        where: { organizationId_key: { organizationId: orgId, key } },
         update: { value: validation.value, category: 'monitoring' },
-        create: { organizationId: org.id, key, value: validation.value, category: 'monitoring' },
+        create: { organizationId: orgId, key, value: validation.value, category: 'monitoring' },
       });
       await tx.auditLog.create({
         data: {
@@ -124,7 +121,7 @@ export async function PUT(req: NextRequest) {
           resourceId: upserted.id,
           description: `Agent monitoring setting ${key} set to ${validation.value} by ${auth.email}`,
           userId: auth.userId,
-          organizationId: org.id,
+          organizationId: orgId,
         },
       });
       return upserted;

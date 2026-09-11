@@ -2012,6 +2012,70 @@ Every privileged API route must independently verify:
 6. Subscription eligibility where applicable
 7. Service-model eligibility where applicable
 
+## 74.1 Two-Layer Authorization Model
+
+OmniSight has two distinct authorization layers:
+
+```text
+Platform Layer:   Super Admin (global, cross-organization)
+Organization Layer: Org Admin, Manager, Viewer (per-organization)
+```
+
+The existing RBAC and permission architecture in `src/lib/permissions.ts`, `src/lib/org-members.ts`, `src/lib/navigation.ts`, and `src/lib/auth.ts` is the single source of truth for all authorization decisions.
+
+No custom authorization framework, parallel permission system, or external RBAC provider may be introduced.
+
+## 74.2 Canonical Organization Roles
+
+The canonical per-organization membership roles are:
+
+```text
+org_admin   — Organization-level admin (full management)
+manager     — Organization-level operational (configurable granular permissions — see §74.3)
+viewer      — Organization-level read-only
+```
+
+Legacy role aliases (`admin`, `owner`) may exist in the database for backward compatibility and are mapped to `org_admin` level in the role hierarchy. No new code may introduce uses of legacy `admin` or `owner` roles.
+
+`super_admin` is a global platform role and is never a per-organization membership value.
+
+## 74.3 Manager Granular Permissions — PLANNED CAPABILITY
+
+The Manager role is designed to support configurable granular permissions in the future.
+
+**Current state:** Manager has a fixed default permission set defined in `ROLE_PERMISSIONS['manager']`.
+
+**Future state:** Organization Admin will be able to select a Manager and configure allowed organization-level permissions per user. Server will enforce configured permissions.
+
+**Implementation requirement:** The permission architecture must be designed so individual Manager permissions can later be configured per user without redesigning the authorization system. This is a Product Decision that is intentionally NOT finalized yet.
+
+**Constraints for current implementation:**
+
+* Do NOT invent or permanently lock a Manager checkbox list now
+* Record it as `Pending Product Decision`
+* Do NOT remove existing Manager permissions
+* Do NOT invent new permission categories
+* The existing default Manager permission behavior remains unchanged
+* Architecture must be extensible for future per-user Manager overrides
+
+## 74.4 Platform Permission Isolation
+
+Organization users must NEVER receive Super Admin / platform permissions.
+
+`super_admin` is assigned only via `AppUser.role` (platform-level). It is never assigned as a per-organization membership role.
+
+Platform permissions (`platform.*`) are granted only to `super_admin` via `PLATFORM_PERMISSIONS` in `src/lib/permissions.ts`.
+
+## 74.5 Security Boundary Rules
+
+* Super Admin platform permissions cannot be granted to organization users
+* Viewer cannot gain write/delete/configuration permissions
+* Manager cannot cross organization boundaries
+* Organization Admin cannot access another organization's data
+* Customer-owned data remains customer-scoped
+* All authorization decisions affecting protected data/actions are enforced server-side
+* Existing tenant-isolation protections and tests remain intact
+
 ---
 
 # 75. RBAC
@@ -2019,18 +2083,71 @@ Every privileged API route must independently verify:
 The canonical role hierarchy is:
 
 ```text
-SUPER_ADMIN
+SUPER_ADMIN (level 50) — Platform-level, global
 
-ORGANIZATION
-├── ORGANIZATION_ADMIN
-├── MANAGER
-├── VIEWER
-└── EMPLOYEE
+ORGANIZATION (per-organization membership)
+├── ORGANIZATION_ADMIN (level 35)
+├── MANAGER (level 20)
+└── VIEWER (level 10)
 ```
 
-Role names must be centralized.
+Role names must be centralized in `src/lib/org-members.ts`.
 
 Permission logic must not be duplicated inconsistently across pages.
+
+The `ROLE_PERMISSIONS` map in `src/lib/permissions.ts` is the single source of truth for role-to-permission mapping.
+
+Navigation permission gates in `src/lib/navigation.ts` and the access matrix in `src/lib/access-matrix.ts` must remain consistent with `ROLE_PERMISSIONS`.
+
+## 75.1 Role Assignment Rules
+
+* An actor may only assign a role at or below their own level (no privilege escalation)
+* `super_admin` may assign any non-super_admin role
+* `org_admin` may assign `org_admin`, `manager`, or `viewer`
+* `manager` may NOT assign any role (no member-management permission)
+* `viewer` may NOT assign any role
+
+## 75.2 DB-Verified Role for Sensitive Mutations
+
+For highly privileged operations (role changes, membership management, org status changes), the actor's role is verified from the DATABASE, not from the JWT. This closes the window where a revoked role in the DB is still accepted because the JWT has not expired yet.
+
+* `requireDbVerifiedRole()` — DB-verified role check
+* `requireMembershipAdmin()` — DB-verified membership management
+* `resolveActorDbRole()` — DB-verified role for privilege-elevation guards
+
+## 75.3 Monitoring Ownership by Deployment Mode
+
+Screenshot monitoring configuration ownership depends on the deployment mode.
+
+### OmniSight-Managed / Managed Organization
+
+* Screenshot monitoring is controlled by Super Admin
+* Screenshot frequency is organization-specific (`Organization.screenshotInterval`)
+* Super Admin may configure a frequency more frequent than the package default, subject to valid system limits
+* Organization Admin may enable/disable screenshot capture (`screenshot_enabled`) but NOT set the frequency
+* Org Admin is blocked from writing the legacy `screenshot_frequency` key
+
+### Customer-Own Database / Customer-Controlled Monitoring
+
+* Customer controls monitoring configuration
+* Customer controls screenshot capture enable/disable
+* Customer controls screenshot frequency
+* Super Admin must NOT override customer-controlled screenshot frequency
+* Package defaults/limits may still exist commercially, but ownership of the monitoring configuration remains with the customer
+* The legacy `screenshot_frequency` key is hidden from the org-facing monitoring settings GET and only writable by a super admin in PUT — organization admins can no longer misread a cadence that the agent config no longer honors
+
+### Private / Customer-Controlled Mode
+
+* Follows the same customer-control principle where monitoring is customer-owned
+* Customer controls all monitoring configuration including screenshot frequency
+
+**Current Implementation:**
+
+* Screenshot cadence: `Organization.screenshotInterval` column (1–1440 minutes, 0 = disabled by plan override), super-admin-only via `PUT /api/admin/organizations/[orgId]/settings`
+* Super Admin enters the desired interval in minutes via a numeric input (no fixed step options)
+* Agent config: `GET /api/agent/config` resolves effective screenshot frequency from `Organization.screenshotInterval`
+* Org-facing monitoring: `GET /api/settings/monitoring` hides `screenshot_frequency`; `PUT /api/settings/monitoring` blocks non-super_admin from writing it
+* Upload boundary: `POST /api/agent/screenshot` re-checks and 403s if screenshots are disabled
 
 ---
 

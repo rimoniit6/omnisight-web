@@ -298,10 +298,10 @@ test('LC-08: pending org is locked out; activation restores access', async () =>
   );
   assert.equal(blocked.status, 403, 'pending org locked out');
 
-  const patch = await import('../src/app/api/super-admin/organizations/[id]/route');
+  const patch = await import('../src/app/api/super-admin/organizations/[orgId]/route');
   const aRes = await patch.PATCH(
     req(`http://localhost:3000/api/super-admin/organizations/${pOrg.id}`, await saToken(), 'PATCH', { status: 'active' }),
-    { params: Promise.resolve({ id: pOrg.id }) },
+    { params: Promise.resolve({ orgId: pOrg.id }) },
   );
   assert.equal(aRes.status, 200);
 

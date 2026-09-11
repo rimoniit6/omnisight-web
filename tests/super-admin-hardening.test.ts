@@ -179,8 +179,8 @@ test('SA-02: Super Admin can create organization', async () => {
 // ─── SA-03: Super Admin can suspend organization ────────────────────────
 
 test('SA-03: Super Admin can suspend organization', async () => {
-  const api = await import('../src/app/api/super-admin/organizations/[id]/route');
-  const res = await api.PATCH(req(superAdminToken, { method: 'PATCH', body: { status: 'paused' }, url: `http://localhost:3000/api/super-admin/organizations/${orgA.id}` }), { params: Promise.resolve({ id: orgA.id }) });
+  const api = await import('../src/app/api/super-admin/organizations/[orgId]/route');
+  const res = await api.PATCH(req(superAdminToken, { method: 'PATCH', body: { status: 'paused' }, url: `http://localhost:3000/api/super-admin/organizations/${orgA.id}` }), { params: Promise.resolve({ orgId: orgA.id }) });
   const body = await res.json();
   assert.equal(res.status, 200, `Expected 200, got ${res.status}: ${JSON.stringify(body)}`);
   assert.equal(body.status, 'paused');
@@ -193,8 +193,8 @@ test('SA-03: Super Admin can suspend organization', async () => {
 test('SA-04: Super Admin can reactivate organization', async () => {
   // Suspend first
   await db.organization.update({ where: { id: orgA.id }, data: { status: 'paused' } });
-  const api = await import('../src/app/api/super-admin/organizations/[id]/route');
-  const res = await api.PATCH(req(superAdminToken, { method: 'PATCH', body: { status: 'active' }, url: `http://localhost:3000/api/super-admin/organizations/${orgA.id}` }), { params: Promise.resolve({ id: orgA.id }) });
+  const api = await import('../src/app/api/super-admin/organizations/[orgId]/route');
+  const res = await api.PATCH(req(superAdminToken, { method: 'PATCH', body: { status: 'active' }, url: `http://localhost:3000/api/super-admin/organizations/${orgA.id}` }), { params: Promise.resolve({ orgId: orgA.id }) });
   const body = await res.json();
   assert.equal(res.status, 200);
   assert.equal(body.status, 'active');
@@ -203,8 +203,8 @@ test('SA-04: Super Admin can reactivate organization', async () => {
 // ─── SA-05: Super Admin can archive organization ────────────────────────
 
 test('SA-05: Super Admin can archive organization', async () => {
-  const api = await import('../src/app/api/super-admin/organizations/[id]/route');
-  const res = await api.PATCH(req(superAdminToken, { method: 'PATCH', body: { status: 'archived' }, url: `http://localhost:3000/api/super-admin/organizations/${orgA.id}` }), { params: Promise.resolve({ id: orgA.id }) });
+  const api = await import('../src/app/api/super-admin/organizations/[orgId]/route');
+  const res = await api.PATCH(req(superAdminToken, { method: 'PATCH', body: { status: 'archived' }, url: `http://localhost:3000/api/super-admin/organizations/${orgA.id}` }), { params: Promise.resolve({ orgId: orgA.id }) });
   const body = await res.json();
   assert.equal(res.status, 200);
   assert.equal(body.status, 'archived');
@@ -215,8 +215,8 @@ test('SA-05: Super Admin can archive organization', async () => {
 // ─── SA-06: Super Admin can manage Org A (view employees) ──────────────
 
 test('SA-06: Super Admin can view Org A employees without membership', async () => {
-  const api = await import('../src/app/api/super-admin/organizations/[id]/employees/route');
-  const res = await api.GET(req(superAdminToken, { url: `http://localhost:3000/api/super-admin/organizations/${orgA.id}/employees` }), { params: Promise.resolve({ id: orgA.id }) });
+  const api = await import('../src/app/api/super-admin/organizations/[orgId]/employees/route');
+  const res = await api.GET(req(superAdminToken, { url: `http://localhost:3000/api/super-admin/organizations/${orgA.id}/employees` }), { params: Promise.resolve({ orgId: orgA.id }) });
   const body = await res.json();
   assert.equal(res.status, 200, `Expected 200, got ${res.status}: ${JSON.stringify(body)}`);
   const ids = (body.employees as Array<{ id: string }>).map((e) => e.id);
@@ -226,8 +226,8 @@ test('SA-06: Super Admin can view Org A employees without membership', async () 
 // ─── SA-07: Super Admin can manage Org B (view devices) ────────────────
 
 test('SA-07: Super Admin can view Org B devices without membership', async () => {
-  const api = await import('../src/app/api/super-admin/organizations/[id]/devices/route');
-  const res = await api.GET(req(superAdminToken, { url: `http://localhost:3000/api/super-admin/organizations/${orgB.id}/devices` }), { params: Promise.resolve({ id: orgB.id }) });
+  const api = await import('../src/app/api/super-admin/organizations/[orgId]/devices/route');
+  const res = await api.GET(req(superAdminToken, { url: `http://localhost:3000/api/super-admin/organizations/${orgB.id}/devices` }), { params: Promise.resolve({ orgId: orgB.id }) });
   const body = await res.json();
   assert.equal(res.status, 200, `Expected 200, got ${res.status}: ${JSON.stringify(body)}`);
   const ids = (body.devices as Array<{ id: string }>).map((d) => d.id);
@@ -248,8 +248,8 @@ test('SA-08: Super Admin bound to Org A sees only Org A on dashboard', async () 
 // ─── SA-09: Super Admin does not require membership in target org ──────
 
 test('SA-09: Super Admin can view Org B without membership', async () => {
-  const api = await import('../src/app/api/super-admin/organizations/[id]/route');
-  const res = await api.GET(req(superAdminToken, { url: `http://localhost:3000/api/super-admin/organizations/${orgB.id}` }), { params: Promise.resolve({ id: orgB.id }) });
+  const api = await import('../src/app/api/super-admin/organizations/[orgId]/route');
+  const res = await api.GET(req(superAdminToken, { url: `http://localhost:3000/api/super-admin/organizations/${orgB.id}` }), { params: Promise.resolve({ orgId: orgB.id }) });
   const body = await res.json();
   assert.equal(res.status, 200, `Expected 200, got ${res.status}: ${JSON.stringify(body)}`);
   assert.equal(body.organization.id, orgB.id);
@@ -265,8 +265,8 @@ test('SA-10: Org Admin cannot list organizations via super-admin', async () => {
 });
 
 test('SA-10b: Org Admin cannot suspend organization', async () => {
-  const api = await import('../src/app/api/super-admin/organizations/[id]/route');
-  const res = await api.PATCH(req(adminAToken, { method: 'PATCH', body: { status: 'paused' }, url: `http://localhost:3000/api/super-admin/organizations/${orgA.id}` }), { params: Promise.resolve({ id: orgA.id }) });
+  const api = await import('../src/app/api/super-admin/organizations/[orgId]/route');
+  const res = await api.PATCH(req(adminAToken, { method: 'PATCH', body: { status: 'paused' }, url: `http://localhost:3000/api/super-admin/organizations/${orgA.id}` }), { params: Promise.resolve({ orgId: orgA.id }) });
   assert.ok(res.status === 401 || res.status === 403, `Org Admin must be rejected from suspend, got ${res.status}`);
 });
 
@@ -289,8 +289,8 @@ test('SA-12: Viewer cannot list organizations via super-admin', async () => {
 // ─── SA-13: Organization ID manipulation cannot escalate privileges ─────
 
 test('SA-13a: Admin A trying to manage Org B employees via super-admin endpoint is rejected', async () => {
-  const api = await import('../src/app/api/super-admin/organizations/[id]/employees/route');
-  const res = await api.GET(req(adminAToken, { url: `http://localhost:3000/api/super-admin/organizations/${orgB.id}/employees` }), { params: Promise.resolve({ id: orgB.id }) });
+  const api = await import('../src/app/api/super-admin/organizations/[orgId]/employees/route');
+  const res = await api.GET(req(adminAToken, { url: `http://localhost:3000/api/super-admin/organizations/${orgB.id}/employees` }), { params: Promise.resolve({ orgId: orgB.id }) });
   assert.ok(res.status === 401 || res.status === 403, `Admin A must not access super-admin Org B employees, got ${res.status}`);
 });
 
@@ -301,16 +301,16 @@ test('SA-13b: Admin A trying to create org via super-admin is rejected', async (
 });
 
 test('SA-13c: Admin A trying to manage Org B memberships via super-admin is rejected', async () => {
-  const api = await import('../src/app/api/super-admin/organizations/[id]/memberships/route');
-  const res = await api.GET(req(adminAToken, { url: `http://localhost:3000/api/super-admin/organizations/${orgB.id}/memberships` }), { params: Promise.resolve({ id: orgB.id }) });
+  const api = await import('../src/app/api/super-admin/organizations/[orgId]/memberships/route');
+  const res = await api.GET(req(adminAToken, { url: `http://localhost:3000/api/super-admin/organizations/${orgB.id}/memberships` }), { params: Promise.resolve({ orgId: orgB.id }) });
   assert.ok(res.status === 401 || res.status === 403, `Admin A must not access super-admin Org B memberships, got ${res.status}`);
 });
 
 // ─── SA-14: Super Admin can view org detail with counts ─────────────────
 
 test('SA-14: Super Admin can view Org A detail with employee/device/project counts', async () => {
-  const api = await import('../src/app/api/super-admin/organizations/[id]/route');
-  const res = await api.GET(req(superAdminToken, { url: `http://localhost:3000/api/super-admin/organizations/${orgA.id}` }), { params: Promise.resolve({ id: orgA.id }) });
+  const api = await import('../src/app/api/super-admin/organizations/[orgId]/route');
+  const res = await api.GET(req(superAdminToken, { url: `http://localhost:3000/api/super-admin/organizations/${orgA.id}` }), { params: Promise.resolve({ orgId: orgA.id }) });
   const body = await res.json();
   assert.equal(res.status, 200);
   assert.equal(body.organization.id, orgA.id);
@@ -324,8 +324,8 @@ test('SA-14: Super Admin can view Org A detail with employee/device/project coun
 test('SA-15: Super Admin can view Org A audit logs', async () => {
   // Seed an audit log
   await db.auditLog.create({ data: { action: 'test', resource: 'test', description: 'SA-15 probe', organizationId: orgA.id } });
-  const api = await import('../src/app/api/super-admin/organizations/[id]/audit-logs/route');
-  const res = await api.GET(req(superAdminToken, { url: `http://localhost:3000/api/super-admin/organizations/${orgA.id}/audit-logs` }), { params: Promise.resolve({ id: orgA.id }) });
+  const api = await import('../src/app/api/super-admin/organizations/[orgId]/audit-logs/route');
+  const res = await api.GET(req(superAdminToken, { url: `http://localhost:3000/api/super-admin/organizations/${orgA.id}/audit-logs` }), { params: Promise.resolve({ orgId: orgA.id }) });
   const body = await res.json();
   assert.equal(res.status, 200, `Expected 200, got ${res.status}: ${JSON.stringify(body)}`);
   const descs = (body.data as Array<{ description: string }>).map((l) => l.description);
@@ -337,8 +337,8 @@ test('SA-15: Super Admin can view Org A audit logs', async () => {
 // ─── SA-16: Super Admin can view org projects ──────────────────────────
 
 test('SA-16: Super Admin can view Org B projects', async () => {
-  const api = await import('../src/app/api/super-admin/organizations/[id]/projects/route');
-  const res = await api.GET(req(superAdminToken, { url: `http://localhost:3000/api/super-admin/organizations/${orgB.id}/projects` }), { params: Promise.resolve({ id: orgB.id }) });
+  const api = await import('../src/app/api/super-admin/organizations/[orgId]/projects/route');
+  const res = await api.GET(req(superAdminToken, { url: `http://localhost:3000/api/super-admin/organizations/${orgB.id}/projects` }), { params: Promise.resolve({ orgId: orgB.id }) });
   const body = await res.json();
   assert.equal(res.status, 200, `Expected 200, got ${res.status}: ${JSON.stringify(body)}`);
   const ids = (body.projects as Array<{ id: string }>).map((p) => p.id);
@@ -348,8 +348,8 @@ test('SA-16: Super Admin can view Org B projects', async () => {
 // ─── SA-17: Super Admin can view org memberships ───────────────────────
 
 test('SA-17: Super Admin can view Org A memberships', async () => {
-  const api = await import('../src/app/api/super-admin/organizations/[id]/memberships/route');
-  const res = await api.GET(req(superAdminToken, { url: `http://localhost:3000/api/super-admin/organizations/${orgA.id}/memberships` }), { params: Promise.resolve({ id: orgA.id }) });
+  const api = await import('../src/app/api/super-admin/organizations/[orgId]/memberships/route');
+  const res = await api.GET(req(superAdminToken, { url: `http://localhost:3000/api/super-admin/organizations/${orgA.id}/memberships` }), { params: Promise.resolve({ orgId: orgA.id }) });
   const body = await res.json();
   assert.equal(res.status, 200, `Expected 200, got ${res.status}: ${JSON.stringify(body)}`);
   assert.ok(body.memberships.length > 0, 'Org A has memberships');

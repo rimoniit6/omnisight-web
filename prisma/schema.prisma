@@ -377,7 +377,7 @@ model Organization {
   // --- SaaS fields ---
   subscriptionId     String?  @unique
   trialEndsAt        DateTime?
-  screenshotInterval Int      @default(5) // Minutes between screenshots. 0 = disabled.
+  screenshotInterval Int      @default(5) // Minutes between screenshots. 0 = disabled. Range: 1-1440.
   activeDeviceCount  Int      @default(0)
   // Tracks the last time a data-expiry reminder email was sent for the
   // current retention cycle, so the daily job never spams the same org.

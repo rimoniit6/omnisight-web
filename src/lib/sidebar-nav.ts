@@ -45,6 +45,7 @@ import {
   ServerCog,
   ClipboardList,
   ShoppingBag,
+  CreditCard,
 } from 'lucide-react';
 import type { PageType } from '@/lib/store';
 import { canAccessPage } from '@/lib/navigation';
@@ -80,8 +81,12 @@ export const PLATFORM_SUPERSEDED_PAGES: ReadonlySet<PageType> = new Set(['organi
  * model: the Super Admin records payments; there is no tenant checkout in the
  * normal workflow). Pages/APIs remain reachable by URL for support — this is
  * navigation cleanup only, not an authorization change.
+ *
+ * NOTE: 'billing' was removed from this set to expose the Billing nav item
+ * to Organization Admins. The billing page at /dashboard/billing is fully
+ * implemented and server-side auth enforces org-scoped access.
  */
-const HIDDEN_TENANT_PAGES: ReadonlySet<PageType> = new Set(['billing']);
+const HIDDEN_TENANT_PAGES: ReadonlySet<PageType> = new Set([]);
 
 /**
  * Whether `role` may see `page` in the sidebar shells. Combines the
@@ -184,7 +189,7 @@ export const navGroups: NavGroup[] = [
       { page: 'daily-report', label: 'Daily Report', icon: FileBarChart },
       // Tenant self-checkout — hidden from the shells (manual-sales model).
       // Page + API remain available by URL for support.
-      // { page: 'billing', label: 'Billing & Subscription', icon: CreditCard, href: '/dashboard/billing' },
+      { page: 'billing', label: 'Billing & Subscription', icon: CreditCard, href: '/dashboard/billing' },
       { page: 'settings', label: 'Settings', icon: Settings },
       { page: 'branding', label: 'Branding', icon: Palette },
       { page: 'data-infrastructure', label: 'Data Infrastructure', icon: ServerCog },

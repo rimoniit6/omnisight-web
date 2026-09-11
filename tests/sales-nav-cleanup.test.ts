@@ -260,12 +260,17 @@ test('CLEANUP-12: exactly one canonical Packages UI with full CRUD', async () =>
   assert.ok(/isActive: !p\.isActive/.test(canonical), 'canonical page supports activate/deactivate');
 });
 
-test('CLEANUP-13: tenant self-checkout is hidden from the shells (page/API kept)', async () => {
+test('CLEANUP-13: billing page is accessible from the sidebar shell for org admins', async () => {
   const { existsSync: ex } = await import('node:fs');
-  assert.ok(!navData.some((i) => i.page === 'billing'), 'no billing sidebar item');
-  // Page and API remain available by URL — navigation cleanup only.
+  const billingItem = navData.find((i) => i.page === 'billing');
+  assert.ok(billingItem, 'billing sidebar item exists');
+  assert.equal(billingItem.href, '/dashboard/billing', 'billing links to /dashboard/billing');
+  // Page and API remain available by URL.
   assert.ok(ex(resolve(ROOT, 'src/app/dashboard/billing/page.tsx')), 'billing page kept');
   assert.ok(ex(resolve(ROOT, 'src/app/checkout/page.tsx')), 'checkout page kept');
+  // org_admin can access billing; viewer cannot.
+  assert.ok(canAccessPage('org_admin', 'billing'), 'org_admin can access billing');
+  assert.ok(!canAccessPage('viewer', 'billing'), 'viewer cannot access billing');
 });
 
 test('CLEANUP-14: Overview is a lightweight landing — no duplicated analytics', () => {

@@ -160,26 +160,26 @@ export default function AdminOrgSettingsPage() {
               </CardHeader>
               <CardContent className="space-y-6">
                 <div className="space-y-2">
-                  <Label htmlFor="screenshot-interval">Screenshot interval (minutes)</Label>
+                  <Label htmlFor="screenshot-interval">Screenshot Frequency (minutes)</Label>
                   <Input
                     id="screenshot-interval"
                     type="number"
-                    min={0}
-                    max={60}
+                    min={1}
+                    max={1440}
                     value={Number.isNaN(interval) ? '' : interval}
                     onChange={(e) => {
                       const n = parseInt(e.target.value, 10);
-                      setInterval(Number.isNaN(n) ? 0 : n);
+                      setInterval(Number.isNaN(n) ? 1 : Math.max(1, Math.min(1440, n)));
                     }}
                   />
                   <p className="text-xs text-muted-foreground">
-                    Minutes between agent screenshots for this organization. Set to 0 to disable screenshot
-                    capture. This cadence is controlled here (super admin), not in the org-facing monitoring UI.
+                    Minutes between agent screenshots for this organization (1–1440).
+                    This cadence is controlled here (super admin), not in the org-facing monitoring UI.
                   </p>
                 </div>
 
                 <div className="flex justify-end">
-                  <Button onClick={save} disabled={saving || interval < 0 || interval > 60}>
+                  <Button onClick={save} disabled={saving || interval < 1 || interval > 1440}>
                     {saving ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Save className="w-4 h-4 mr-2" />}
                     Save
                   </Button>

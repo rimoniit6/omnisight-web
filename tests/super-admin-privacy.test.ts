@@ -126,22 +126,22 @@ function saRoute(id: string, kind: string) {
 
 // PV-01
 test('PV-01: SA employees read on CUSTOMER_DB is rejected', async () => {
-  const { GET } = await import('../src/app/api/super-admin/organizations/[id]/employees/route');
-  const res = await GET(req(saRoute(customerId, 'employees'), await saToken()), { params: Promise.resolve({ id: customerId }) });
+  const { GET } = await import('../src/app/api/super-admin/organizations/[orgId]/employees/route');
+  const res = await GET(req(saRoute(customerId, 'employees'), await saToken()), { params: Promise.resolve({ orgId: customerId }) });
   assert.equal(res.status, 403);
 });
 
 // PV-02
 test('PV-02: SA devices read on PRIVATE is rejected', async () => {
-  const { GET } = await import('../src/app/api/super-admin/organizations/[id]/devices/route');
-  const res = await GET(req(saRoute(privateId, 'devices'), await saToken()), { params: Promise.resolve({ id: privateId }) });
+  const { GET } = await import('../src/app/api/super-admin/organizations/[orgId]/devices/route');
+  const res = await GET(req(saRoute(privateId, 'devices'), await saToken()), { params: Promise.resolve({ orgId: privateId }) });
   assert.equal(res.status, 403);
 });
 
 // PV-03
 test('PV-03: SA employees read on MANAGED still works', async () => {
-  const { GET } = await import('../src/app/api/super-admin/organizations/[id]/employees/route');
-  const res = await GET(req(saRoute(managedId, 'employees'), await saToken()), { params: Promise.resolve({ id: managedId }) });
+  const { GET } = await import('../src/app/api/super-admin/organizations/[orgId]/employees/route');
+  const res = await GET(req(saRoute(managedId, 'employees'), await saToken()), { params: Promise.resolve({ orgId: managedId }) });
   assert.equal(res.status, 200);
 });
 
@@ -186,10 +186,10 @@ test('PV-07: SA switch to CUSTOMER_DB/PRIVATE is rejected', async () => {
 
 // PV-08
 test('PV-08: deployment-mode change to CUSTOMER_DB is rejected', async () => {
-  const { PATCH } = await import('../src/app/api/super-admin/organizations/[id]/route');
+  const { PATCH } = await import('../src/app/api/super-admin/organizations/[orgId]/route');
   const res = await PATCH(
     req(`http://localhost:3000/api/super-admin/organizations/${managedId}`, await saToken(), 'PATCH', { deploymentMode: 'CUSTOMER_DB' }),
-    { params: Promise.resolve({ id: managedId }) },
+    { params: Promise.resolve({ orgId: managedId }) },
   );
   assert.equal(res.status, 422);
   const body = await res.json();
@@ -205,10 +205,10 @@ test('PV-08: deployment-mode change to CUSTOMER_DB is rejected', async () => {
 // validateDeploymentModeChange (which still permits it for backend
 // compatibility). Stale expectation updated to the enforced behavior.
 test('PV-09: MANAGED to PRIVATE change is rejected (PRIVATE is legacy, never assignable)', async () => {
-  const { PATCH } = await import('../src/app/api/super-admin/organizations/[id]/route');
+  const { PATCH } = await import('../src/app/api/super-admin/organizations/[orgId]/route');
   const res = await PATCH(
     req(`http://localhost:3000/api/super-admin/organizations/${managedId}`, await saToken(), 'PATCH', { deploymentMode: 'PRIVATE' }),
-    { params: Promise.resolve({ id: managedId }) },
+    { params: Promise.resolve({ orgId: managedId }) },
   );
   assert.equal(res.status, 422, 'PRIVATE must not be settable via the org PATCH route in V1');
   const row = await db.organization.findUnique({ where: { id: managedId }, select: { deploymentMode: true } });
@@ -217,10 +217,10 @@ test('PV-09: MANAGED to PRIVATE change is rejected (PRIVATE is legacy, never ass
 
 // PV-10
 test('PV-10: PRIVATE to MANAGED without confirmation is rejected', async () => {
-  const { PATCH } = await import('../src/app/api/super-admin/organizations/[id]/route');
+  const { PATCH } = await import('../src/app/api/super-admin/organizations/[orgId]/route');
   const res = await PATCH(
     req(`http://localhost:3000/api/super-admin/organizations/${privateId}`, await saToken(), 'PATCH', { deploymentMode: 'MANAGED' }),
-    { params: Promise.resolve({ id: privateId }) },
+    { params: Promise.resolve({ orgId: privateId }) },
   );
   assert.equal(res.status, 422);
 });
@@ -228,10 +228,10 @@ test('PV-10: PRIVATE to MANAGED without confirmation is rejected', async () => {
 // PV-11
 test('PV-11: PRIVATE to MANAGED with confirmation succeeds and clears unresolved', async () => {
   await db.organization.update({ where: { id: privateId }, data: { deploymentModeUnresolved: true } });
-  const { PATCH } = await import('../src/app/api/super-admin/organizations/[id]/route');
+  const { PATCH } = await import('../src/app/api/super-admin/organizations/[orgId]/route');
   const res = await PATCH(
     req(`http://localhost:3000/api/super-admin/organizations/${privateId}`, await saToken(), 'PATCH', { deploymentMode: 'MANAGED', confirmDataResidency: true }),
-    { params: Promise.resolve({ id: privateId }) },
+    { params: Promise.resolve({ orgId: privateId }) },
   );
   assert.equal(res.status, 200);
   const row = await db.organization.findUnique({ where: { id: privateId }, select: { deploymentMode: true, deploymentModeUnresolved: true } });

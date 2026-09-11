@@ -158,7 +158,7 @@ async function main() {
   console.log(`\nTotal PlanPricing rows: ${all.length}`);
   for (const r of all) {
     const configured = r.basePrice > 0 ? `৳${r.basePrice}` : 'unconfigured';
-    const devices = r.deploymentMode === 'CUSTOMER_DB' ? 'unlimited' : `${r.includedDevices} devices`;
+    const devices = `${r.includedDevices} devices`;
     console.log(`  ${r.plan.name} | ${r.deploymentMode} | ${r.billingPeriod} | ${configured} | ${devices} | +৳${r.additionalDevicePrice}/device`);
   }
 

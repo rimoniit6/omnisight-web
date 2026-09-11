@@ -2,24 +2,23 @@ import { NextRequest } from 'next/server';
 import { db as prisma } from '@/lib/db';
 import { apiError, apiSuccess, validatePagination } from '@/lib/api';
 import { requireManagedTenantAccess } from '@/lib/control-plane';
-import { effectiveDeviceStatus } from '@/lib/device-status';
 
 /**
- * GET /api/super-admin/organizations/[id]/devices
+ * GET /api/super-admin/organizations/[orgId]/projects
  *
- * List devices for a MANAGED organization. Super Admin only.
+ * List projects for a MANAGED organization. Super Admin only.
  * Phase 2 privacy: CUSTOMER_DB / PRIVATE organizations are rejected with 403.
  */
 export async function GET(
   req: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
+  { params }: { params: Promise<{ orgId: string }> }
 ) {
-  const { id } = await params;
+  const { orgId } = await params;
 
-  const org = await prisma.organization.findUnique({ where: { id }, select: { id: true } });
+  const org = await prisma.organization.findUnique({ where: { id: orgId }, select: { id: true } });
   if (!org) return apiError('Organization not found', 404);
 
-  const access = await requireManagedTenantAccess(req, id);
+  const access = await requireManagedTenantAccess(req, orgId);
   if (!access.ok) {
     if (access.status === 401) return apiError('Unauthorized. Please sign in.', 401);
     return apiError(
@@ -35,33 +34,40 @@ export async function GET(
   if (!pagination.ok) return apiError(pagination.error, pagination.status);
 
   const status = searchParams.get('status') || '';
+  const search = searchParams.get('search') || '';
 
-  const where: Record<string, unknown> = { organizationId: id };
-  if (status && ['online', 'offline', 'inactive', 'maintenance', 'retired'].includes(status)) {
+  const where: Record<string, unknown> = { organizationId: orgId };
+  if (status && ['active', 'on_hold', 'completed', 'cancelled'].includes(status)) {
     where.status = status;
   }
+  if (search) {
+    where.OR = [
+      { name: { contains: search, mode: 'insensitive' } },
+      { description: { contains: search, mode: 'insensitive' } },
+    ];
+  }
 
-  const [devices, total] = await Promise.all([
-    prisma.device.findMany({
+  const [projects, total] = await Promise.all([
+    prisma.project.findMany({
       where,
       include: {
-        employee: { select: { id: true, firstName: true, lastName: true, employeeId: true } },
+        department: { select: { id: true, name: true } },
+        _count: { select: { members: true, timeEntries: true } },
       },
-      orderBy: { updatedAt: 'desc' },
+      orderBy: { createdAt: 'desc' },
       skip: pagination.skip,
       take: pagination.pageSize,
     }),
-    prisma.device.count({ where }),
+    prisma.project.count({ where }),
   ]);
 
-  // Apply effective status (heartbeat-based online detection)
-  const enriched = devices.map((d) => ({
-    ...d,
-    status: effectiveDeviceStatus(d.status, d.lastHeartbeat),
-  }));
-
   return apiSuccess({
-    devices: enriched,
+    projects: projects.map((p) => ({
+      ...p,
+      memberCount: p._count.members,
+      timeEntryCount: p._count.timeEntries,
+      _count: undefined,
+    })),
     pagination: {
       page: pagination.page,
       pageSize: pagination.pageSize,

@@ -339,7 +339,7 @@ export function PricingSection() {
                   Customer Database
                 </h3>
                 <p className="text-[12.5px] text-white/40">
-                  Your data infrastructure. Our application. Unlimited devices.
+                  Your data infrastructure. Our application. Device-based pricing.
                 </p>
               </div>
             </div>
@@ -364,7 +364,7 @@ export function PricingSection() {
                     <ul className="mt-2 space-y-1.5">
                       <li className="flex items-center gap-2 text-[12px] text-white/50">
                         <span className="h-1 w-1 rounded-full bg-cyan-300" aria-hidden />
-                        Unlimited devices — no per-device charges
+                        Device-based pricing — included + per-device charge
                       </li>
                       <li className="flex items-center gap-2 text-[12px] text-white/50">
                         <span className="h-1 w-1 rounded-full bg-cyan-300" aria-hidden />
@@ -398,7 +398,7 @@ export function PricingSection() {
           <Reveal className="mx-auto mt-6 max-w-2xl text-center">
             <p className="text-[12.5px] leading-relaxed text-white/40">
               Customer Database deployments use your organization&apos;s primary database.
-              Pricing is per plan — device count never affects the price.
+              Device-based pricing — included devices plus per-device charges for extras.
             </p>
           </Reveal>
         </>

@@ -61,11 +61,17 @@ interface Organization {
   memberCount: number;
   employeeCount: number;
   deviceCount: number;
+  includedDevices: number;
+  extraDevices: number;
+  outstandingAmount: number;
+  outstandingCurrency: string;
+  daysRemaining: number | null;
   subscription: {
     id: string;
     status: string;
-    plan: { id: string; name: string };
-    invoices: { id: string; status: string; amount: number; currency: string; paymentMethod: string | null }[];
+    endDate: string | null;
+    plan: { id: string; name: string; currency: string; maxDevices: number };
+    invoices: { id: string; status: string; amount: number; currency: string; paymentMethod: string | null; paidAt: string | null }[];
   } | null;
   licenseKey: { id: string; isActive: boolean; isRevoked: boolean; validUntil: string | null } | null;
 }
@@ -159,7 +165,7 @@ export function SuperAdminOrganizationsPage() {
     placeholderData: (prev) => prev,
   });
   // PRIVATE is deprecated in V1; metrics exclude it from customer-owned count.
-  const metrics = metricsData?.data as
+  const metrics = metricsData as
     | {
         organizations: { total: number; managed: number; customerDb: number; private: number; unresolvedModes: number; pendingDeployments: number };
         subscriptions: { active: number; expiringSoon: number };
@@ -361,9 +367,9 @@ export function SuperAdminOrganizationsPage() {
                     <TableHead>Organization</TableHead>
                     <TableHead>Service</TableHead>
                     <TableHead>Package</TableHead>
+                    <TableHead>Devices</TableHead>
                     <TableHead>Subscription</TableHead>
-                    <TableHead>Payment</TableHead>
-                    <TableHead>License</TableHead>
+                    <TableHead>Dues</TableHead>
                     <TableHead>Status</TableHead>
                     <TableHead className="text-center">Users</TableHead>
                     <TableHead>Created</TableHead>
@@ -402,60 +408,53 @@ export function SuperAdminOrganizationsPage() {
                           <span className="text-xs font-medium">{org.subscription?.plan.name ?? '—'}</span>
                         </TableCell>
                         <TableCell>
+                          <div className="text-xs">
+                            <span className={cn('font-medium', org.extraDevices > 0 ? 'text-amber-600' : '')}>
+                              {org.deviceCount}
+                            </span>
+                            <span className="text-muted-foreground"> / {org.includedDevices}</span>
+                            {org.extraDevices > 0 && (
+                              <span className="ml-1 text-amber-600">(+{org.extraDevices})</span>
+                            )}
+                          </div>
+                        </TableCell>
+                        <TableCell>
                           {org.subscription ? (
-                            <Badge
-                              variant="outline"
-                              className={cn(
-                                'text-[10px] h-5 px-1.5 border',
-                                org.subscription.status === 'ACTIVE'
-                                  ? 'border-emerald-200 bg-emerald-100 text-emerald-700 dark:border-emerald-900/30 dark:bg-emerald-900/30 dark:text-emerald-400'
-                                  : org.subscription.status === 'PENDING'
-                                    ? 'border-amber-200 bg-amber-100 text-amber-700 dark:border-amber-900/30 dark:bg-amber-900/30 dark:text-amber-400'
-                                    : org.subscription.status === 'CANCELLED'
-                                      ? 'border-slate-200 bg-slate-100 text-slate-600 dark:border-slate-800 dark:bg-slate-900/40 dark:text-slate-400'
-                                      : 'border-rose-200 bg-rose-100 text-rose-700 dark:border-rose-900/30 dark:bg-rose-900/30 dark:text-rose-400'
-                              )}
-                            >
-                              {org.subscription.status}
-                            </Badge>
-                          ) : (
-                            <span className="text-xs text-muted-foreground">—</span>
-                          )}
-                        </TableCell>
-                        <TableCell>
-                          {org.subscription?.invoices?.[0] ? (
-                            <Badge
-                              variant="outline"
-                              className={cn(
-                                'text-[10px] h-5 px-1.5 border',
-                                org.subscription.invoices[0].status === 'PAID'
-                                  ? 'border-emerald-200 bg-emerald-100 text-emerald-700 dark:border-emerald-900/30 dark:bg-emerald-900/30 dark:text-emerald-400'
-                                  : 'border-amber-200 bg-amber-100 text-amber-700 dark:border-amber-900/30 dark:bg-amber-900/30 dark:text-amber-400'
-                              )}
-                            >
-                              {org.subscription.invoices[0].status}
-                            </Badge>
-                          ) : (
-                            <span className="text-xs text-muted-foreground">—</span>
-                          )}
-                        </TableCell>
-                        <TableCell>
-                          {org.licenseKey ? (
-                            <Badge
-                              variant="outline"
-                              className={cn(
-                                'text-[10px] h-5 px-1.5 border',
-                                org.licenseKey.isRevoked
-                                  ? 'border-rose-200 bg-rose-100 text-rose-700 dark:border-rose-900/30 dark:bg-rose-900/30 dark:text-rose-400'
-                                  : org.licenseKey.isActive
+                            <div className="text-xs">
+                              <Badge
+                                variant="outline"
+                                className={cn(
+                                  'text-[10px] h-5 px-1.5 border',
+                                  org.subscription.status === 'ACTIVE'
                                     ? 'border-emerald-200 bg-emerald-100 text-emerald-700 dark:border-emerald-900/30 dark:bg-emerald-900/30 dark:text-emerald-400'
-                                    : 'border-slate-200 bg-slate-100 text-slate-600 dark:border-slate-800 dark:bg-slate-900/40 dark:text-slate-400'
+                                    : org.subscription.status === 'PENDING'
+                                      ? 'border-amber-200 bg-amber-100 text-amber-700 dark:border-amber-900/30 dark:bg-amber-900/30 dark:text-amber-400'
+                                      : org.subscription.status === 'CANCELLED'
+                                        ? 'border-slate-200 bg-slate-100 text-slate-600 dark:border-slate-800 dark:bg-slate-900/40 dark:text-slate-400'
+                                        : 'border-rose-200 bg-rose-100 text-rose-700 dark:border-rose-900/30 dark:bg-rose-900/30 dark:text-rose-400'
+                                )}
+                              >
+                                {org.subscription.status}
+                              </Badge>
+                              {org.daysRemaining !== null && org.subscription.status === 'ACTIVE' && (
+                                <p className="mt-0.5 text-muted-foreground">
+                                  {org.daysRemaining <= 7
+                                    ? `Expires in ${org.daysRemaining}d`
+                                    : `${org.daysRemaining}d remaining`}
+                                </p>
                               )}
-                            >
-                              {org.licenseKey.isRevoked ? 'Revoked' : org.licenseKey.isActive ? 'Active' : 'Inactive'}
-                            </Badge>
+                            </div>
                           ) : (
                             <span className="text-xs text-muted-foreground">—</span>
+                          )}
+                        </TableCell>
+                        <TableCell>
+                          {org.outstandingAmount > 0 ? (
+                            <span className="text-xs font-medium text-amber-600">
+                              {org.outstandingCurrency} {org.outstandingAmount.toLocaleString()}
+                            </span>
+                          ) : (
+                            <span className="text-xs text-muted-foreground">৳0</span>
                           )}
                         </TableCell>
                         <TableCell>
