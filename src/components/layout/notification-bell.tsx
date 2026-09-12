@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useCallback } from 'react';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   Bell,
   CheckCheck,
@@ -13,6 +13,12 @@ import {
   Sparkles,
   Lock,
   Settings as SettingsIcon,
+  Mail,
+  UserCircle,
+  Building2,
+  Briefcase,
+  X,
+  Check,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -25,6 +31,7 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { Separator } from '@/components/ui/separator';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useAppStore } from '@/lib/store';
+import { useAuthStore } from '@/lib/store';
 
 interface NotificationItem {
   id: string;
@@ -34,6 +41,12 @@ interface NotificationItem {
   priority: string;
   status: string;
   createdAt: string;
+  // Lead-specific fields (optional, for lead_submission type)
+  leadId?: string | null;
+  name?: string | null;
+  email?: string | null;
+  company?: string | null;
+  planInterest?: string | null;
 }
 
 const priorityColors: Record<string, string> = {
@@ -52,6 +65,7 @@ const typeIcons: Record<string, React.ElementType> = {
   ai_recommendation: Sparkles,
   security: Lock,
   system: SettingsIcon,
+  lead_submission: Mail,
 };
 
 const typeIconColors: Record<string, string> = {
@@ -63,6 +77,7 @@ const typeIconColors: Record<string, string> = {
   ai_recommendation: 'text-violet-500',
   security: 'text-red-600',
   system: 'text-slate-500',
+  lead_submission: 'text-blue-500',
 };
 
 const typeIconBg: Record<string, string> = {
@@ -74,6 +89,7 @@ const typeIconBg: Record<string, string> = {
   ai_recommendation: 'bg-violet-50 dark:bg-violet-900/20',
   security: 'bg-red-50 dark:bg-red-900/20',
   system: 'bg-slate-100 dark:bg-slate-800/30',
+  lead_submission: 'bg-blue-50 dark:bg-blue-900/20',
 };
 
 function formatTimeAgo(dateStr: string): string {
@@ -91,16 +107,160 @@ function formatTimeAgo(dateStr: string): string {
   return date.toLocaleDateString();
 }
 
+function NotificationDetailPanel({
+  notif,
+  onClose,
+  onMarkRead,
+}: {
+  notif: NotificationItem;
+  onClose: () => void;
+  onMarkRead: (id: string, isLead: boolean) => void;
+}) {
+  const isLead = notif.type === 'lead_submission';
+  return (
+    <div className="fixed inset-y-0 right-0 w-[360px] max-w-[90vw] bg-background border-l border-border shadow-xl z-50 overflow-y-auto">
+      <div className="sticky top-0 bg-background border-b border-border px-4 py-3 flex items-center justify-between">
+        <h2 className="text-sm font-semibold">Notification Details</h2>
+        <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={onClose}>
+          <X className="h-3.5 w-3.5" />
+        </Button>
+      </div>
+      <ScrollArea className="h-[calc(100%-64px)]">
+        <div className="p-4 space-y-4">
+          {/* Type icon + title */}
+          <div className="flex items-start gap-3">
+            <div className="h-10 w-10 rounded-lg bg-muted flex items-center justify-center shrink-0">
+              <Bell className="w-4 h-4 text-muted-foreground" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-medium">
+                {isLead
+                  ? `${notif.name || 'Requester'}${notif.company ? ` (${notif.company})` : ''}`
+                  : notif.title}
+              </p>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                {formatTimeAgo(notif.createdAt)}
+              </p>
+            </div>
+          </div>
+
+          {/* Lead-specific details */}
+          {isLead && (
+            <>
+              <div className="space-y-2">
+                <p className="text-xs text-muted-foreground font-medium uppercase tracking-wide">
+                  Requester Information
+                </p>
+                <div className="bg-muted/50 rounded-lg p-3 space-y-2">
+                  <div className="flex items-center gap-2 text-sm">
+                    <UserCircle className="w-4 h-4 text-muted-foreground shrink-0" />
+                    <span className="font-medium">{notif.name || '—'}</span>
+                  </div>
+                  <div className="flex items-center gap-2 text-sm">
+                    <Mail className="w-4 h-4 text-muted-foreground shrink-0" />
+                    <span>{notif.email || '—'}</span>
+                  </div>
+                  {notif.company && (
+                    <div className="flex items-center gap-2 text-sm">
+                      <Building2 className="w-4 h-4 text-muted-foreground shrink-0" />
+                      <span>{notif.company}</span>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <p className="text-xs text-muted-foreground font-medium uppercase tracking-wide">
+                  Request Details
+                </p>
+                <div className="bg-muted/50 rounded-lg p-3 space-y-2">
+                  <div className="flex items-center gap-2 text-sm">
+                    <Briefcase className="w-4 h-4 text-muted-foreground shrink-0" />
+                    <span className="text-muted-foreground">Interested in:</span>
+                    <Badge>{notif.planInterest || '—'}</Badge>
+                  </div>
+                  {notif.message && (
+                    <div className="pt-2 border-t border-border">
+                      <p className="text-xs text-muted-foreground font-medium uppercase tracking-wide mb-1">
+                        Message
+                      </p>
+                      <p className="text-sm text-foreground whitespace-pre-wrap">
+                        {notif.message}
+                      </p>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </>
+          )}
+
+          {/* Regular notification details */}
+          {!isLead && (
+            <div className="space-y-2">
+              <p className="text-xs text-muted-foreground font-medium uppercase tracking-wide">
+                Message
+              </p>
+              <p className="text-sm text-foreground">{notif.message}</p>
+            </div>
+          )}
+
+          {/* Status */}
+          <div className="space-y-1.5">
+            <p className="text-xs text-muted-foreground font-medium uppercase tracking-wide">
+              Status
+            </p>
+            <Badge variant="secondary" className="text-xs">
+              {isLead ? 'New Lead Submission' : notif.status}
+            </Badge>
+          </div>
+
+          {/* Mark as Read action */}
+          {notif.status === 'unread' && (
+            <Button
+              className="w-full h-9 text-sm"
+              onClick={() => onMarkRead(notif.id, isLead)}
+            >
+              <Check className="w-4 h-4 mr-2" />
+              Mark as Read
+            </Button>
+          )}
+
+          {!isLead && notif.status !== 'unread' && (
+            <p className="text-xs text-muted-foreground text-center py-2">
+              This notification has been read.
+            </p>
+          )}
+
+          {isLead && notif.status !== 'new' && (
+            <p className="text-xs text-muted-foreground text-center py-2">
+              This lead has been processed.
+            </p>
+          )}
+        </div>
+      </ScrollArea>
+    </div>
+  );
+}
+
 export function NotificationBell() {
   const { setCurrentPage } = useAppStore();
   const queryClient = useQueryClient();
+  const authUser = useAuthStore((s) => s.user);
+  const isSuperAdmin = authUser?.role === 'super_admin';
   const [notifOpen, setNotifOpen] = useState(false);
+  const [selectedNotif, setSelectedNotif] = useState<NotificationItem | null>(null);
+
+  // Determine which API to use based on role
+  const isPlatformMode = isSuperAdmin;
 
   // Lightweight count polling
   const { data: countData } = useQuery({
-    queryKey: ['notification-count'],
+    queryKey: ['notification-count', isPlatformMode],
     queryFn: async () => {
-      const res = await fetch('/api/notifications/count');
+      const url = isPlatformMode
+        ? '/api/super-admin/notifications/count'
+        : '/api/notifications/count';
+      const res = await fetch(url);
       return res.json();
     },
     refetchInterval: 30000,
@@ -108,12 +268,19 @@ export function NotificationBell() {
 
   // Full notification list for dropdown
   const { data: notifData } = useQuery({
-    queryKey: ['notifications-dropdown'],
+    queryKey: ['notifications-dropdown', isPlatformMode],
     queryFn: async () => {
-      const res = await fetch('/api/notifications?status=unread&pageSize=5');
+      let url: string;
+      if (isPlatformMode) {
+        // Super Admin: get unified notifications + leads
+        url = '/api/super-admin/notifications?includeLeads=true&status=unread&pageSize=5';
+      } else {
+        url = '/api/notifications?status=unread&pageSize=5';
+      }
+      const res = await fetch(url);
       const json = await res.json();
       return {
-        notifications: json.data as NotificationItem[],
+        notifications: (json.data || []) as NotificationItem[],
       };
     },
     enabled: notifOpen,
@@ -123,24 +290,93 @@ export function NotificationBell() {
   const unreadCount = countData?.unread ?? 0;
   const recentNotifs = notifData?.notifications ?? [];
 
+  const markReadMutation = useMutation({
+    mutationFn: async ({ id, isLead }: { id: string; isLead: boolean }) => {
+      const url = isPlatformMode
+        ? '/api/super-admin/notifications'
+        : '/api/notifications';
+      const body: Record<string, unknown> = { id };
+      if (isLead) {
+        body.leadStatus = 'CONTACTED';
+      } else {
+        body.status = 'read';
+      }
+      const res = await fetch(url, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) throw new Error('Failed to mark as read');
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['notifications'] });
+      queryClient.invalidateQueries({ queryKey: ['notifications-dropdown', true] });
+      queryClient.invalidateQueries({ queryKey: ['notifications-dropdown', false] });
+      queryClient.invalidateQueries({ queryKey: ['notification-count', true] });
+      queryClient.invalidateQueries({ queryKey: ['notification-count', false] });
+      setSelectedNotif((prev) => {
+        if (prev && prev.id === prev.id) {
+          return { ...prev, status: isPlatformMode ? (prev.type === 'lead_submission' ? 'contacted' : 'read') : 'read' };
+        }
+        return prev;
+      });
+    },
+  });
+
   const markAllRead = useCallback(async () => {
-    await fetch('/api/notifications', {
+    const url = isPlatformMode
+      ? '/api/super-admin/notifications'
+      : '/api/notifications';
+    await fetch(url, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ markAllRead: true }),
     });
     queryClient.invalidateQueries({ queryKey: ['notifications'] });
-    queryClient.invalidateQueries({ queryKey: ['notifications-dropdown'] });
-    queryClient.invalidateQueries({ queryKey: ['notification-count'] });
-  }, [queryClient]);
+    // Invalidate both platform and tenant notification query keys
+    queryClient.invalidateQueries({ queryKey: ['notifications-dropdown', true] });
+    queryClient.invalidateQueries({ queryKey: ['notifications-dropdown', false] });
+    queryClient.invalidateQueries({ queryKey: ['notification-count', true] });
+    queryClient.invalidateQueries({ queryKey: ['notification-count', false] });
+  }, [queryClient, isPlatformMode]);
 
   const handleViewAll = () => {
     setNotifOpen(false);
-    setCurrentPage('notifications');
+    if (isSuperAdmin) {
+      // Super Admin: navigate to the Control Center overview
+      setCurrentPage('sa-overview');
+    } else {
+      setCurrentPage('notifications');
+    }
+  };
+
+  const handleNotifClick = (notif: NotificationItem) => {
+    setSelectedNotif(notif);
+    setNotifOpen(true);
+  };
+
+  const handleMarkRead = (id: string, isLead: boolean) => {
+    markReadMutation.mutate({ id, isLead });
+  };
+
+  const handleClosePanel = () => {
+    setSelectedNotif(null);
   };
 
   return (
-    <Popover open={notifOpen} onOpenChange={setNotifOpen}>
+    <>
+      {selectedNotif && (
+        <NotificationDetailPanel
+          notif={selectedNotif}
+          onClose={handleClosePanel}
+          onMarkRead={handleMarkRead}
+        />
+      )}
+      <Popover open={notifOpen} onOpenChange={(open) => {
+        setNotifOpen(open);
+        if (!open) setSelectedNotif(null);
+      }}>
       <PopoverTrigger asChild>
         <Button
           variant="ghost"
@@ -207,6 +443,9 @@ export function NotificationBell() {
                   const TypeIcon = typeIcons[notif.type] || Bell;
                   const iconColor = typeIconColors[notif.type] || 'text-muted-foreground';
                   const iconBg = typeIconBg[notif.type] || 'bg-muted';
+                  // For lead submissions, show requester info in the notification
+                  const leadName = notif.name || '';
+                  const leadCompany = notif.company || '';
                   return (
                     <motion.div
                       key={notif.id}
@@ -214,7 +453,9 @@ export function NotificationBell() {
                       animate={{ opacity: 1, x: 0 }}
                       exit={{ opacity: 0, x: 10 }}
                       transition={{ duration: 0.15, delay: idx * 0.04 }}
-                      className="flex items-start gap-3 px-4 py-3 hover:bg-muted/50 transition-colors cursor-default"
+                      className="flex items-start gap-3 px-4 py-3 hover:bg-muted/50 transition-colors cursor-pointer"
+                      onClick={() => handleNotifClick(notif)}
+                      style={{ cursor: 'pointer' }}
                     >
                       {/* Type icon */}
                       <div className={`h-8 w-8 rounded-lg ${iconBg} flex items-center justify-center shrink-0`}>
@@ -222,10 +463,18 @@ export function NotificationBell() {
                       </div>
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-1.5">
-                          <p className="text-sm font-medium truncate">{notif.title}</p>
+                          <p className="text-sm font-medium truncate">
+                            {notif.type === 'lead_submission'
+                              ? `${leadName}${leadCompany ? ` (${leadCompany})` : ''}`
+                              : notif.title}
+                          </p>
                           <span className={`h-2 w-2 rounded-full shrink-0 ${priorityColors[notif.priority] || priorityColors.medium}`} />
                         </div>
-                        <p className="text-xs text-muted-foreground mt-0.5 line-clamp-1">{notif.message}</p>
+                        <p className="text-xs text-muted-foreground mt-0.5 line-clamp-1">
+                          {notif.type === 'lead_submission'
+                            ? `New ${notif.planInterest || 'plan'} interest from ${leadName}${notif.email ? ` — ${notif.email}` : ''}`
+                            : notif.message}
+                        </p>
                         <p className="text-[10px] text-muted-foreground/70 mt-1">{formatTimeAgo(notif.createdAt)}</p>
                       </div>
                     </motion.div>
@@ -251,5 +500,6 @@ export function NotificationBell() {
         </div>
       </PopoverContent>
     </Popover>
+    </>
   );
 }

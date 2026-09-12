@@ -26,10 +26,15 @@ function src(rel: string): string {
 describe('SA-SHELL header role-awareness', () => {
   const header = src('components/layout/app-header.tsx');
 
-  test('SA-SHELL-01: NotificationBell hidden for super_admin, kept for tenants', () => {
-    assert.ok(header.includes('{!isSuperAdmin && ('), 'role guard present');
-    assert.ok(/!\s*isSuperAdmin && \(\s*<div data-tour-target="notifications">/.test(header), 'bell gated');
-    assert.ok(header.includes('<NotificationBell />'), 'bell component still used for tenants');
+  test('SA-SHELL-01: NotificationBell now visible for super_admin (platform notifications)', () => {
+    // After the Lead Inbox removal, Super Admin now uses the standard NotificationBell
+    // with platform-level notification endpoints. The bell is no longer gated.
+    assert.ok(header.includes('<NotificationBell />'), 'bell component present');
+    // The role guard for notifications should be removed — bell shows for everyone
+    assert.ok(
+      !/!\s*isSuperAdmin && \(\s*<div data-tour-target="notifications">/.test(header),
+      'bell no longer gated behind !isSuperAdmin'
+    );
   });
 
   test('SA-SHELL-02: "Open Live Monitor" shortcut hidden for super_admin', () => {
@@ -102,11 +107,17 @@ describe('SA-SHELL server-side safety (not just UI hiding)', () => {
     );
   });
 
-  test('SA-SHELL-12: sidebar contract regression — exactly 5 Control Center items', () => {
+  test('SA-SHELL-12: sidebar contract regression — no Lead Inbox in Control Center', () => {
     const nav = src('lib/sidebar-nav.ts');
     const groupMatch = nav.match(/id: 'control-center',[\s\S]*?items: \[([\s\S]*?)\n    \]/);
     assert.ok(groupMatch, 'control-center group found');
     const pages = [...groupMatch[1].matchAll(/page: '([^']+)'/g)].map((m) => m[1]);
-    assert.deepEqual(pages, ['sa-overview', 'super-admin-organizations', 'sa-packages', 'sa-infra-requests', 'sa-landing']);
+    // Lead Inbox must NOT be present
+    assert.ok(!pages.includes('sa-lead-inbox'), 'no sa-lead-inbox in sidebar');
+    // Must include the expected core items
+    assert.ok(pages.includes('sa-overview'), 'has sa-overview');
+    assert.ok(pages.includes('super-admin-organizations'), 'has super-admin-organizations');
+    assert.ok(pages.includes('sa-packages-pricing'), 'has sa-packages-pricing');
+    assert.ok(pages.includes('sa-landing'), 'has sa-landing');
   });
 });

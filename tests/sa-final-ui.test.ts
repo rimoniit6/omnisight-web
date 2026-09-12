@@ -31,13 +31,13 @@ describe('SA-UI sidebar contract', () => {
     // V1 Control Center: Overview / Organizations / Packages / Pricing &
     // Offers / Purchase Requests / Infrastructure Requests / Landing Page.
     assert.deepEqual(pages, [
-      'sa-overview', 'super-admin-organizations', 'sa-packages',
-      'sa-pricing', 'sa-purchase-requests', 'sa-infra-requests', 'sa-landing',
+      'sa-overview', 'super-admin-organizations', 'sa-packages-pricing',
+      'sa-purchase-requests', 'sa-infra-requests', 'sa-landing',
     ]);
   });
 
-  test('SA-UI-02: no standalone Subscriptions/Payments/Licenses/Agents/Storage/AI/Health/Leads nav items', () => {
-    for (const forbidden of ['sa-subscriptions', 'sa-payments', 'sa-licenses', 'sa-agents', 'sa-storage', 'sa-ai-usage', 'sa-health', 'sa-leads']) {
+  test('SA-UI-02: no standalone Subscriptions/Payments/Licenses/Agents/Storage/AI/Health/Leads/Lead Inbox nav items', () => {
+    for (const forbidden of ['sa-subscriptions', 'sa-payments', 'sa-licenses', 'sa-agents', 'sa-storage', 'sa-ai-usage', 'sa-health', 'sa-leads', 'sa-lead-inbox']) {
       assert.ok(!nav.includes(`page: '${forbidden}'`), `no ${forbidden} sidebar item`);
     }
   });
@@ -76,8 +76,8 @@ describe('SA-UI Overview contract', () => {
     assert.ok(!overview.includes('Math.random'), 'no fake/random data');
   });
 
-  test('SA-UI-08: Overview has Quick Actions into all 4 primary surfaces', () => {
-    for (const target of ['sa-create-organization', 'super-admin-organizations', 'sa-packages', 'sa-landing']) {
+  test('SA-UI-08: Overview has Quick Actions into primary surfaces', () => {
+    for (const target of ['sa-create-organization', 'super-admin-organizations', 'sa-packages-pricing', 'sa-landing']) {
       assert.ok(overview.includes(`setCurrentPage('${target}')`), `quick action to ${target}`);
     }
   });

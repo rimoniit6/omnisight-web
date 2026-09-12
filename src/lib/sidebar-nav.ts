@@ -6,7 +6,6 @@
  * module only declares WHAT the navigation contains. The two shells must never
  * drift apart, so tests import navGroups directly to prove structure:
  *   • exactly one Organizations entry for the platform (super admin)
- *   • no lead-inbox / payment-verification / platform-ops entries
  *   • the Super Admin surface is Organizations-centric: Overview,
  *     Organizations, Packages (reusable catalog), Landing Page — while
  *     Subscriptions / Manual Payments / Licenses live INSIDE each
