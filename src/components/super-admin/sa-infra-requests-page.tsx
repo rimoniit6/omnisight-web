@@ -112,7 +112,7 @@ function StatusBadge({ status }: { status: string }) {
   const map: Record<string, { label: string; className: string }> = {
     submitted: { label: 'Pending Review', className: 'bg-amber-500/15 text-amber-600' },
     approved: { label: 'Approved', className: 'bg-blue-500/15 text-blue-600' },
-    applied: { label: 'Migrating', className: 'bg-violet-500/15 text-violet-600' },
+    applied: { label: 'Applied', className: 'bg-violet-500/15 text-violet-600' },
     active: { label: 'Active', className: 'bg-emerald-500/15 text-emerald-600' },
     rejected: { label: 'Rejected', className: 'bg-rose-500/15 text-rose-600' },
     cancelled: { label: 'Cancelled', className: 'bg-slate-500/15 text-slate-600' },
@@ -157,7 +157,7 @@ export function SaInfraRequestsPage() {
     staleTime: 15_000,
   });
 
-  const detailQuery = useQuery<{ data: { request: InfraRequest; organization: { id: string; name: string; slug: string } } }>({
+  const detailQuery = useQuery<{ data: { request: InfraRequest; organization: { id: string; name: string; slug: string; deploymentMode?: string }; currentInfrastructure?: { database: { configured: boolean; host: string | null; port: number | null; name: string | null; user: string | null; ssl: boolean; testStatus: string | null }; storage: { driver: string; url: string | null; testStatus: string | null } } | null; latestMigration?: { id: string; status: string; recordsDone: number; recordsTotal: number; objectsDone: number; objectsTotal: number; errorMessage: string | null; activatedAt: string | null } | null } }>({
     queryKey: ['sa-infra-request-detail', detailId],
     queryFn: async () => {
       const res = await fetch(`/api/admin/infrastructure-requests/${detailId}`, { credentials: 'same-origin' });
@@ -452,6 +452,31 @@ export function SaInfraRequestsPage() {
                     )}
                   </div>
                 </div>
+
+                {/* Current Infrastructure Context */}
+                {detail.currentInfrastructure && (
+                  <div className="rounded-lg border border-blue-200 bg-blue-50 p-3">
+                    <div className="font-medium mb-2 text-blue-900">Current Infrastructure</div>
+                    <div className="text-xs text-blue-800 space-y-1">
+                      <div>Deployment Mode: {detail.organization.deploymentMode ?? 'MANAGED'}</div>
+                      {detail.request.kind === 'DATABASE' ? (
+                        <>
+                          <div>Database: {detail.currentInfrastructure.database.configured
+                            ? `${detail.currentInfrastructure.database.host ?? 'N/A'}:${detail.currentInfrastructure.database.port ?? 5432}/${detail.currentInfrastructure.database.name ?? 'N/A'}`
+                            : 'Platform-managed'}</div>
+                          <div>DB Test Status: {detail.currentInfrastructure.database.testStatus ?? 'not tested'}</div>
+                        </>
+                      ) : (
+                        <>
+                          <div>Storage: {detail.currentInfrastructure.storage.driver === 'supabase'
+                            ? detail.currentInfrastructure.storage.url ?? 'Supabase (configured)'
+                            : 'Platform pool'}</div>
+                          <div>Storage Test Status: {detail.currentInfrastructure.storage.testStatus ?? 'not tested'}</div>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                )}
               </div>
 
               {/* Data Migration progress + Activate / Retry (real progress only) */}

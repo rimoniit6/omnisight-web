@@ -1756,6 +1756,111 @@ Deletion must be auditable where required.
 
 ---
 
+# 63A. Employee Profile UI — Location and Screenshot Tabs
+
+## 63A.1 Employee Profile Tabs
+
+The Employee Profile must include top-level tabs for employee-specific monitoring data.
+
+Required tabs include (but are not limited to):
+
+* Overview
+* Activity
+* Apps & Websites
+* Timeline
+* Keyboard
+* **Location**
+* **Screenshot**
+* Webcam
+* Devices
+* Alerts
+
+Each tab is a separate top-level tab. Tabs are NOT nested inside each other.
+
+## 63A.2 Location Tab
+
+The Location tab must:
+
+* Display the employee's latest accepted geolocation fix on an interactive map
+* Show a paginated location history table with date range filtering
+* Provide a **Refresh** button that requests the latest available location from the server
+* Support manual refresh (button click) and realtime refresh (WebSocket `location-update` events)
+* Show tracking status banners (disabled tracking, missing consent)
+* Show IP-based location warnings when applicable
+* Be organization-scoped — never display data from another organization
+
+The Location tab does NOT contain screenshot functionality.
+
+## 63A.3 Screenshot Tab
+
+A separate **Screenshot** tab must exist in the Employee Profile, alongside the Location tab and other tabs.
+
+The Screenshot tab must:
+
+* Display captured screenshots for the **currently selected employee only**
+* Allow an authorized user to **initiate a screenshot capture** from this tab
+* Show newly captured screenshots when available
+* Handle loading state, capture-in-progress state, device/Agent offline state, and capture failure/timeout
+* Be organization-scoped — never display screenshots from another employee or organization
+* Use the existing Agent screenshot capture pipeline (Agent → spool → upload → storage → retrieval)
+* Enforce existing role permissions and organization isolation
+
+### 63A.3.1 On-Demand Screenshot Capture
+
+The Screenshot tab includes a **"Take Screenshot"** button that triggers an immediate device screenshot capture.
+
+**Command Flow:**
+
+1. Admin clicks "Take Screenshot" → UI sends `POST /api/device-commands` with `commandType: 'screenshot.capture'`
+2. Server enqueues the command in the `AgentCommand` table with `PENDING` status
+3. Agent polls `GET /api/agent/commands` every 10s, discovers the command
+4. Agent validates the command against its local allowlist (must include `screenshot.capture`)
+5. Agent invokes `ScreenshotCollector.captureNow()` — performs immediate capture bypassing the interval scheduler
+6. Capture respects consent, config, working-hours, and native availability gates
+7. Agent acknowledges the command (`acknowledged` or `failed`)
+8. Captured image is spooled → drained → uploaded via `POST /api/agent/screenshot`
+9. Server processes, stores, and indexes the screenshot
+10. UI auto-refreshes the screenshot list after ~8s delay
+
+**Security Model:**
+
+* `screenshot.capture` is in the server-side `AGENT_COMMAND_ALLOWLIST` — only this command type is deliverable
+* Agent independently validates against its own local allowlist (defense in depth)
+* Commands are device-bound AND organization-bound — cross-org injection is impossible
+* Commands expire after 60 seconds — stale commands are never executed
+* Each command is atomically claimed (PENDING → DELIVERED) — never delivered twice
+* Consent, config, and working-hours gates are enforced even on explicit capture commands
+
+**UI States:**
+
+* **Idle**: Button enabled when an online device is detected; disabled when no online device
+* **Requesting**: Button shows spinner with "Capturing…" text while command is in flight
+* **Success**: Green banner confirms command sent; screenshot list auto-refreshes
+* **Failed**: Red banner shows error message; admin can retry
+* **No Device**: Amber warning when no online agent device is found
+
+The Screenshot tab is NOT a button inside the Location tab. It is a separate, independent tab.
+
+## 63A.4 Organization Admin Screenshots Page
+
+A separate **Organization Admin → Screenshots** standalone page exists for organization-wide screenshot management.
+
+This page provides:
+
+* Organization-wide screenshot browsing across all employees
+* Employee filtering, device filtering, date filtering
+* OCR text search
+* Batch AI analysis
+* Screenshot detail view with AI productivity analysis
+* Statistics (total, today, flagged, storage)
+
+The Organization Admin Screenshots page and the Employee Profile Screenshot tab coexist. They serve different scopes:
+
+* **Employee Profile → Screenshot** = employee-specific screenshot experience
+* **Organization Admin → Screenshots** = organization-wide screenshot management
+
+---
+
 # 64. Storage Architecture
 
 Monitoring products can generate large amounts of binary data.

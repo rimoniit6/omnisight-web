@@ -17,6 +17,7 @@ import { KeyboardActivityPanel } from './telemetry/keyboard-activity-panel';
 import { LocationPanel } from './telemetry/location-panel';
 import { WebcamPanel } from './telemetry/webcam-panel';
 import { WebsiteDomainsPanel } from './telemetry/website-domains-panel';
+import { EmployeeScreenshotTab } from './telemetry/employee-screenshot-tab';
 
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
@@ -723,6 +724,7 @@ export function EmployeeDetailsPage() {
               <TabsTrigger value="timeline" className="px-4">Timeline</TabsTrigger>
               <TabsTrigger value="keyboard" className="px-4">Keyboard</TabsTrigger>
               <TabsTrigger value="location" className="px-4">Location</TabsTrigger>
+              <TabsTrigger value="screenshots" className="px-4">Screenshots</TabsTrigger>
               <TabsTrigger value="webcam" className="px-4">Webcam</TabsTrigger>
               <TabsTrigger value="devices" className="px-4">Devices</TabsTrigger>
               <TabsTrigger value="alerts" className="px-4">Alerts</TabsTrigger>
@@ -1109,6 +1111,11 @@ export function EmployeeDetailsPage() {
         {/* Location Tab */}
         <TabsContent value="location" className="space-y-4">
           {emp ? <LocationPanel employeeId={emp.id} /> : null}
+        </TabsContent>
+
+        {/* Screenshots Tab */}
+        <TabsContent value="screenshots" className="space-y-4">
+          {emp ? <EmployeeScreenshotTab employeeId={emp.id} /> : null}
         </TabsContent>
 
         {/* Webcam Tab — explicit operator control, never auto-starts */}

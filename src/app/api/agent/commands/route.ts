@@ -14,7 +14,7 @@ import { log, requestContext } from '@/lib/logger';
 //     org derived from the token, AND a row-level org predicate (a command
 //     row mis-targeted under another organization can never be fetched).
 //   - Only ALLOWLISTED command types are ever returned (initially
-//     webcam.start / webcam.stop — nothing else is executable).
+//     webcam.start / webcam.stop / screenshot.capture — nothing else is executable).
 //   - Commands must be unexpired; stale PENDING commands are transitioned to
 //     EXPIRED opportunistically on each poll.
 //   - Delivery is ATOMIC and replay-safe: a candidate is claimed with an
@@ -22,7 +22,7 @@ import { log, requestContext } from '@/lib/logger';
 //     exactly ONE poll and can never be fetched (or executed) twice.
 //   - The endpoint performs NO command execution of any kind.
 
-export const AGENT_COMMAND_ALLOWLIST = ['webcam.start', 'webcam.stop'] as const;
+export const AGENT_COMMAND_ALLOWLIST = ['webcam.start', 'webcam.stop', 'screenshot.capture'] as const;
 
 const MAX_COMMANDS_PER_POLL = 5;
 

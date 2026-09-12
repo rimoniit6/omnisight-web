@@ -138,10 +138,26 @@ export async function DELETE(
     };
 
     if (impact.disposition === 'soft' && impact.softAction === 'retire') {
+      // Read current state BEFORE retire to decrement activeDeviceCount if active.
+      const before = await orgData.device.findUnique({
+        where: { id },
+        select: { status: true, lastHeartbeat: true },
+      });
+      const wasActive = before && effectiveDeviceStatus(before.status, before.lastHeartbeat) === 'online';
+
       const retired = await orgData.device.update({
         where: { id },
         data: { status: 'retired' },
       });
+
+      // Decrement activeDeviceCount if the device was active before retirement.
+      if (wasActive) {
+        await db.organization.updateMany({
+          where: { id: admin.organizationId },
+          data: { activeDeviceCount: { decrement: 1 } },
+        });
+      }
+
       await audit();
       return NextResponse.json({
         data: retired,

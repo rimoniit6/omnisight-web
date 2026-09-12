@@ -58,10 +58,23 @@ export async function POST(
 
       // Deactivate + unbind the device. Its tokens are now invalid (fail
       // closed) and it can no longer authenticate (claim is revoked).
+      const deviceBefore = await tx.device.findUnique({
+        where: { id: claim.deviceId },
+        select: { status: true, lastHeartbeat: true },
+      });
       await tx.device.update({
         where: { id: claim.deviceId },
         data: { status: 'inactive', employeeId: null },
       });
+
+      // Decrement activeDeviceCount if the device was active before revocation.
+      const { effectiveDeviceStatus } = await import('@/lib/device-status');
+      if (deviceBefore && effectiveDeviceStatus(deviceBefore.status, deviceBefore.lastHeartbeat) === 'online') {
+        await tx.organization.updateMany({
+          where: { id: admin.organizationId },
+          data: { activeDeviceCount: { decrement: 1 } },
+        });
+      }
 
       await tx.auditLog.create({
         data: {

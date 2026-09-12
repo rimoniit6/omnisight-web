@@ -1,9 +1,9 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useRouter } from 'next/navigation';
-import { Loader2, Save, Database, HardDrive, ShieldAlert, CheckCircle2, XCircle, Clock, AlertTriangle, HelpCircle, ChevronDown, ChevronRight, Info } from 'lucide-react';
+import { Loader2, Save, Database, HardDrive, ShieldAlert, CheckCircle2, XCircle, X, Clock, AlertTriangle, HelpCircle, ChevronDown, ChevronRight, Info } from 'lucide-react';
 import { toast } from 'sonner';
 import { useCurrentUser } from '@/hooks/use-current-user';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -22,6 +22,15 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import { Textarea } from '@/components/ui/textarea';
 import { MigrationStatusCard, type TransferState } from '@/components/data-infrastructure/migration-status-card';
 
 interface OpenChangeRequestView {
@@ -175,7 +184,7 @@ function StatusBadge({ status }: { status: string }) {
     draft: { label: 'Draft', className: 'bg-slate-500/15 text-slate-600' },
     submitted: { label: 'Pending Review', className: 'bg-amber-500/15 text-amber-600' },
     approved: { label: 'Approved', className: 'bg-blue-500/15 text-blue-600' },
-    applied: { label: 'Migrating', className: 'bg-violet-500/15 text-violet-600' },
+    applied: { label: 'Applied', className: 'bg-violet-500/15 text-violet-600' },
     active: { label: 'Active', className: 'bg-emerald-500/15 text-emerald-600' },
     rejected: { label: 'Rejected', className: 'bg-rose-500/15 text-rose-600' },
     cancelled: { label: 'Cancelled', className: 'bg-slate-500/15 text-slate-600' },
@@ -233,8 +242,42 @@ function StatusDescription({ status, rejectionReason, errorMessage }: { status: 
   return base ? <p className="text-sm text-muted-foreground mt-1">{base}</p> : null;
 }
 
-function RequestHistoryItem({ req }: { req: ChangeRequest }) {
+function RequestHistoryItem({ req, orgId }: { req: ChangeRequest; orgId: string }) {
   const [expanded, setExpanded] = useState(false);
+  const [cancelDialogOpen, setCancelDialogOpen] = useState(false);
+  const [cancelReason, setCancelReason] = useState('');
+  const queryClient = useQueryClient();
+
+  const canCancel = req.status === 'submitted' || (req.status === 'approved' && Boolean(req.errorMessage));
+
+  const cancelMutation = useMutation({
+    mutationFn: async ({ reason }: { reason?: string }) => {
+      const endpoint = req.kind === 'DATABASE'
+        ? `/api/organizations/${orgId}/settings/database/cancel`
+        : `/api/organizations/${orgId}/settings/storage/cancel`;
+      const res = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify({ reason: reason || undefined }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || 'Failed to cancel request');
+      }
+      return res.json();
+    },
+    onSuccess: () => {
+      toast.success('Change request cancelled');
+      queryClient.invalidateQueries({ queryKey: ['infra-requests', orgId, 'DATABASE'] });
+      queryClient.invalidateQueries({ queryKey: ['infra-requests', orgId, 'STORAGE'] });
+      setCancelDialogOpen(false);
+      setCancelReason('');
+    },
+    onError: (err: Error) => {
+      toast.error(err.message);
+    },
+  });
 
   return (
     <Collapsible open={expanded} onOpenChange={setExpanded}>
@@ -251,6 +294,17 @@ function RequestHistoryItem({ req }: { req: ChangeRequest }) {
           </div>
           <div className="flex items-center gap-2">
             <StatusBadge status={req.status} />
+            {canCancel && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-7 px-2 text-rose-600 hover:text-rose-700 hover:bg-rose-50"
+                onClick={(e) => { e.stopPropagation(); setCancelDialogOpen(true); }}
+              >
+                <X className="h-3.5 w-3.5 mr-1" />
+                Cancel
+              </Button>
+            )}
             <CollapsibleTrigger asChild>
               <button className="p-1 hover:bg-muted rounded">
                 {expanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
@@ -274,6 +328,41 @@ function RequestHistoryItem({ req }: { req: ChangeRequest }) {
           )}
         </CollapsibleContent>
       </div>
+
+      {/* Cancel Confirmation Dialog */}
+      <Dialog open={cancelDialogOpen} onOpenChange={(open) => { if (!open) { setCancelDialogOpen(false); setCancelReason(''); } }}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Cancel Change Request #{req.requestNo}</DialogTitle>
+            <DialogDescription>
+              Are you sure you want to cancel this {req.kind} change request? This action cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            <Label htmlFor="cancel-reason">Reason (optional)</Label>
+            <Textarea
+              id="cancel-reason"
+              value={cancelReason}
+              onChange={(e) => setCancelReason(e.target.value)}
+              placeholder="Optional reason for cancellation..."
+              rows={2}
+            />
+          </div>
+          <DialogFooter className="flex-row gap-3 justify-end pt-2">
+            <Button variant="outline" onClick={() => { setCancelDialogOpen(false); setCancelReason(''); }}>
+              Keep Request
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={() => cancelMutation.mutate({ reason: cancelReason || undefined })}
+              disabled={cancelMutation.isPending}
+            >
+              {cancelMutation.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <XCircle className="mr-2 h-4 w-4" />}
+              Cancel Request
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </Collapsible>
   );
 }
@@ -622,7 +711,7 @@ function DatabaseConfig({ orgId }: { orgId: string }) {
               <h3 className="text-sm font-semibold mb-3">Request History</h3>
               <div className="space-y-2">
                 {requests.map((req) => (
-                  <RequestHistoryItem key={req.id} req={req} />
+                  <RequestHistoryItem key={req.id} req={req} orgId={orgId} />
                 ))}
               </div>
             </div>
@@ -828,7 +917,7 @@ function DatabaseConfig({ orgId }: { orgId: string }) {
             <h3 className="text-sm font-semibold mb-3">Request History</h3>
             <div className="space-y-2">
               {requests.map((req) => (
-                <RequestHistoryItem key={req.id} req={req} />
+                <RequestHistoryItem key={req.id} req={req} orgId={orgId} />
               ))}
             </div>
           </div>
@@ -1047,7 +1136,7 @@ function StorageConfig({ orgId }: { orgId: string }) {
               <h3 className="text-sm font-semibold mb-3">Request History</h3>
               <div className="space-y-2">
                 {requests.map((req) => (
-                  <RequestHistoryItem key={req.id} req={req} />
+                  <RequestHistoryItem key={req.id} req={req} orgId={orgId} />
                 ))}
               </div>
             </div>
@@ -1237,7 +1326,7 @@ function StorageConfig({ orgId }: { orgId: string }) {
             <h3 className="text-sm font-semibold mb-3">Request History</h3>
             <div className="space-y-2">
               {requests.map((req) => (
-                <RequestHistoryItem key={req.id} req={req} />
+                <RequestHistoryItem key={req.id} req={req} orgId={orgId} />
               ))}
             </div>
           </div>

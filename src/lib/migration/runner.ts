@@ -280,11 +280,19 @@ async function executeDatabaseCutover(
     if (!verify.ok) throw new Error(verify.reason);
 
     // 4 ─ FINALIZE atomically.
+    // RETENTION: Set retiredAt = now + RETENTION_DAYS. The old platform
+    // database data is retained until retiredAt, after which it may be
+    // cleaned up by the retention job. Rollback is NOT supported with the
+    // current architecture because the routing flip is atomic and new data
+    // flows directly to the destination — restoring the old platform DB as
+    // the active destination would lose all post-cutover data.
     const now = new Date();
+    const RETENTION_DAYS = 30;
+    const retiredAt = new Date(now.getTime() + RETENTION_DAYS * 24 * 60 * 60 * 1000);
     await db.$transaction(async (tx) => {
       await tx.infrastructureMigration.update({
         where: { id: migration.id },
-        data: { status: 'activated', activatedAt: now, finishedAt: now, errorStage: null, errorMessage: null },
+        data: { status: 'activated', activatedAt: now, finishedAt: now, retiredAt, errorStage: null, errorMessage: null },
       });
       await tx.infrastructureChangeRequest.update({
         where: { id: request.id },
@@ -295,7 +303,7 @@ async function executeDatabaseCutover(
           action: 'infrastructure_activated',
           resource: 'infrastructure-migration',
           resourceId: migration.id,
-          description: `${actor.email} cut over the DATABASE infrastructure at the deterministic boundary (request #${request.requestNo}); in-flight rows were drained and verified`,
+          description: `${actor.email} cut over the DATABASE infrastructure at the deterministic boundary (request #${request.requestNo}); in-flight rows were drained and verified. Old platform data retained until ${retiredAt.toISOString().slice(0, 10)}.`,
           userId: actor.id,
           organizationId: orgId,
         },
@@ -372,11 +380,19 @@ async function executeStorageCutover(
     await touchMigration(migration.id);
 
     // 4 ─ FINALIZE atomically.
+    // RETENTION: Set retiredAt = now + RETENTION_DAYS. The old platform
+    // storage data is retained until retiredAt, after which it may be
+    // cleaned up by the retention job. Rollback is NOT supported with the
+    // current architecture because the routing flip is atomic and new data
+    // flows directly to the destination — restoring the old platform storage
+    // as the active destination would lose all post-cutover data.
     const now = new Date();
+    const RETENTION_DAYS = 30;
+    const retiredAt = new Date(now.getTime() + RETENTION_DAYS * 24 * 60 * 60 * 1000);
     await db.$transaction(async (tx) => {
       await tx.infrastructureMigration.update({
         where: { id: migration.id },
-        data: { status: 'activated', activatedAt: now, finishedAt: now, errorStage: null, errorMessage: null },
+        data: { status: 'activated', activatedAt: now, finishedAt: now, retiredAt, errorStage: null, errorMessage: null },
       });
       await tx.infrastructureChangeRequest.update({
         where: { id: request.id },
@@ -387,7 +403,7 @@ async function executeStorageCutover(
           action: 'infrastructure_activated',
           resource: 'infrastructure-migration',
           resourceId: migration.id,
-          description: `${actor.email} cut over the STORAGE infrastructure at the deterministic boundary (request #${request.requestNo}); in-flight objects were drained and verified`,
+          description: `${actor.email} cut over the STORAGE infrastructure at the deterministic boundary (request #${request.requestNo}); in-flight objects were drained and verified. Old platform data retained until ${retiredAt.toISOString().slice(0, 10)}.`,
           userId: actor.id,
           organizationId: orgId,
         },

@@ -11,7 +11,7 @@ import { log, requestContext } from '@/lib/logger';
 // SECURITY:
 //   - Admin+ JWT required; the command is created in the admin's organization
 //     (never client-supplied).
-//   - commandType is allowlisted (webcam.start | webcam.stop) — nothing else
+//   - commandType is allowlisted (webcam.start | webcam.stop | screenshot.capture) — nothing else
 //     can ever be enqueued.
 //   - The employee is derived from the DEVICE row (device.employeeId), never
 //     from client input; a device without a bound employee is rejected.

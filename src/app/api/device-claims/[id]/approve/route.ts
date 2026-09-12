@@ -150,7 +150,16 @@ export async function POST(
 
       // ONE ACTIVE DEVICE PER EMPLOYEE: deactivate the employee's other
       // active devices so the newly approved device becomes the sole active
-      // device.
+      // device. Count how many were online so we can decrement activeDeviceCount.
+      const deactivatedOnline = await tx.device.findMany({
+        where: {
+          organizationId: admin.organizationId,
+          employeeId: employee.id,
+          id: { not: claim.deviceId },
+          status: 'online',
+        },
+        select: { id: true },
+      });
       await tx.device.updateMany({
         where: {
           organizationId: admin.organizationId,
@@ -170,6 +179,16 @@ export async function POST(
           lastHeartbeat: new Date(),
         },
       });
+
+      // Adjust activeDeviceCount: decrement for deactivated online devices,
+      // increment for the newly approved device (net change may be zero).
+      const netDelta = 1 - deactivatedOnline.length;
+      if (netDelta !== 0) {
+        await tx.organization.updateMany({
+          where: { id: admin.organizationId },
+          data: { activeDeviceCount: netDelta > 0 ? { increment: netDelta } : { decrement: -netDelta } },
+        });
+      }
 
       // Employee becomes agent-eligible (required by validateAgentToken).
       await tx.employee.update({

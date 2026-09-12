@@ -172,6 +172,14 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     // ── Step 3: real infrastructure change → approve + queue the DATA MIGRATION.
     // Activation is deferred until the migration has copied and verified the
     // organization's data (approve ≠ migrate ≠ activate).
+    //
+    // CONSISTENCY NOTE: The status update and migration queue are separate
+    // operations (not in one transaction) because queueMigrationForRequest
+    // uses the shared `db` client and has its own idempotency logic. If the
+    // server crashes between the status update and the queue call, the
+    // request ends up in 'approved' + errorMessage state — the same state
+    // as a failed approval. The SA can retry the approval; the queue helper
+    // is idempotent and will create/revive the migration on retry.
     const now = new Date();
     const approvedRequest = await db.$transaction(async (tx) => {
       return tx.infrastructureChangeRequest.update({

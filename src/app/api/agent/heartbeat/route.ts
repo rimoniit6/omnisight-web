@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { validateAgentToken, getClientIp } from '@/lib/agent/auth';
+import { effectiveLiveStatus } from '@/lib/presence';
 import { log, requestContext } from '@/lib/logger';
 
 // POST /api/agent/heartbeat
@@ -23,6 +24,12 @@ export async function POST(req: NextRequest) {
 
     // Update device heartbeat
     if (authResult.deviceId) {
+      // Read current state BEFORE update to detect online transition.
+      const before = await orgData.device.findUnique({
+        where: { id: authResult.deviceId },
+        select: { status: true, lastHeartbeat: true },
+      });
+
       await orgData.device.update({
         where: { id: authResult.deviceId },
         data: {
@@ -31,6 +38,17 @@ export async function POST(req: NextRequest) {
           ipAddress: clientIp,
         },
       });
+
+      // Increment activeDeviceCount when a device transitions to online
+      // (not-online → online). The sync job corrects drift every ~30 min,
+      // but this keeps the Organizations table current between syncs.
+      const wasActive = before && effectiveLiveStatus(before.status, before.lastHeartbeat, new Date()) === 'online';
+      if (!wasActive) {
+        await db.organization.updateMany({
+          where: { id: authResult.employee!.organizationId },
+          data: { activeDeviceCount: { increment: 1 } },
+        });
+      }
     }
 
     // Canonical break state rides on every heartbeat so the agent pauses

@@ -960,6 +960,9 @@ model InfrastructureMigration {
   // drained to the destination; every row written after lands directly there.
   cutoverAt      DateTime?
   activatedAt    DateTime?
+  // When the old platform data becomes eligible for cleanup (activatedAt + retention window).
+  // Until retiredAt, old data is retained for verification and potential rollback.
+  retiredAt      DateTime?
   finishedAt     DateTime?
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
@@ -1159,7 +1162,7 @@ model AgentCommand {
   organizationId String
   employeeId     String
   deviceId       String
-  commandType    String // allowlist: webcam.start | webcam.stop
+  commandType    String // allowlist: webcam.start | webcam.stop | screenshot.capture
   payload        String // JSON string (validated server-side)
   status         String    @default("PENDING") // PENDING, DELIVERED, ACKNOWLEDGED, EXPIRED, CANCELLED
   createdAt      DateTime  @default(now())
