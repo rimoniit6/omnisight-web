@@ -214,27 +214,49 @@ function NotificationDetailPanel({
             </Badge>
           </div>
 
-          {/* Mark as Read action */}
-          {notif.status === 'unread' && (
-            <Button
-              className="w-full h-9 text-sm"
-              onClick={() => onMarkRead(notif.id, isLead)}
-            >
-              <Check className="w-4 h-4 mr-2" />
-              Mark as Read
-            </Button>
-          )}
-
-          {!isLead && notif.status !== 'unread' && (
-            <p className="text-xs text-muted-foreground text-center py-2">
-              This notification has been read.
-            </p>
-          )}
-
-          {isLead && notif.status !== 'new' && (
-            <p className="text-xs text-muted-foreground text-center py-2">
-              This lead has been processed.
-            </p>
+          {/* Action buttons */}
+          {isLead ? (
+            <div className="space-y-2">
+              {notif.status === 'new' ? (
+                <>
+                  <Button
+                    className="w-full h-9 text-sm"
+                    onClick={() => onMarkRead(notif.id, true)}
+                  >
+                    <Check className="w-4 h-4 mr-2" />
+                    Mark as Contacted
+                  </Button>
+                  <Button
+                    variant="outline"
+                    className="w-full h-9 text-sm text-rose-600 hover:text-rose-700"
+                    onClick={() => handleLeadIgnore(notif.id)}
+                  >
+                    <X className="w-4 h-4 mr-2" />
+                    Ignore
+                  </Button>
+                </>
+              ) : (
+                <p className="text-xs text-muted-foreground text-center py-2">
+                  Lead processed — status: {notif.status}
+                </p>
+              )}
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {notif.status === 'unread' ? (
+                <Button
+                  className="w-full h-9 text-sm"
+                  onClick={() => onMarkRead(notif.id, false)}
+                >
+                  <Check className="w-4 h-4 mr-2" />
+                  Mark as Read
+                </Button>
+              ) : (
+                <p className="text-xs text-muted-foreground text-center py-2">
+                  This notification has been read.
+                </p>
+              )}
+            </div>
           )}
         </div>
       </ScrollArea>
@@ -297,6 +319,7 @@ export function NotificationBell() {
         : '/api/notifications';
       const body: Record<string, unknown> = { id };
       if (isLead) {
+        // For leads, mark as read by transitioning to CONTACTED
         body.leadStatus = 'CONTACTED';
       } else {
         body.status = 'read';
@@ -315,12 +338,8 @@ export function NotificationBell() {
       queryClient.invalidateQueries({ queryKey: ['notifications-dropdown', false] });
       queryClient.invalidateQueries({ queryKey: ['notification-count', true] });
       queryClient.invalidateQueries({ queryKey: ['notification-count', false] });
-      setSelectedNotif((prev) => {
-        if (prev && prev.id === prev.id) {
-          return { ...prev, status: isPlatformMode ? (prev.type === 'lead_submission' ? 'contacted' : 'read') : 'read' };
-        }
-        return prev;
-      });
+      // Close the detail panel after marking read
+      setSelectedNotif(null);
     },
   });
 
@@ -344,8 +363,8 @@ export function NotificationBell() {
   const handleViewAll = () => {
     setNotifOpen(false);
     if (isSuperAdmin) {
-      // Super Admin: navigate to the Control Center overview
-      setCurrentPage('sa-overview');
+      // Super Admin: navigate to the Super Admin notifications page
+      setCurrentPage('sa-notifications');
     } else {
       setCurrentPage('notifications');
     }
@@ -358,6 +377,21 @@ export function NotificationBell() {
 
   const handleMarkRead = (id: string, isLead: boolean) => {
     markReadMutation.mutate({ id, isLead });
+  };
+
+  const handleLeadIgnore = (id: string) => {
+    // For ignore, we need a separate mutation since the current one only does CONTACTED
+    fetch('/api/super-admin/notifications', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id, leadStatus: 'IGNORED' }),
+    }).then((res) => {
+      if (res.ok) {
+        queryClient.invalidateQueries({ queryKey: ['notifications-dropdown', true] });
+        queryClient.invalidateQueries({ queryKey: ['notification-count', true] });
+        setSelectedNotif(null);
+      }
+    });
   };
 
   const handleClosePanel = () => {

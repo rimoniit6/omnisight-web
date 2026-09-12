@@ -67,6 +67,7 @@ const pageLabels: Record<string, string> = {
   'sa-audit': 'Audit Logs',
   'data-infrastructure': 'Data Infrastructure',
   'sa-infra-requests': 'Infrastructure Requests',
+  'sa-notifications': 'Notifications',
 };
 
 interface AppHeaderProps {
@@ -294,14 +295,12 @@ export function AppHeader({ onMobileMenuToggle, isMobile }: AppHeaderProps) {
           </PopoverContent>
         </Popover>
 
-        {/* Notifications — tenant-scoped (organizationId-scoped API); the
-            Super Admin is a control-plane operator with no tenant context,
-            so the bell does not render for them. */}
-        {!isSuperAdmin && (
-          <div data-tour-target="notifications">
-            <NotificationBell />
-          </div>
-        )}
+        {/* Notifications — available to all authenticated users.
+            Super Admin sees platform-level notifications (leads + system),
+            organization users see tenant-scoped notifications. */}
+        <div data-tour-target="notifications">
+          <NotificationBell />
+        </div>
 
         {/* Organization Switcher — only shown for multi-org users */}
         <OrgSwitcher />

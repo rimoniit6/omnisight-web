@@ -208,6 +208,7 @@ export const navGroups: NavGroup[] = [
       { page: 'sa-packages-pricing', label: 'Packages & Pricing', icon: Package },
       { page: 'sa-purchase-requests', label: 'Purchase Requests', icon: ShoppingBag },
       { page: 'sa-infra-requests', label: 'Infrastructure Requests', icon: ClipboardList },
+      { page: 'sa-notifications', label: 'Notifications', icon: Bell },
       { page: 'sa-landing', label: 'Landing Page', icon: Globe },
     ],
   },

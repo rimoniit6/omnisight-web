@@ -77,6 +77,8 @@ export const PAGE_MIN_ROLE: Record<PageType, NavMinRole> = {
   'sa-infra-requests': 'super_admin',
   // V1 purchase review queue — super_admin only.
   'sa-purchase-requests': 'super_admin',
+  // Super Admin notifications (platform + leads) — super_admin only.
+  'sa-notifications': 'super_admin',
 };
 
 /**

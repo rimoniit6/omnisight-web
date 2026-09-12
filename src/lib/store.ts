@@ -41,7 +41,8 @@ export type PageType =
   | 'billing'
   | 'data-infrastructure'
   | 'sa-infra-requests'
-  | 'sa-purchase-requests';
+  | 'sa-purchase-requests'
+  | 'sa-notifications';
 
 function getInitialTourState(): boolean {
   if (typeof window === 'undefined') return false;

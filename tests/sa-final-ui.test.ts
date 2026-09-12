@@ -32,7 +32,7 @@ describe('SA-UI sidebar contract', () => {
     // Offers / Purchase Requests / Infrastructure Requests / Landing Page.
     assert.deepEqual(pages, [
       'sa-overview', 'super-admin-organizations', 'sa-packages-pricing',
-      'sa-purchase-requests', 'sa-infra-requests', 'sa-landing',
+      'sa-purchase-requests', 'sa-infra-requests', 'sa-notifications', 'sa-landing',
     ]);
   });
 

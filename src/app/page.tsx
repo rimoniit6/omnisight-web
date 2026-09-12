@@ -59,6 +59,8 @@ const SaInfraRequestsPage = dynamic(() => import('@/components/super-admin/sa-in
 
 const SaPurchaseRequestsPage = dynamic(() => import('@/components/super-admin/sa-pricing-pages').then(m => ({ default: m.SuperAdminPurchaseRequestsPage })), { ssr: false });
 
+const SuperAdminNotificationsPage = dynamic(() => import('@/components/super-admin/sa-notifications-page').then(m => ({ default: m.SuperAdminNotificationsPage })), { ssr: false });
+
 const pageComponents: Record<string, React.ComponentType> = {
   dashboard: DashboardPage,
   employees: EmployeesPage,
@@ -100,6 +102,7 @@ const pageComponents: Record<string, React.ComponentType> = {
   'data-infrastructure': DataInfrastructurePage,
   'sa-infra-requests': SaInfraRequestsPage,
   'sa-purchase-requests': SaPurchaseRequestsPage,
+  'sa-notifications': SuperAdminNotificationsPage,
 };
 
 function AppLayout() {
