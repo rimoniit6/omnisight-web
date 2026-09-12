@@ -21,18 +21,10 @@ runs the same steps on every PR to `main`):
 bun run lint          # ESLint — 0 errors in product source
 bun run typecheck     # tsc --noEmit (with generated-types clean)
 bun run test          # existing suite (starts a dev server against a temp DB)
-bun run test:unit     # pure unit tests (licenses, subscription helpers)
-bun run test:integration  # license, subscription, invoices, data-expiry
+bun run test:unit     # pure unit tests (subscription helpers, deployment modes)
+bun run test:integration  # subscription, invoices, data-expiry
 bun run test:e2e      # Playwright, if the change touches user flows
 bun run build         # production build (standalone output)
-```
-
-For self-hosted license changes also verify:
-
-```bash
-# 1. prisma migrate deploy on a throwaway DB
-# 2. SEED_ALLOWED=1 npx tsx scripts/ensure-self-hosted-plan.ts
-# 3. npx tsx --test tests/api/license.test.ts
 ```
 
 ## 3. Changelog
@@ -55,10 +47,10 @@ git push origin v0.2.1
 
 ## 5. Deploy
 
-- **Self-hosted (VPS):** `git pull && npx prisma migrate deploy && npm run build
+- **VPS:** `git pull && npx prisma migrate deploy && npm run build
   && sudo systemctl restart omnisight omnisight-live`.
-- **Docker:** `docker compose up -d --build` (entrypoint applies migrations and
-  bootstraps the self-hosted plan).
+- **Docker:** `docker compose up -d --build` (the entrypoint applies migrations,
+  then starts the server — no plan or seed data is created on boot).
 - **Vercel + Supabase:** push to the connected GitHub branch; migrations run via
   the configured deploy hook.
 
@@ -68,6 +60,5 @@ After deploy confirm:
 
 - `GET /api/health` returns `status: ok` with `database`/`storage` ok.
 - A metrics scrape against `GET /api/metrics` (with `METRICS_TOKEN`) succeeds.
-- In self-hosted mode, `SELF_HOSTED_REQUIRE_LICENSE=true` refuses to start with
-  a bad/expired `LICENSE_KEY`, and the `Enterprise_SelfHosted` plan exists.
-- Smoke-test login, an org-scoped page, and the license status page.
+- Smoke-test login, an org-scoped page, and the Super Admin organization detail
+  (subscription activation + manual payment recording).

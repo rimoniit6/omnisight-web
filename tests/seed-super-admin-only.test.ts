@@ -136,8 +136,10 @@ test('SS-05: seed() creates ONLY the Super Admin and the Plan catalog', async ()
   const saCount = await db.appUser.count({ where: { role: 'super_admin' } });
   assert.equal(saCount, 1, 'exactly one super admin after seed');
 
-  // The 4 required plan entries exist and nothing else was bootstrapped.
-  assert.equal(await db.plan.count(), 4, 'plan reference catalog (Free/Pro/Business/Enterprise_SelfHosted)');
+  // The required plan entries exist and nothing else was bootstrapped.
+  // NOTE: `Enterprise_SelfHosted` was removed with the LicenseKey / self-hosted
+  // architecture, so the catalog is Free/Pro/Business only.
+  assert.equal(await db.plan.count(), 3, 'plan reference catalog (Free/Pro/Business)');
   assert.equal(await db.organization.count(), 1, 'only the pre-existing survivor org — no demo orgs');
   assert.equal(await db.device.count(), 0, 'no demo devices');
 });
@@ -147,6 +149,6 @@ test('SS-06: seed() is idempotent and never overwrites the SA password', async (
 
   const sa = await db.appUser.findUnique({ where: { email: SA_EMAIL } });
   assert.equal(await db.appUser.count({ where: { role: 'super_admin' } }), 1, 'still exactly one SA');
-  assert.equal(await db.plan.count(), 4, 'plan catalog unchanged');
+  assert.equal(await db.plan.count(), 3, 'plan catalog unchanged (Free/Pro/Business, no duplicates)');
   assert.ok(sa!.password.startsWith('$2'), 'still a hash (untouched by rerun)');
 });

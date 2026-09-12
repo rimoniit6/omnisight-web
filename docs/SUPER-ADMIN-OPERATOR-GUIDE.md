@@ -42,7 +42,7 @@ Super admin is provisioned through the bootstrap seed
 |------|-----------|
 | Overview (metrics) | `sa-overview-page.tsx` |
 | Organizations list | `super-admin-organizations-page.tsx` |
-| Organization detail (members/projects/invoices/licenses/devices/audit) | `super-admin-organization-detail-page.tsx` |
+| Organization detail (members/projects/invoices/devices/audit) | `super-admin-organization-detail-page.tsx` |
 | Packages / Subscriptions / Payments / Licenses | `sa-billing-pages.tsx` |
 | Audit log | `sa-audit-page.tsx` |
 | Create organization | `sa-create-organization-page.tsx` + `organization-provision-flow.tsx` |
@@ -68,7 +68,7 @@ Super admin is provisioned through the bootstrap seed
 | Route | Role guard | Purpose |
 |-------|-----------|---------|
 | `GET/PATCH /invoices`, `GET/PATCH /invoices/[invoiceId]` | SA | Payment lifecycle; **no DELETE** (history preserved) |
-| `GET /licenses`, `POST /licenses`, `POST /licenses/[licenseId]/revoke` | SA | License keys (PRIVATE orgs only; MANAGED orgs use the striped plan) |
+| ~~`/licenses`~~ | — | **Removed.** License keys went with the Self-Hosted / LicenseKey architecture (not a V1 service model) |
 | `POST /organizations/create` | SA | Org create |
 | `PATCH /organizations/[orgId]/settings` | SA | Super-admin-owned org settings (see §3) |
 | `GET/POST /data-retention`, `GET/POST /delete-impact` | SA | Retention + delete-impact preview (uses `src/lib/delete-impact.ts`) |
@@ -188,12 +188,11 @@ Full suite: `npm test` (requires the dev server on :3000 for ~60% of files).
 
 ### Common tasks
 
-- **Issue a license for a PRIVATE organization** → Organization detail → Licenses.
 - **Review an overdue invoice** → Payments → filter `OVERDUE` → edit → mark PAID
   (audited; no hard delete exists).
 - **Audit trail** → Super Admin → Audit (`/api/super-admin/audit`). Rows are written
   transactionally on every auditable SA mutation (org create/patch, membership,
-  license, invoice, package, platform branding, login).
+  invoice, package, platform branding, login).
 
 ---
 

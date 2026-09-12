@@ -17,7 +17,7 @@ import {
 } from '@/components/ui/dialog';
 
 // ─── Packages — reusable catalog (the ONE canonical Packages surface) ───────
-// Subscriptions / manual payments / licenses are NOT standalone menus: they
+// Subscriptions / manual payments are NOT standalone menus: they
 // are managed from each Organization (Organizations → Organization). Package
 // CRUD reuses the existing super-admin package APIs — no second route, no
 // duplicated API logic.
@@ -30,12 +30,13 @@ interface PackageRow {
   currency: string;
   maxDevices: number;
   retentionDays: number;
-  isSelfHosted: boolean;
   isActive: boolean;
   subscriptionCount: number;
-  licenseKeyCount: number;
 }
 
+// NOTE: the `isSelfHosted` plan flag and license counts were removed with the
+// LicenseKey / self-hosted architecture. Plans are V1 MANAGED / CUSTOMER_DB
+// plans only.
 const EMPTY_FORM = {
   name: '',
   description: '',
@@ -44,7 +45,6 @@ const EMPTY_FORM = {
   currency: 'BDT',
   maxDevices: '5',
   retentionDays: '90',
-  isSelfHosted: false,
   features: '',
 };
 
@@ -84,7 +84,6 @@ export function SuperAdminPackagesPage() {
       currency: pkg.currency,
       maxDevices: String(pkg.maxDevices),
       retentionDays: String(pkg.retentionDays),
-      isSelfHosted: pkg.isSelfHosted,
       features: '',
     });
     setDialogOpen(true);
@@ -101,7 +100,6 @@ export function SuperAdminPackagesPage() {
         currency: form.currency.trim() || 'BDT',
         maxDevices: Number(form.maxDevices),
         retentionDays: Number(form.retentionDays),
-        isSelfHosted: form.isSelfHosted,
         features: form.features.split(',').map((f) => f.trim()).filter(Boolean),
       };
       const res = await fetch(
@@ -199,7 +197,7 @@ export function SuperAdminPackagesPage() {
       {isError && <ErrorState onRetry={() => refetch()} />}
       {data && (
         <DataTable
-          headers={['Package', 'Price', 'Devices', 'Retention', 'Subs', 'Licenses', 'Status', '']}
+          headers={['Package', 'Price', 'Devices', 'Retention', 'Subs', 'Status', '']}
           loading={isLoading}
           empty={<EmptyState title="No packages found." />}
         >
@@ -208,7 +206,7 @@ export function SuperAdminPackagesPage() {
               <td className="px-3.5 py-3">
                 <p className="font-medium text-foreground">{p.name}</p>
                 <p className="text-[11px] text-foreground/40">
-                  {[p.description || '—', p.isSelfHosted ? 'self-hosted' : null].filter(Boolean).join(' · ')}
+                  {p.description || '—'}
                 </p>
               </td>
               <td className="px-3.5 py-3 text-foreground/70">
@@ -217,7 +215,6 @@ export function SuperAdminPackagesPage() {
               <td className="px-3.5 py-3 text-foreground/70">{p.maxDevices < 0 ? 'Unlimited' : p.maxDevices}</td>
               <td className="px-3.5 py-3 text-foreground/70">{p.retentionDays === 0 ? 'Unlimited' : `${p.retentionDays}d`}</td>
               <td className="px-3.5 py-3 text-foreground/70">{p.subscriptionCount}</td>
-              <td className="px-3.5 py-3 text-foreground/70">{p.licenseKeyCount}</td>
               <td className="px-3.5 py-3">
                 {p.isActive ? <StatusPill label="Active" tone="ok" /> : <StatusPill label="Inactive" tone="neutral" />}
               </td>
@@ -295,14 +292,6 @@ export function SuperAdminPackagesPage() {
               <Label>Features (comma-separated)</Label>
               <Input value={form.features} onChange={(e) => setForm({ ...form, features: e.target.value })} placeholder="screenshots, ai, live_monitoring" />
             </div>
-            <label className="flex items-center gap-2 text-sm sm:col-span-2">
-              <input
-                type="checkbox"
-                checked={form.isSelfHosted}
-                onChange={(e) => setForm({ ...form, isSelfHosted: e.target.checked })}
-              />
-              Self-hosted plan (license-issuable)
-            </label>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setDialogOpen(false)} disabled={saving}>

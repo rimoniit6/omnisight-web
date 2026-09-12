@@ -1,6 +1,7 @@
 # OmniSight — Web Admin Panel
 
-> AI-powered workforce intelligence platform. Self-hosted, privacy-first.
+> AI-powered workforce intelligence platform. Privacy-first, available as
+> OmniSight Managed or with a Customer Database.
 
 ---
 
@@ -231,17 +232,7 @@ This starts both:
 - **Next.js admin app** on `http://localhost:3000`
 - **Realtime service** on `http://localhost:3010`
 
-### 5. (Optional) Seed demo data
-
-```bash
-# Comprehensive demo: 10 orgs, 120+ users, 2000+ activities
-npm run db:seed:demo
-
-# Large-scale demo: 14 orgs, used by integrity tests
-npm run db:seed:mega
-```
-
-### 6. Open the application
+### 5. Open the application
 
 Visit `http://localhost:3000` and log in with the Super Admin credentials.
 
@@ -256,9 +247,7 @@ Visit `http://localhost:3000` and log in with the Super Admin credentials.
 | `npm start` | Start production server (port 3000) |
 | `npm run lint` | ESLint |
 | `npm run bootstrap:super-admin` | Create/verify Super Admin account |
-| `npm run db:seed:dev` | Seed Super Admin only |
-| `npm run db:seed:demo` | Comprehensive demo data (10 orgs, 120+ users) |
-| `npm run db:seed:mega` | Large-scale multi-org demo (14 orgs) |
+| `npm run db:seed:dev` | Seed Super Admin + Plan catalog (dev only) |
 | `npm run db:deploy` | Run pending Prisma migrations |
 | `npm run db:migrate` | Create new migration |
 | `npm run db:generate` | Generate Prisma client |
@@ -466,10 +455,9 @@ npm run test:members-add
 npm run test:consent-seed
 npm run test:consent-summary
 
-# Focused license / self-hosted tests
-npm run test:unit            # pure helpers (licenses, subscription)
-npm run test:integration     # license, subscription, invoices, data-expiry
-npm run test:license
+# Billing / subscription tests
+npm run test:unit            # pure helpers (subscription)
+npm run test:integration     # subscription, invoices, data-expiry
 
 # E2E tests (requires Playwright)
 npx playwright test
@@ -496,17 +484,19 @@ Quick summary:
 2. Run `npx prisma migrate deploy`
 3. Run `npx prisma generate`
 4. Run `npx tsx scripts/bootstrap-super-admin.ts`
-5. If self-hosted, ensure the license plan once:
-   `SEED_ALLOWED=1 npx tsx scripts/ensure-self-hosted-plan.ts`
-6. Run `npm run build`
-7. Start the live-updates service: `cd mini-services/live-updates && bun index.ts`
-8. Start the app: `npm start`
-9. Set up Caddy/reverse proxy for port 81 (WebSocket transform for realtime)
+5. Run `npm run build`
+6. Start the live-updates service: `cd mini-services/live-updates && bun index.ts`
+7. Start the app: `npm start`
+8. Set up Caddy/reverse proxy for port 81 (WebSocket transform for realtime)
+
+**Service models:** V1 supports **OmniSight Managed** and **Customer Database**
+only. Organizations are activated by a Super Admin through the subscription +
+manual-payment flow — there is no license-key step, and Self-Hosted is not a
+V1 service model.
 
 **Docker:** a multi-stage `Dockerfile` + `docker-compose.yml` run PostgreSQL and
-the app (entrypoint applies migrations and bootstraps the self-hosted plan).
-See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) → *Self-Hosted Licensing, Monitoring
-& Metrics*.
+the app (the entrypoint applies Prisma migrations, then starts the server).
+See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
 
 **Release process:** see [RELEASE.md](RELEASE.md).
 

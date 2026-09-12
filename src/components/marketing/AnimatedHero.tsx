@@ -33,7 +33,7 @@ export function AnimatedHero() {
         >
           <Badge variant="secondary" className="gap-2 px-3 py-1.5">
             <ShieldCheck className="h-4 w-4" />
-            Self-hosted available · Your data, your servers
+            Customer Database available · Your data, your database
           </Badge>
         </motion.div>
 
@@ -56,8 +56,8 @@ export function AnimatedHero() {
           className="mx-auto mt-6 max-w-2xl text-lg leading-relaxed text-muted-foreground"
         >
           OmniSight gives you real-time activity monitoring, AI-powered
-          insights, and granular policy control — with a self-hosted option so
-          your data stays on your own servers.
+          insights, and granular policy control — with a Customer Database
+          option so your data stays in your own database.
         </motion.p>
 
         <motion.div

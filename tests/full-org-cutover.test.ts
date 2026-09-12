@@ -509,7 +509,7 @@ test('FCO-04: control plane NEVER copied — destination holds the identity anch
 
   const guarded = [
     'AppUser', 'OrganizationMembership', 'UserSession', 'AgentToken', 'AgentSession',
-    'AgentAccount', 'LicenseKey', 'Subscription', 'Invoice',
+    'AgentAccount', 'Subscription', 'Invoice',
     'OrganizationSetting', 'OrganizationSettings',
     'InfrastructureChangeRequest', 'InfrastructureMigration',
   ];
@@ -897,7 +897,7 @@ test('FCO-10: FULL COMPLETENESS — every org-owned table at the destination, co
   // Control plane zeros (re-asserted wholesale at the end).
   const guarded = [
     'AppUser', 'OrganizationMembership', 'UserSession', 'AgentToken', 'AgentSession',
-    'AgentAccount', 'LicenseKey', 'Subscription', 'Invoice',
+    'AgentAccount', 'Subscription', 'Invoice',
     'OrganizationSetting', 'OrganizationSettings',
     'InfrastructureChangeRequest', 'InfrastructureMigration',
   ];

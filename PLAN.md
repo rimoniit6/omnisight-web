@@ -212,7 +212,6 @@ Only tenant-owned tables with `organizationId` field are eligible. The transfer 
 - User (platform-level auth, stays in managed DB)
 - Subscription, Payment, Invoice (commercial records, stay in managed DB)
 - Package (platform-level, stays in managed DB)
-- LicenseKey (platform-level, stays in managed DB)
 - AuditLog (platform-level, stays in managed DB)
 - JobRun (platform-level, stays in managed DB)
 - NotificationPreference (platform-level config, stays in managed DB)

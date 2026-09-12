@@ -12,7 +12,7 @@ function ContactContent() {
   const searchParams = useSearchParams();
   const plan = searchParams.get('plan') ?? undefined;
   const safePlan =
-    plan && ['Free', 'Pro', 'Business', 'Enterprise', 'Self-Hosted'].includes(plan) ? plan : undefined;
+    plan && ['Free', 'Pro', 'Business', 'Enterprise'].includes(plan) ? plan : undefined;
 
   return (
     <main className="mx-auto max-w-3xl flex-1 px-4 py-16 sm:px-6">
@@ -23,7 +23,7 @@ function ContactContent() {
         <h1 className="mt-4 text-3xl font-bold tracking-tight sm:text-4xl">Contact Sales</h1>
         <p className="mt-3 text-muted-foreground">
           Tell us about your team and we&apos;ll help you pick the right plan —
-          including self-hosted and enterprise options.
+          including Customer Database and enterprise options.
         </p>
       </div>
 

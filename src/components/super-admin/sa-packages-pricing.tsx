@@ -42,19 +42,18 @@ interface PlanRow {
   currency: string;
   maxDevices: number;
   retentionDays: number;
-  isSelfHosted: boolean;
   isActive: boolean;
   subscriptionCount: number;
-  licenseKeyCount: number;
 }
 
+// NOTE: the `isSelfHosted` plan flag was removed with the LicenseKey /
+// self-hosted architecture. Plans are V1 MANAGED / CUSTOMER_DB plans only.
 const EMPTY_PLAN_FORM = {
   name: '',
   description: '',
   currency: 'BDT',
   maxDevices: '5',
   retentionDays: '90',
-  isSelfHosted: false,
   features: '',
 };
 
@@ -211,7 +210,6 @@ export function SuperAdminPackagesPricingPage() {
       currency: pkg.currency,
       maxDevices: String(pkg.maxDevices),
       retentionDays: String(pkg.retentionDays),
-      isSelfHosted: pkg.isSelfHosted,
       features: '',
     });
     setPlanDialogOpen(true);
@@ -226,7 +224,6 @@ export function SuperAdminPackagesPricingPage() {
         currency: planForm.currency.trim() || 'BDT',
         maxDevices: Number(planForm.maxDevices),
         retentionDays: Number(planForm.retentionDays),
-        isSelfHosted: planForm.isSelfHosted,
         features: planForm.features.split(',').map((f) => f.trim()).filter(Boolean),
       };
       const res = await fetch(
@@ -588,7 +585,7 @@ export function SuperAdminPackagesPricingPage() {
           {packagesQ.isError && <ErrorState onRetry={() => packagesQ.refetch()} />}
           {packagesQ.data && (
             <DataTable
-              headers={['Plan', 'Devices', 'Retention', 'Subs', 'Licenses', 'Status', '']}
+              headers={['Plan', 'Devices', 'Retention', 'Subs', 'Status', '']}
               loading={packagesQ.isLoading}
               empty={<EmptyState title="No plans found." />}
             >
@@ -597,13 +594,12 @@ export function SuperAdminPackagesPricingPage() {
                   <td className="px-3.5 py-3">
                     <p className="font-medium text-foreground">{p.name}</p>
                     <p className="text-[11px] text-foreground/40">
-                      {[p.description || '—', p.isSelfHosted ? 'self-hosted' : null].filter(Boolean).join(' · ')}
+                      {p.description || '—'}
                     </p>
                   </td>
                   <td className="px-3.5 py-3 text-foreground/70">{p.maxDevices < 0 ? 'Unlimited' : p.maxDevices}</td>
                   <td className="px-3.5 py-3 text-foreground/70">{p.retentionDays === 0 ? 'Unlimited' : `${p.retentionDays}d`}</td>
                   <td className="px-3.5 py-3 text-foreground/70">{p.subscriptionCount}</td>
-                  <td className="px-3.5 py-3 text-foreground/70">{p.licenseKeyCount}</td>
                   <td className="px-3.5 py-3">
                     {p.isActive ? <StatusPill label="Active" tone="ok" /> : <StatusPill label="Inactive" tone="neutral" />}
                   </td>
@@ -668,14 +664,6 @@ export function SuperAdminPackagesPricingPage() {
                   <Label>Features (comma-separated)</Label>
                   <Input value={planForm.features} onChange={(e) => setPlanForm({ ...planForm, features: e.target.value })} placeholder="screenshots, ai, live_monitoring" />
                 </div>
-                <label className="flex items-center gap-2 text-sm sm:col-span-2">
-                  <input
-                    type="checkbox"
-                    checked={planForm.isSelfHosted}
-                    onChange={(e) => setPlanForm({ ...planForm, isSelfHosted: e.target.checked })}
-                  />
-                  Self-hosted plan (license-issuable)
-                </label>
               </div>
               <DialogFooter>
                 <Button variant="outline" onClick={() => setPlanDialogOpen(false)} disabled={planSaving}>

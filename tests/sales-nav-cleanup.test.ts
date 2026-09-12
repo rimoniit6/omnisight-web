@@ -137,22 +137,27 @@ test('CLEANUP-3: org-less SA sidebar is exactly the Control Center entries', () 
   assert.ok(!navSrc.includes("id: 'content'"), 'Content group folded into Control Center');
 });
 
-test('CLEANUP-3b: subscription / payment / license management lives in the Organization detail', () => {
+test('CLEANUP-3b: subscription / payment management lives in the Organization detail', () => {
   const detail = readFileSync(resolve(ROOT, 'src/components/super-admin/super-admin-organization-detail-page.tsx'), 'utf8');
   // The org detail is the central management screen for the org's commercial
   // state — manual payment editing + subscription activation both live there.
   assert.ok(detail.includes('Manual Payment'), 'org detail has a Manual Payment section');
   assert.ok(detail.includes('Activate Subscription'), 'org detail can activate a PENDING subscription');
   assert.ok(detail.includes("/api/admin/invoices/"), 'org detail edits the manual payment record');
-  assert.ok(detail.includes('licenseKey'), 'org detail shows the license state');
+  // License management was removed with the LicenseKey / self-hosted architecture.
+  assert.ok(!detail.includes('licenseKey'), 'org detail must not show a license state');
 
   // The standalone orgs list exposes the full commercial state per row.
   const orgsList = readFileSync(resolve(ROOT, 'src/app/api/super-admin/organizations/route.ts'), 'utf8');
   assert.ok(orgsList.includes('invoices:'), 'org list API carries the manual-payment ledger');
+  assert.ok(!orgsList.includes('licenseKey:'), 'org list API must not expose a license pointer');
   const orgsPage = readFileSync(resolve(ROOT, 'src/components/super-admin/super-admin-organizations-page.tsx'), 'utf8');
-  for (const col of ['Subscription', 'Payment', 'License']) {
+  for (const col of ['Subscription', 'Payment']) {
     assert.ok(orgsPage.includes(`<TableHead>${col}</TableHead>`), `orgs list shows the ${col} column`);
   }
+  assert.ok(!orgsPage.includes('License'), 'orgs list must not expose a License column');
+  // PRIVATE is not a V1 service model — it must not be filterable/selectable.
+  assert.ok(!orgsPage.includes('value="PRIVATE"'), 'PRIVATE must not be a selectable mode');
 });
 
 test('CLEANUP-4: full provisioning flow stays reachable from the CC orgs list (not a sidebar item)', () => {
@@ -240,14 +245,19 @@ test('CLEANUP-11: orphan legacy admin pages are removed (APIs preserved)', async
     assert.ok(!ex(resolve(ROOT, rel)), `${rel} orphan page removed`);
   }
   // Underlying APIs stay: packages CRUD feeds the canonical Control Center UI.
+  // NOTE: `src/app/api/admin/licenses/route.ts` was REMOVED with the LicenseKey /
+  // self-hosted architecture (Self-Hosted / PRIVATE is not a V1 service model).
   for (const rel of [
     'src/app/api/super-admin/packages/route.ts',
     'src/app/api/super-admin/packages/[id]/route.ts',
-    'src/app/api/admin/licenses/route.ts',
     'src/app/api/admin/organizations/create/route.ts',
   ]) {
     assert.ok(ex(resolve(ROOT, rel)), `${rel} API preserved`);
   }
+  assert.ok(
+    !ex(resolve(ROOT, 'src/app/api/admin/licenses/route.ts')),
+    'legacy license API is gone (LicenseKey architecture removed)',
+  );
 });
 
 test('CLEANUP-12: exactly one canonical Packages UI with full CRUD', async () => {

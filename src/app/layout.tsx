@@ -20,13 +20,13 @@ export const metadata: Metadata = {
     default: "OmniSight - AI-Powered Workforce Intelligence",
     template: "%s · OmniSight",
   },
-  description: "Monitor, analyze, and optimize your workforce productivity with AI-driven insights. Real-time activity monitoring, screenshots & OCR, and a self-hosted option for full data control.",
+  description: "Monitor, analyze, and optimize your workforce productivity with AI-driven insights. Real-time activity monitoring, screenshots & OCR, and a Customer Database option for full data control.",
   keywords: [
     "workforce intelligence",
     "employee monitoring",
     "productivity analytics",
     "AI insights",
-    "self-hosted monitoring",
+    "customer database monitoring",
     "screenshot OCR",
   ],
   icons: {
@@ -50,14 +50,14 @@ export const metadata: Metadata = {
     siteName: "OmniSight",
     title: "OmniSight - AI-Powered Workforce Intelligence",
     description:
-      "Real-time workforce monitoring with AI insights, screenshot & OCR, and a self-hosted option for full data control.",
+      "Real-time workforce monitoring with AI insights, screenshot & OCR, and a Customer Database option for full data control.",
     images: [{ url: "/logos/omnisight.svg", width: 512, height: 512, alt: "OmniSight" }],
   },
   twitter: {
     card: "summary_large_image",
     title: "OmniSight - AI-Powered Workforce Intelligence",
     description:
-      "Workforce intelligence, built for privacy. Real-time monitoring + self-hosted option.",
+      "Workforce intelligence, built for privacy. Real-time monitoring + Customer Database option.",
     images: ["/logos/omnisight.svg"],
   },
 };

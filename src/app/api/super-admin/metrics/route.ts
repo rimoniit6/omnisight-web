@@ -21,7 +21,6 @@ export async function GET(req: NextRequest) {
       unresolvedModes,
       subsByStatus,
       expiringSubs,
-      activeLicenses,
       pendingInvoices,
     ] = await Promise.all([
       prisma.organization.groupBy({ by: ['deploymentMode'], _count: { id: true } }),
@@ -31,7 +30,6 @@ export async function GET(req: NextRequest) {
       prisma.subscription.count({
         where: { status: 'ACTIVE', endDate: { gt: now, lte: expiringSoon } },
       }),
-      prisma.licenseKey.count({ where: { isActive: true, isRevoked: false, validUntil: { gt: now } } }),
       prisma.invoice.count({ where: { status: { in: ['PENDING', 'OVERDUE'] } } }),
     ]);
 
@@ -49,6 +47,9 @@ export async function GET(req: NextRequest) {
         total: totalOrgs,
         managed: byMode.MANAGED ?? 0,
         customerDb: byMode.CUSTOMER_DB ?? 0,
+        // LEGACY COMPATIBILITY: pre-existing rows can still carry the
+        // deprecated PRIVATE mode. It is reported for visibility only — it is
+        // no longer selectable and is not a V1 service model.
         private: byMode.PRIVATE ?? 0,
         byStatus,
         unresolvedModes,
@@ -61,7 +62,6 @@ export async function GET(req: NextRequest) {
         expiringSoon: expiringSubs,
         paused: byStatus.paused ?? 0,
       },
-      licenses: { active: activeLicenses },
       billing: { pendingInvoices },
     });
   } catch (error) {

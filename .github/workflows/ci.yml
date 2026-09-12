@@ -100,9 +100,6 @@ jobs:
       - name: Bootstrap Super Admin
         run: bunx tsx scripts/bootstrap-super-admin.ts
 
-      - name: Seed demo data (10 orgs, demo users)
-        run: bun run db:seed:demo
-
       - name: Start Next.js dev server
         run: |
           nohup bun run dev:app > /tmp/next.log 2>&1 &
@@ -119,10 +116,10 @@ jobs:
       - name: Run all test suites
         run: bun run test
 
-      - name: Unit tests (licenses, subscription helpers)
+      - name: Unit tests (subscription helpers)
         run: bun run test:unit
 
-      - name: Integration tests (license, subscription, invoices, data-expiry reminders)
+      - name: Integration tests (subscription, invoices, data-expiry reminders)
         run: bun run test:integration
 
   build:

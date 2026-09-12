@@ -146,7 +146,6 @@ interface OrganizationDetail {
     createdAt: string;
     plan: { name: string };
   }[];
-  licenseKey: { id: string; isActive: boolean; isRevoked: boolean; validUntil: string } | null;
 }
 
 // ─── Manual Payments (payment history) ───────────────────────────────────
@@ -166,46 +165,10 @@ interface PaymentRow {
   planName: string | null;
 }
 
-// ─── License (PRIVATE deployment runtime authorization) ──────────────────
-// Reuses the existing license-key architecture — LicenseKey model, SA-gated
-// /api/admin/licenses* mutations (atomic + audit-logged) and the public
-// POST /api/license/validate contract the customer installation calls.
-interface LicenseRow {
-  id: string;
-  key: string;
-  validFrom: string;
-  validUntil: string;
-  isActive: boolean;
-  isRevoked: boolean;
-  revokedAt: string | null;
-  createdAt: string;
-  organization: { id: string; name: string };
-  plan: { id: string; name: string };
-}
-interface SelfHostedPlanRow { id: string; name: string; isSelfHosted: boolean }
-type LicenseState = 'none' | 'active' | 'expired' | 'revoked' | 'inactive';
-
-// Expiry is computed, not trusted from a stored status: an expired license
-// must never present itself as active.
-function licenseStateOf(l: { isActive: boolean; isRevoked: boolean; validUntil: string } | null | undefined): LicenseState {
-  if (!l) return 'none';
-  if (l.isRevoked) return 'revoked';
-  if (new Date(l.validUntil).getTime() <= Date.now()) return 'expired';
-  if (!l.isActive) return 'inactive';
-  return 'active';
-}
-
-const LICENSE_STATE_META: Record<LicenseState, { label: string; className: string }> = {
-  none: { label: 'Not Issued', className: 'bg-slate-100 text-slate-600 border-slate-200 dark:bg-slate-900/40 dark:text-slate-300 dark:border-slate-700' },
-  active: { label: 'Active', className: 'bg-emerald-100 text-emerald-700 border-emerald-200 dark:bg-emerald-900/30 dark:text-emerald-400 dark:border-emerald-800' },
-  expired: { label: 'Expired', className: 'bg-amber-100 text-amber-700 border-amber-200 dark:bg-amber-900/30 dark:text-amber-400 dark:border-amber-800' },
-  revoked: { label: 'Revoked', className: 'bg-rose-100 text-rose-700 border-rose-200 dark:bg-rose-900/30 dark:text-rose-400 dark:border-rose-800' },
-  inactive: { label: 'Inactive', className: 'bg-slate-100 text-slate-600 border-slate-200 dark:bg-slate-900/40 dark:text-slate-300 dark:border-slate-700' },
-};
-
-function maskLicenseKey(key: string): string {
-  return key ? `${key.slice(0, 10)}••••-••••-••••` : '—';
-}
+// ─── License (REMOVED) ──────────────────────────────────────────────────
+// License management was removed with the LicenseKey / self-hosted
+// architecture. Organizations are activated through the subscription +
+// manual-payment flow. See docs/SEED_ARCHITECTURE.md for the removal record.
 
 export function SuperAdminOrganizationDetailPage() {
   const { pageContext: orgId, pageContextLabel: orgName, setCurrentPage } = useAppStore();
@@ -425,148 +388,8 @@ export function SuperAdminOrganizationDetailPage() {
     }
   };
 
-  // ─── License management (control plane, PRIVATE only) ────────────────
-  const [issueOpen, setIssueOpen] = useState(false);
-  const [issuePlanId, setIssuePlanId] = useState('');
-  const [issueValidity, setIssueValidity] = useState<'1y' | '2y' | 'custom'>('1y');
-  const [issueCustomUntil, setIssueCustomUntil] = useState('');
-  const [issueSaving, setIssueSaving] = useState(false);
-  const [viewOpen, setViewOpen] = useState(false);
-  const [revokeOpen, setRevokeOpen] = useState(false);
-  const [revokeReason, setRevokeReason] = useState('');
-  const [revokeSaving, setRevokeSaving] = useState(false);
-
-  const { data: licenseList } = useQuery<{ data: { licenses: LicenseRow[]; total: number } }>({
-    queryKey: ['sa-org-licenses', orgId],
-    enabled: !!orgId,
-    queryFn: async () => {
-      const res = await fetch(`/api/admin/licenses?organizationId=${orgId}&status=all`, { credentials: 'same-origin' });
-      if (!res.ok) throw new Error(`licenses ${res.status}`);
-      return res.json();
-    },
-  });
-
-  // Self-hosted plans available for license issuance (SA-gated catalog API).
-  const { data: planCatalog } = useQuery<{ data: SelfHostedPlanRow[] }>({
-    queryKey: ['sa-selfhosted-plans'],
-    enabled: issueOpen,
-    queryFn: async () => {
-      const res = await fetch('/api/super-admin/packages?includeInactive=false&pageSize=200', { credentials: 'same-origin' });
-      if (!res.ok) throw new Error(`packages ${res.status}`);
-      return res.json();
-    },
-  });
-
-  const licenseRows: LicenseRow[] = licenseList?.data?.licenses ?? [];
-  const currentLicense: LicenseRow | null =
-    licenseRows.find((l) => l.id === orgData?.licenseKey?.id) ?? licenseRows[0] ?? null;
-  const licState = licenseStateOf(orgData?.licenseKey ?? currentLicense);
-  const licensePlans: SelfHostedPlanRow[] = (planCatalog?.data ?? []).filter((p) => p.isSelfHosted);
-
-  const issueLicense = async () => {
-    if (issueSaving) return;
-    // Presets are computed here but the server re-validates the final date.
-    const validUntil =
-      issueValidity === '1y'
-        ? new Date(Date.now() + 365 * 864e5).toISOString()
-        : issueValidity === '2y'
-          ? new Date(Date.now() + 730 * 864e5).toISOString()
-          : issueCustomUntil
-            ? new Date(`${issueCustomUntil}T23:59:59`).toISOString()
-            : '';
-    if (!validUntil || Number.isNaN(new Date(validUntil).getTime())) {
-      toast.error('Choose a validity period.');
-      return;
-    }
-    setIssueSaving(true);
-    try {
-      const res = await fetch('/api/admin/licenses', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'same-origin',
-        body: JSON.stringify({ organizationId: orgId, planId: issuePlanId, validUntil }),
-      });
-      const json = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        // 409 = duplicate-active protection (server-side, never silent)
-        toast.error(json.error ?? 'Failed to issue license');
-        return;
-      }
-      toast.success('License issued — copy or download it for the customer installation.');
-      setIssueOpen(false);
-      queryClient.invalidateQueries({ queryKey: ['sa-org-licenses', orgId] });
-      queryClient.invalidateQueries({ queryKey: ['super-admin-org-detail', orgId] });
-      queryClient.invalidateQueries({ queryKey: ['super-admin-organizations'] });
-    } catch {
-      toast.error('Network error. Please try again.');
-    } finally {
-      setIssueSaving(false);
-    }
-  };
-
-  const revokeLicense = async () => {
-    if (revokeSaving || !currentLicense) return;
-    setRevokeSaving(true);
-    try {
-      const res = await fetch(`/api/admin/licenses/${currentLicense.id}/revoke`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'same-origin',
-        body: JSON.stringify({ reason: revokeReason.trim() || undefined }),
-      });
-      const json = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        toast.error(json.error ?? 'Failed to revoke license');
-        return;
-      }
-      toast.success('License revoked — the customer installation will fail validation.');
-      setRevokeOpen(false);
-      setRevokeReason('');
-      queryClient.invalidateQueries({ queryKey: ['sa-org-licenses', orgId] });
-      queryClient.invalidateQueries({ queryKey: ['super-admin-org-detail', orgId] });
-      queryClient.invalidateQueries({ queryKey: ['super-admin-organizations'] });
-    } catch {
-      toast.error('Network error. Please try again.');
-    } finally {
-      setRevokeSaving(false);
-    }
-  };
-
-  const copyLicense = async () => {
-    if (!currentLicense) return;
-    try {
-      await navigator.clipboard.writeText(currentLicense.key);
-      toast.success('License copied to clipboard.');
-    } catch {
-      toast.error('Could not access the clipboard.');
-    }
-  };
-
-  const downloadLicense = () => {
-    if (!currentLicense || !orgData) return;
-    // Customer-safe payload only: the license key is the activation secret;
-    // no server secrets, signing material or internal identifiers.
-    const payload = {
-      product: 'OmniSight',
-      licenseKey: currentLicense.key,
-      organizationName: orgData.name,
-      organizationSlug: orgData.slug,
-      deploymentMode: 'PRIVATE',
-      plan: currentLicense.plan.name,
-      validFrom: currentLicense.validFrom,
-      validUntil: currentLicense.validUntil,
-      issuedAt: currentLicense.createdAt,
-      validationEndpoint: '/api/license/validate',
-    };
-    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `omnisight-license-${orgData.slug}.json`;
-    a.click();
-    URL.revokeObjectURL(url);
-    toast.success('License downloaded.');
-  };
+  // NOTE: license issue/view/revoke/download state and handlers were removed
+  // with the LicenseKey / self-hosted architecture.
 
   const savePayment = async () => {
     if (!payEditInvoice || !payForm) return;
@@ -1001,18 +824,6 @@ export function SuperAdminOrganizationDetailPage() {
                 <p className="text-xs text-muted-foreground">Devices</p>
                 <p className="font-medium mt-0.5">{deviceEntitlementLabel}</p>
               </div>
-              <div>
-                <p className="text-xs text-muted-foreground">License</p>
-                <p className="font-medium mt-0.5">
-                  {!orgData.licenseKey
-                    ? 'none'
-                    : orgData.licenseKey.isRevoked
-                      ? 'revoked'
-                      : !orgData.licenseKey.isActive
-                        ? 'inactive'
-                        : 'active'}
-                </p>
-              </div>
             </div>
 
             {/* Screenshot frequency — MANAGED orgs only (§75.3) */}
@@ -1048,7 +859,7 @@ export function SuperAdminOrganizationDetailPage() {
               </div>
             )}
 
-            {/* Subscription period + license validity + lifecycle action */}
+            {/* Subscription period + lifecycle action */}
             <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-border/60 pt-4">
               <div className="grid grid-cols-2 gap-x-6 gap-y-2 text-sm sm:grid-cols-3">
                 <div>
@@ -1057,12 +868,6 @@ export function SuperAdminOrganizationDetailPage() {
                     {orgData.subscription
                       ? `${new Date(orgData.subscription.startDate).toLocaleDateString()} → ${orgData.subscription.endDate ? new Date(orgData.subscription.endDate).toLocaleDateString() : '—'}`
                       : '—'}
-                  </p>
-                </div>
-                <div>
-                  <p className="text-xs text-muted-foreground">License valid until</p>
-                  <p className="font-medium mt-0.5">
-                    {orgData.licenseKey?.validUntil ? new Date(orgData.licenseKey.validUntil).toLocaleDateString() : '—'}
                   </p>
                 </div>
               </div>
@@ -1544,307 +1349,9 @@ export function SuperAdminOrganizationDetailPage() {
         </DialogContent>
       </Dialog>
 
-      {/* ─── License — PRIVATE deployment runtime authorization ────────── */}
-      {orgData && (
-        <Card>
-          <CardHeader className="pb-3">
-            <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
-              <CardTitle className="text-base flex items-center gap-2">
-                <KeyRound className="w-4 h-4" />
-                License
-                <Badge variant="outline" className={cn('text-[10px] h-5 px-1.5 border', LICENSE_STATE_META[licState].className)}>
-                  {LICENSE_STATE_META[licState].label}
-                </Badge>
-              </CardTitle>
-              {orgData.deploymentMode === 'PRIVATE' && (
-                <div className="flex flex-wrap items-center gap-2">
-                  {(licState === 'none' || licState === 'expired' || licState === 'revoked' || licState === 'inactive') && (
-                    <Button
-                      size="sm"
-                      onClick={() => {
-                        setIssuePlanId(licensePlans[0]?.id ?? '');
-                        setIssueValidity('1y');
-                        setIssueCustomUntil('');
-                        setIssueOpen(true);
-                      }}
-                    >
-                      <Plus className="w-3.5 h-3.5 mr-1" />
-                      Issue License
-                    </Button>
-                  )}
-                  {currentLicense && (
-                    <>
-                      <Button size="sm" variant="outline" onClick={() => setViewOpen(true)}>
-                        <Eye className="w-3.5 h-3.5 mr-1" />
-                        View
-                      </Button>
-                      <Button size="sm" variant="outline" onClick={copyLicense}>
-                        <Copy className="w-3.5 h-3.5 mr-1" />
-                        Copy
-                      </Button>
-                      <Button size="sm" variant="outline" onClick={downloadLicense}>
-                        <Download className="w-3.5 h-3.5 mr-1" />
-                        Download
-                      </Button>
-                      {licState === 'active' && (
-                        <Button
-                          size="sm"
-                          variant="destructive"
-                          onClick={() => {
-                            setRevokeReason('');
-                            setRevokeOpen(true);
-                          }}
-                        >
-                          <Ban className="w-3.5 h-3.5 mr-1" />
-                          Revoke
-                        </Button>
-                      )}
-                    </>
-                  )}
-                </div>
-              )}
-            </div>
-          </CardHeader>
-          <CardContent>
-            {orgData.deploymentMode !== 'PRIVATE' ? (
-              <p className="text-sm text-muted-foreground">
-                Licenses authorize PRIVATE (self-hosted) deployments. This{' '}
-                {orgData.deploymentMode === 'MANAGED' ? 'Managed' : 'Customer DB'} organization is governed by its
-                subscription and manual payment — no license is required.
-              </p>
-            ) : !currentLicense ? (
-              <p className="text-sm text-muted-foreground">
-                No license has been issued for this private deployment. Issue a license to authorize the customer
-                installation to run OmniSight on its own infrastructure.
-              </p>
-            ) : (
-              <div className="grid grid-cols-2 gap-x-6 gap-y-4 text-sm md:grid-cols-3 lg:grid-cols-6">
-                <div>
-                  <p className="text-xs text-muted-foreground">License ID</p>
-                  <p className="font-mono font-medium mt-0.5">{maskLicenseKey(currentLicense.key)}</p>
-                </div>
-                <div>
-                  <p className="text-xs text-muted-foreground">Deployment</p>
-                  <p className="font-medium mt-0.5">Private</p>
-                </div>
-                <div>
-                  <p className="text-xs text-muted-foreground">Package</p>
-                  <p className="font-medium mt-0.5">{currentLicense.plan.name}</p>
-                </div>
-                <div>
-                  <p className="text-xs text-muted-foreground">Valid From</p>
-                  <p className="font-medium mt-0.5">{new Date(currentLicense.validFrom).toLocaleDateString()}</p>
-                </div>
-                <div>
-                  <p className="text-xs text-muted-foreground">Valid Until</p>
-                  <p className="font-medium mt-0.5">{new Date(currentLicense.validUntil).toLocaleDateString()}</p>
-                </div>
-                <div>
-                  <p className="text-xs text-muted-foreground">Issued</p>
-                  <p className="font-medium mt-0.5">{new Date(currentLicense.createdAt).toLocaleDateString()}</p>
-                </div>
-              </div>
-            )}
-            {orgData.deploymentMode === 'PRIVATE' && licState === 'expired' && (
-              <p className="mt-3 text-xs text-amber-600 dark:text-amber-400">
-                This license has expired — the customer installation will fail validation until a new license is issued.
-              </p>
-            )}
-          </CardContent>
-        </Card>
-      )}
-
-      {/* ─── License dialogs ─────────────────────────────────────────────── */}
-      {orgData && (
-        <>
-          {/* Issue License — spacious dialog */}
-          <Dialog open={issueOpen} onOpenChange={setIssueOpen}>
-            <DialogContent className="sm:max-w-xl">
-              <DialogHeader>
-                <DialogTitle>Issue Private Deployment License</DialogTitle>
-                <DialogDescription>
-                  Authorizes the customer to run the PRIVATE OmniSight deployment. Final dates are validated by the
-                  server; an active license must be revoked before reissue.
-                </DialogDescription>
-              </DialogHeader>
-              <div className="space-y-4 py-1">
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-sm">
-                  <div>
-                    <p className="text-xs text-muted-foreground">Organization</p>
-                    <p className="font-medium mt-0.5">{orgData.name}</p>
-                  </div>
-                  <div>
-                    <p className="text-xs text-muted-foreground">Deployment</p>
-                    <p className="font-medium mt-0.5">Private</p>
-                  </div>
-                  <div>
-                    <p className="text-xs text-muted-foreground">Package</p>
-                    <p className="font-medium mt-0.5">{orgData.subscription?.plan.name ?? '—'}</p>
-                  </div>
-                </div>
-                <label className="block">
-                  <span className="text-xs font-medium text-muted-foreground mb-1 block">License plan</span>
-                  <select
-                    value={issuePlanId}
-                    onChange={(e) => setIssuePlanId(e.target.value)}
-                    className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-                  >
-                    <option value="">—</option>
-                    {licensePlans.map((p) => (
-                      <option key={p.id} value={p.id}>
-                        {p.name}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <label className="block">
-                    <span className="text-xs font-medium text-muted-foreground mb-1 block">Validity</span>
-                    <select
-                      value={issueValidity}
-                      onChange={(e) => setIssueValidity(e.target.value as '1y' | '2y' | 'custom')}
-                      className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-                    >
-                      <option value="1y">1 Year</option>
-                      <option value="2y">2 Years</option>
-                      <option value="custom">Custom</option>
-                    </select>
-                  </label>
-                  {issueValidity === 'custom' && (
-                    <label className="block">
-                      <span className="text-xs font-medium text-muted-foreground mb-1 block">Valid Until</span>
-                      <Input
-                        type="date"
-                        value={issueCustomUntil}
-                        onChange={(e) => setIssueCustomUntil(e.target.value)}
-                      />
-                    </label>
-                  )}
-                </div>
-                <p className="text-xs text-muted-foreground border-t border-border pt-3">
-                  This license authorizes the customer to run the PRIVATE OmniSight deployment. The customer activates
-                  it on their installation via the public license validation endpoint.
-                </p>
-              </div>
-              <DialogFooter>
-                <Button variant="ghost" onClick={() => setIssueOpen(false)}>
-                  Cancel
-                </Button>
-                <Button
-                  onClick={issueLicense}
-                  disabled={issueSaving || !issuePlanId || (issueValidity === 'custom' && !issueCustomUntil)}
-                >
-                  {issueSaving ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <KeyRound className="w-4 h-4 mr-2" />}
-                  Issue License
-                </Button>
-              </DialogFooter>
-            </DialogContent>
-          </Dialog>
-
-          {/* View License — spacious readable representation */}
-          <Dialog open={viewOpen} onOpenChange={setViewOpen}>
-            <DialogContent className="sm:max-w-2xl">
-              <DialogHeader>
-                <DialogTitle>License Details</DialogTitle>
-                <DialogDescription>
-                  Customer-safe license information for this PRIVATE deployment.
-                </DialogDescription>
-              </DialogHeader>
-              {currentLicense && (
-                <div className="grid grid-cols-2 gap-x-6 gap-y-4 text-sm py-1 md:grid-cols-3">
-                  <div className="col-span-2 md:col-span-3">
-                    <p className="text-xs text-muted-foreground">License ID</p>
-                    <p className="font-mono font-medium mt-0.5 break-all">{currentLicense.key}</p>
-                  </div>
-                  <div>
-                    <p className="text-xs text-muted-foreground">Status</p>
-                    <p className="font-medium mt-0.5">{LICENSE_STATE_META[licState].label}</p>
-                  </div>
-                  <div>
-                    <p className="text-xs text-muted-foreground">Organization</p>
-                    <p className="font-medium mt-0.5">{orgData.name}</p>
-                  </div>
-                  <div>
-                    <p className="text-xs text-muted-foreground">Deployment</p>
-                    <p className="font-medium mt-0.5">Private</p>
-                  </div>
-                  <div>
-                    <p className="text-xs text-muted-foreground">Package</p>
-                    <p className="font-medium mt-0.5">{currentLicense.plan.name}</p>
-                  </div>
-                  <div>
-                    <p className="text-xs text-muted-foreground">Valid From</p>
-                    <p className="font-medium mt-0.5">{new Date(currentLicense.validFrom).toLocaleDateString()}</p>
-                  </div>
-                  <div>
-                    <p className="text-xs text-muted-foreground">Expires</p>
-                    <p className="font-medium mt-0.5">{new Date(currentLicense.validUntil).toLocaleDateString()}</p>
-                  </div>
-                  <div>
-                    <p className="text-xs text-muted-foreground">Issued</p>
-                    <p className="font-medium mt-0.5">{new Date(currentLicense.createdAt).toLocaleDateString()}</p>
-                  </div>
-                </div>
-              )}
-              <DialogFooter>
-                <Button variant="ghost" onClick={() => setViewOpen(false)}>
-                  Close
-                </Button>
-                <Button variant="outline" onClick={copyLicense}>
-                  <Copy className="w-4 h-4 mr-2" />
-                  Copy License
-                </Button>
-                <Button onClick={downloadLicense}>
-                  <Download className="w-4 h-4 mr-2" />
-                  Download
-                </Button>
-              </DialogFooter>
-            </DialogContent>
-          </Dialog>
-
-          {/* Revoke License — explicit confirmation */}
-          <Dialog open={revokeOpen} onOpenChange={setRevokeOpen}>
-            <DialogContent className="sm:max-w-md">
-              <DialogHeader>
-                <DialogTitle>Revoke License?</DialogTitle>
-                <DialogDescription>
-                  This will invalidate the license for this private deployment. The customer installation will fail
-                  validation on its next check.
-                </DialogDescription>
-              </DialogHeader>
-              {currentLicense && (
-                <div className="rounded-lg border border-border bg-muted/40 px-3 py-2.5 text-sm">
-                  <p>
-                    <span className="text-muted-foreground">License:</span>{' '}
-                    <span className="font-mono">{maskLicenseKey(currentLicense.key)}</span>
-                  </p>
-                  <p className="mt-0.5">
-                    <span className="text-muted-foreground">Organization:</span> {orgData.name}
-                  </p>
-                </div>
-              )}
-              <label className="block">
-                <span className="text-xs font-medium text-muted-foreground mb-1 block">Reason (optional)</span>
-                <Input
-                  placeholder="e.g. contract ended"
-                  value={revokeReason}
-                  onChange={(e) => setRevokeReason(e.target.value)}
-                  maxLength={500}
-                />
-              </label>
-              <DialogFooter>
-                <Button variant="ghost" onClick={() => setRevokeOpen(false)}>
-                  Cancel
-                </Button>
-                <Button variant="destructive" onClick={revokeLicense} disabled={revokeSaving}>
-                  {revokeSaving ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Ban className="w-4 h-4 mr-2" />}
-                  Revoke License
-                </Button>
-              </DialogFooter>
-            </DialogContent>
-          </Dialog>
-        </>
-      )}
+      {/* NOTE: the License panel was removed with the LicenseKey / self-hosted
+          architecture. Organizations are activated through subscription +
+          manual payment. */}
 
       {/* ─── Members section ─────────────────────────────────────────────── */}
       <Card>

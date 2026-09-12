@@ -17,10 +17,15 @@ export function seedAllowed(): boolean {
 
 // ─── Required reference catalog ───────────────────────────────────────────────
 // The Plan catalog is CONSTANT system configuration (no credentials, no org
-// data). Without it the Super Admin cannot create subscriptions, licenses or
+// data). Without it the Super Admin cannot create subscriptions or
 // invoices, so it is bootstrapped idempotently. It is deliberately NOT
 // experimental/demo data and carries no secrets. Field names must match
 // prisma/schema.prisma (Plan model).
+//
+// V1 service models are MANAGED and CUSTOMER_DB. Self-Hosted / PRIVATE is NOT
+// a V1 service model, so there is NO `Enterprise_SelfHosted` plan here (it was
+// removed with the LicenseKey architecture) and the Plan model no longer has
+// an `isSelfHosted` field. Do NOT reintroduce a self-hosted plan.
 const PLAN_DEFINITIONS = [
   {
     name: 'Free',
@@ -30,7 +35,6 @@ const PLAN_DEFINITIONS = [
     currency: 'BDT',
     maxDevices: 5,
     retentionDays: 90,
-    isSelfHosted: false,
     features: ['basic_tracking', 'reports'],
   },
   {
@@ -41,7 +45,6 @@ const PLAN_DEFINITIONS = [
     currency: 'BDT',
     maxDevices: 50,
     retentionDays: 365,
-    isSelfHosted: false,
     features: ['basic_tracking', 'screenshots', 'reports', 'export', 'break_detection'],
   },
   {
@@ -52,19 +55,7 @@ const PLAN_DEFINITIONS = [
     currency: 'BDT',
     maxDevices: 500,
     retentionDays: 365,
-    isSelfHosted: false,
     features: ['basic_tracking', 'screenshots', 'reports', 'export', 'break_detection', 'app_blocking', 'location_tracking'],
-  },
-  {
-    name: 'Enterprise_SelfHosted',
-    description: 'Unlimited self-hosted deployment',
-    priceMonthly: 0,
-    priceYearly: 0,
-    currency: 'BDT',
-    maxDevices: -1,
-    retentionDays: 0,
-    isSelfHosted: true,
-    features: ['basic_tracking', 'screenshots', 'reports', 'export', 'break_detection', 'app_blocking', 'location_tracking', 'audit_logs', 'custom_retention'],
   },
 ] as const;
 
@@ -83,7 +74,6 @@ async function seed() {
         currency: p.currency,
         maxDevices: p.maxDevices,
         retentionDays: p.retentionDays,
-        isSelfHosted: p.isSelfHosted,
         features: p.features,
         isActive: true,
       },
@@ -95,7 +85,6 @@ async function seed() {
         currency: p.currency,
         maxDevices: p.maxDevices,
         retentionDays: p.retentionDays,
-        isSelfHosted: p.isSelfHosted,
         features: p.features,
         isActive: true,
       },

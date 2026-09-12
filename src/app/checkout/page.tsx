@@ -30,7 +30,6 @@ interface Plan {
   currency: string;
   maxDevices: number;
   features: string[];
-  isSelfHosted: boolean;
 }
 
 interface Breakdown {
@@ -74,8 +73,9 @@ function PurchaseRequestInner() {
     staleTime: 5 * 60 * 1000,
   });
 
-  // Only V1 customer-facing plans (self-hosted legacy plans are never shown).
-  const plans = (data?.plans ?? []).filter((p) => !p.isSelfHosted);
+  // Every catalog plan is a V1 customer-facing plan (MANAGED / CUSTOMER_DB).
+  // Self-hosted legacy plans no longer exist.
+  const plans = data?.plans ?? [];
   const plan = plans.find((p) => p.id === planId);
 
   // Preselect the first plan when the URL param is absent/unknown.

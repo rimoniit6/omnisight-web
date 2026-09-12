@@ -362,28 +362,30 @@ Employees can grant/revoke consent through the Agent interface. Admins can see t
 
 ---
 
-## 21. License Keys (Self-Hosted)
+## 21. Service Models & Organization Activation
 
-> Only visible/used when the deployment runs in **self-hosted** mode
-> (`SELF_HOSTED=true`). In cloud mode license checks are bypassed entirely.
+> **This section replaced the former “License Keys (Self-Hosted)” section.**
+> License keys were removed with the Self-Hosted architecture — Self-Hosted /
+> Private is **not** a V1 service model.
 
-**Super Admins** manage license keys from **Admin → Licenses**:
+OmniSight V1 supports exactly two customer-facing service models:
 
-- **Generate a key**: select an organization and a self-hosted plan
-  (e.g. `Enterprise_SelfHosted`), choose an expiry (default 1 year), and the
-  system creates an `OMNISIGHT-XXXX-XXXX-XXXX` key. The key is shown once to
-  the Super Admin — store it safely.
-- **Revoke a key**: this immediately invalidates the key. If it was the
-  organization's current key, their license pointer is cleared so validation
-  fails until a new key is issued.
+| Service model | Who owns what |
+|---------------|---------------|
+| **OmniSight Managed** (`MANAGED`) | OmniSight owns app + API + database + storage. Super Admins may see the organization's operational dashboard. |
+| **Customer Database** (`CUSTOMER_DB`) | OmniSight owns app + API; the customer owns the primary database. Super Admins see control-plane metadata only. |
 
-**Users / org admins** can view their organization's licensing status at
-**Settings → License Status** (`/self-hosted/license-status`), which shows
-whether the deployment is cloud, active, or unlicensed.
+**There is no license-key step.** Organizations are activated by a **Super
+Admin**:
 
-> **Security:** license keys are treated as secrets. They are never shown to
-> normal users, never echoed by the validation endpoint, and never written to
-> logs or error messages.
+1. Create the organization and pick the service model.
+2. Select the package (plan) and its billing period.
+3. Record the manual payment / subscription terms.
+4. Create the Organization Admin.
+5. Activate the subscription from the organization detail screen.
+
+Subscription status and manual-payment history are managed from the
+**Super Admin → Organizations → (organization)** detail screen.
 
 ---
 

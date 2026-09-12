@@ -46,11 +46,8 @@ export async function register() {
   const { validateEnv } = await import('@/lib/env');
   validateEnv();
 
-  // Self-hosted startup license check (cloud mode is a no-op). When
-  // SELF_HOSTED_REQUIRE_LICENSE=true and the configured key is invalid, this
-  // throws and the server refuses to start.
-  const { verifySelfHostedLicenseAtStartup } = await import('@/lib/licenses');
-  await verifySelfHostedLicenseAtStartup();
+  // NOTE: the self-hosted startup license check was removed with the
+  // LicenseKey / self-hosted architecture (not a V1 service model).
 
   const g = globalThis as unknown as {
     __jobsSchedulerStarted?: boolean;

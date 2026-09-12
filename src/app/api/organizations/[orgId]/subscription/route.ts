@@ -28,7 +28,6 @@ function serializeSubscription(
       maxDevices: number;
       retentionDays: number;
       features: unknown;
-      isSelfHosted: boolean;
     };
   },
   orgTrialEndsAt: Date | null
@@ -51,7 +50,6 @@ function serializeSubscription(
       maxDevices: sub.plan.maxDevices,
       retentionDays: sub.plan.retentionDays,
       features: parsePlanFeatures(sub.plan.features),
-      isSelfHosted: sub.plan.isSelfHosted,
     },
   };
 }

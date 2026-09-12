@@ -32,7 +32,8 @@ function parsePlanBody(body: Record<string, unknown>) {
       currency: typeof body.currency === 'string' && body.currency ? body.currency : 'BDT',
       maxDevices,
       retentionDays,
-      isSelfHosted: body.isSelfHosted === true,
+      // NOTE: `isSelfHosted` was removed with the LicenseKey / self-hosted
+      // architecture. Every catalog plan is a V1 MANAGED / CUSTOMER_DB plan.
       features,
       isActive: body.isActive === undefined ? true : body.isActive === true,
     },
@@ -55,7 +56,7 @@ export async function GET(req: NextRequest) {
   const [plans, total] = await Promise.all([
     prisma.plan.findMany({
       where,
-      include: { _count: { select: { subscriptions: true, licenseKeys: true } } },
+      include: { _count: { select: { subscriptions: true } } },
       orderBy: { priceMonthly: 'asc' },
       skip: pagination.skip,
       take: pagination.pageSize,
@@ -67,7 +68,6 @@ export async function GET(req: NextRequest) {
     data: plans.map((p) => ({
       ...p,
       subscriptionCount: p._count.subscriptions,
-      licenseKeyCount: p._count.licenseKeys,
       _count: undefined,
     })),
     pagination: { page: pagination.page, pageSize: pagination.pageSize, total, pages: Math.ceil(total / pagination.pageSize) },

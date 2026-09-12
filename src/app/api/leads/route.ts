@@ -16,15 +16,17 @@ import { checkRateLimit, RATE_LIMITS, getClientIpFromHeaders } from '@/lib/rate-
 //   • Never returns/store duplicate junk — a NEW lead each time (marketing may
 //     want repeated touches), but the email is indexed for quick search.
 
-const VALID_PLANS = new Set(['Free', 'Pro', 'Business', 'Enterprise', 'Self-Hosted']);
+// V1 service models only — 'Self-Hosted' was removed with the self-hosted
+// architecture and is no longer an acceptable lead interest.
+const VALID_PLANS = new Set(['Free', 'Pro', 'Business', 'Enterprise']);
 
 export async function POST(req: NextRequest) {
   try {
     const clientIp = getClientIpFromHeaders(req.headers);
     const rl = await checkRateLimit(
       `lead-create:${clientIp}`,
-      RATE_LIMITS.licenseGenerate.limit,
-      RATE_LIMITS.licenseGenerate.windowMs
+      RATE_LIMITS.publicIntake.limit,
+      RATE_LIMITS.publicIntake.windowMs
     );
     if (!rl.allowed) {
       return NextResponse.json(

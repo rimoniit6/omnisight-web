@@ -43,7 +43,7 @@ export interface CreateNotificationInput {
   /** Structured linkage (never authorization) — populated by producers. */
   employeeId?: string | null;
   deviceId?: string | null;
-  organizationId: string;
+  organizationId?: string | null; // null = platform-level notification
 }
 
 export interface CreateAlertInput {
@@ -110,9 +110,9 @@ export async function createOrgNotification(
   const entTypeErr = validateEntityType(input.entityType);
   if (entTypeErr) throw new NotificationValidationError(entTypeErr);
 
-  // Organization preference — disabled type is skipped (fail-safe, never
-  // bypassed by producers).
-  if (!(await isNotificationTypeEnabled(input.organizationId, input.type, tx))) {
+// Platform-level notifications (organizationId null) skip preference check
+  const orgId = input.organizationId ?? 'platform';
+  if (input.organizationId !== null && !(await isNotificationTypeEnabled(orgId, input.type, tx))) {
     return null;
   }
 
@@ -124,11 +124,11 @@ export async function createOrgNotification(
       priority: input.priority || 'medium',
       status: input.status || 'unread',
       actionUrl: input.actionUrl || null,
-      entityType: input.entityType || null,
-      entityId: input.entityId || null,
-      employeeId: input.employeeId || null,
-      deviceId: input.deviceId || null,
-      organizationId: input.organizationId,
+      entityType: input.entityType ?? null,
+      entityId: input.entityId ?? null,
+      employeeId: input.employeeId ?? null,
+      deviceId: input.deviceId ?? null,
+      organizationId: (input.organizationId ?? 'placeholder') as string,
     },
   });
   return { id: created.id };

@@ -16,8 +16,9 @@ test('DEPLOYMENT_MODES contains exactly MANAGED, CUSTOMER_DB, PRIVATE', () => {
 test('isDeploymentMode accepts only the three canonical modes', () => {
   assert.equal(isDeploymentMode('MANAGED'), true);
   assert.equal(isDeploymentMode('CUSTOMER_DB'), true);
+  // PRIVATE remains a legacy-compatibility enum value (pre-existing rows only).
   assert.equal(isDeploymentMode('PRIVATE'), true);
-  assert.equal(isDeploymentMode('SELF_HOSTED'), false);
+  assert.equal(isDeploymentMode('ENTERPRISE'), false);
   assert.equal(isDeploymentMode('managed'), false);
   assert.equal(isDeploymentMode(''), false);
   assert.equal(isDeploymentMode(null), false);

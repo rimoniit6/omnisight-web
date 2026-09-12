@@ -54,8 +54,12 @@ function activityLabel(e: AuditEvent): string {
     case 'update:organization': return 'Organization Updated';
     case 'create:invoice': return 'Manual Payment Recorded';
     case 'update:invoice': return 'Manual Payment Updated';
-    case 'create:license_key': return 'License Issued';
-    case 'revoke:license_key': return 'License Revoked';
+    // LEGACY COMPATIBILITY ONLY: `license_key` audit rows may still exist from
+    // before the LicenseKey / self-hosted architecture was removed. These labels
+    // keep historical audit entries readable — they are NOT a live feature and
+    // no new license_key audit row can be produced.
+    case 'create:license_key': return 'License Issued (legacy)';
+    case 'revoke:license_key': return 'License Revoked (legacy)';
     case 'create:package': return 'Package Created';
     case 'update:package': return 'Package Updated';
     case 'create:user': return 'Owner/Admin Created';

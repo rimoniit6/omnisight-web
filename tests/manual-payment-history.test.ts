@@ -76,7 +76,7 @@ before(async () => {
     data: { name: 'Payment History Org', slug: 'pay-history' },
   });
   const plan = await db.plan.create({
-    data: { name: 'Enterprise', priceMonthly: 50000, currency: 'BDT', isSelfHosted: false, maxDevices: 100, retentionDays: 90, features: [] },
+    data: { name: 'Enterprise', priceMonthly: 50000, currency: 'BDT', maxDevices: 100, retentionDays: 90, features: [] },
   });
   planId = plan.id;
   const sub = await db.subscription.create({

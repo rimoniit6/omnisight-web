@@ -23,7 +23,7 @@ const TESTIMONIALS: Testimonial[] = [
   },
   {
     quote:
-      'The self-hosted option sealed it for us. All monitoring data stays on our own servers — our security team is finally comfortable.',
+      'The Customer Database option sealed it for us. All monitoring data stays in our own database — our security team is finally comfortable.',
     author: 'Marcus Alvarez',
     role: 'Head of IT',
     company: 'Vertex Manufacturing',

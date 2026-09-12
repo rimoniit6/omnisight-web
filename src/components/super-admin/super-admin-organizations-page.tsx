@@ -73,7 +73,6 @@ interface Organization {
     plan: { id: string; name: string; currency: string; maxDevices: number };
     invoices: { id: string; status: string; amount: number; currency: string; paymentMethod: string | null; paidAt: string | null }[];
   } | null;
-  licenseKey: { id: string; isActive: boolean; isRevoked: boolean; validUntil: string | null } | null;
 }
 
 const STATUS_CONFIG: Record<string, { label: string; className: string; icon: React.ElementType }> = {
@@ -100,8 +99,9 @@ const STATUS_CONFIG: Record<string, { label: string; className: string; icon: Re
 };
 
 // Phase 2 §7: deployment-mode badge config for the control-plane list.
-// PRIVATE is deprecated in V1 — kept in the map for backward-compat display
-// but should not appear in new V1 workflows.
+// V1 service models are MANAGED and CUSTOMER_DB. PRIVATE is kept ONLY so
+// pre-existing legacy rows still render a label — it is not selectable and not
+// a V1 service model.
 const MODE_CONFIG: Record<string, { label: string; className: string }> = {
   MANAGED: {
     label: 'Managed',
@@ -112,7 +112,7 @@ const MODE_CONFIG: Record<string, { label: string; className: string }> = {
     className: 'bg-blue-100 text-blue-700 border-blue-200 dark:bg-blue-900/30 dark:text-blue-400',
   },
   PRIVATE: {
-    label: 'Private (Deprecated)',
+    label: 'Private (Legacy)',
     className: 'bg-violet-100 text-violet-700 border-violet-200 dark:bg-violet-900/30 dark:text-violet-400',
   },
 };
@@ -164,12 +164,12 @@ export function SuperAdminOrganizationsPage() {
     },
     placeholderData: (prev) => prev,
   });
-  // PRIVATE is deprecated in V1; metrics exclude it from customer-owned count.
+  // PRIVATE is legacy-only; metrics exclude it from customer-owned count.
+  // The `licenses` counter was removed with the LicenseKey architecture.
   const metrics = metricsData as
     | {
         organizations: { total: number; managed: number; customerDb: number; private: number; unresolvedModes: number; pendingDeployments: number };
         subscriptions: { active: number; expiringSoon: number };
-        licenses: { active: number };
         billing: { pendingInvoices: number };
       }
     | undefined;
@@ -335,7 +335,7 @@ export function SuperAdminOrganizationsPage() {
                   <SelectItem value="all">All Modes</SelectItem>
                   <SelectItem value="MANAGED">Managed</SelectItem>
                   <SelectItem value="CUSTOMER_DB">Customer DB</SelectItem>
-                  <SelectItem value="PRIVATE">Private</SelectItem>
+                  {/* PRIVATE is not a V1 service model — not selectable. */}
                 </SelectContent>
               </Select>
             </div>

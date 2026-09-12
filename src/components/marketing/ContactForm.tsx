@@ -15,7 +15,9 @@ import {
 } from '@/components/ui/select';
 import { toast } from 'sonner';
 
-const PLAN_OPTIONS = ['Free', 'Pro', 'Business', 'Enterprise', 'Self-Hosted'] as const;
+// V1 service models only — no Self-Hosted option is offered (Enterprise is a
+// sales-interest label, not a Plan row).
+const PLAN_OPTIONS = ['Free', 'Pro', 'Business', 'Enterprise'] as const;
 
 export interface ContactFormProps {
   initialPlan?: string;

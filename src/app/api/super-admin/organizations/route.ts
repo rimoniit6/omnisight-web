@@ -77,9 +77,8 @@ export async function GET(req: NextRequest) {
             },
           },
         },
-        licenseKey: {
-          select: { id: true, isActive: true, isRevoked: true, validUntil: true },
-        },
+        // NOTE: `licenseKey` was removed with the LicenseKey / self-hosted
+        // architecture (not a V1 service model).
         _count: {
           select: {
             employees: true,

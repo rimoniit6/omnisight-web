@@ -21,7 +21,6 @@ interface PublicPlan {
   description: string | null;
   currency: string;
   features: string[];
-  isSelfHosted: boolean;
   /** V1 pricing rows from PlanPricing (Super Admin config). */
   pricing: Array<{
     deploymentMode: 'MANAGED' | 'CUSTOMER_DB';
@@ -194,7 +193,9 @@ export function PricingSection() {
   });
 
   const [period, setPeriod] = useState<'MONTHLY' | 'YEARLY'>('MONTHLY');
-  const allPlans = (data?.plans ?? []).filter((p) => !p.isSelfHosted);
+  // Every catalog plan is a V1 plan (MANAGED / CUSTOMER_DB) — self-hosted plans
+  // no longer exist, so no filtering is required.
+  const allPlans = data?.plans ?? [];
 
   // ── V1-driven classification (no legacy priceMonthly) ─────────────────
   // A plan is "free" when it has NO active V1 pricing rows (basePrice > 0).

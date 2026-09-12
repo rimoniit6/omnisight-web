@@ -102,7 +102,6 @@ const ORGANIZATION_ROWS: { model: string; label: string }[] = [
   { model: 'organizationSetting', label: 'Org settings (legacy)' },
   { model: 'organizationSettings', label: 'Org settings' },
   { model: 'organizationBranding', label: 'Org branding' },
-  { model: 'licenseKey', label: 'License keys' },
   { model: 'subscription', label: 'Subscriptions' },
   { model: 'invoice', label: 'Invoices' },
 ];
@@ -113,7 +112,6 @@ const ORGANIZATION_CONTROL_PLANE_ROWS = new Set([
   'agentToken',
   'organizationSetting',
   'organizationSettings',
-  'licenseKey',
   'subscription',
   'invoice',
 ]);

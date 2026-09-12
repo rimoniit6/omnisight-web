@@ -21,8 +21,8 @@ export async function POST(req: NextRequest) {
     const clientIp = getClientIpFromHeaders(req.headers);
     const rl = await checkRateLimit(
       `pricing-preview:${clientIp}`,
-      RATE_LIMITS.licenseGenerate.limit,
-      RATE_LIMITS.licenseGenerate.windowMs
+      RATE_LIMITS.publicIntake.limit,
+      RATE_LIMITS.publicIntake.windowMs
     );
     if (!rl.allowed) {
       return NextResponse.json(

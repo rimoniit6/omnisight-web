@@ -586,7 +586,7 @@ test('IDM-13: every org-scoped model is planned or on the documented control-pla
   const controlPlane = new Set([
     'appUser', 'organizationMembership', 'userSession',
     'agentToken', 'agentSession',
-    'licenseKey', 'subscription', 'invoice',
+    'subscription', 'invoice',
     'organizationSetting',
     'organizationSettings', 'organization', 'organizationBranding',
     'infrastructureChangeRequest', 'infrastructureMigration',

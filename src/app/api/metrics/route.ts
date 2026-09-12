@@ -43,12 +43,10 @@ export async function GET(req: NextRequest) {
 
   try {
     // Platform counters (aggregate only — no per-org detail).
-    const [activeSubs, trialOrgs, invoices, activeLicenses, revokedLicenses] = await Promise.all([
+    const [activeSubs, trialOrgs, invoices] = await Promise.all([
       db.subscription.count({ where: { status: 'ACTIVE' } }),
       db.organization.count({ where: { trialEndsAt: { gt: new Date() } } }),
       db.invoice.groupBy({ by: ['status'], _count: { _all: true } }),
-      db.licenseKey.count({ where: { isRevoked: false, isActive: true } }),
-      db.licenseKey.count({ where: { isRevoked: true } }),
     ]);
 
     lines.push('# HELP omnisight_subscriptions_active_total Active subscriptions');
@@ -64,13 +62,8 @@ export async function GET(req: NextRequest) {
     for (const row of invoices) {
       lines.push(`omnisight_invoices_by_status_total{status="${esc(row.status)}"} ${row._count._all}`);
     }
-
-    lines.push('# HELP omnisight_licenses_active_total Active (non-revoked) license keys');
-    lines.push('# TYPE omnisight_licenses_active_total gauge');
-    lines.push(`omnisight_licenses_active_total ${activeLicenses}`);
-    lines.push('# HELP omnisight_licenses_revoked_total Revoked license keys');
-    lines.push('# TYPE omnisight_licenses_revoked_total gauge');
-    lines.push(`omnisight_licenses_revoked_total ${revokedLicenses}`);
+    // NOTE: license-key metrics were removed with the LicenseKey model
+    // (self-hosted / PRIVATE is not a V1 service model).
   } catch (err) {
     log.error('api.metrics.db', { error: String(err) });
     lines.push('# HELP omnisight_database_up Database availability');

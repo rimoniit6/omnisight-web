@@ -93,7 +93,10 @@ const BUSINESS_MODELS = [
   'alert', 'notificationPreference', 'notification', 'report', 'auditLog',
   'agentToken', 'deviceClaim', 'device', 'employee', 'department',
   'organizationMembership', 'userSession',
-  'licenseKey', 'subscription', 'invoice',
+  // NOTE: 'licenseKey' was removed from this list with the LicenseKey model
+  // (self-hosted is not a V1 service model) — referencing a dropped model would
+  // abort the whole cleanup transaction.
+  'subscription', 'invoice',
   // Last: deleting the organization cascades any remaining tenant rows.
   'organization',
 ] as const;

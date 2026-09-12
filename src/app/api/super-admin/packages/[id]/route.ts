@@ -36,7 +36,8 @@ function parsePlanPatch(body: Record<string, unknown>) {
     if (!Array.isArray(body.features) || !body.features.every((f) => typeof f === 'string')) errors.push('features must be an array of strings');
     else data.features = body.features;
   }
-  if (body.isSelfHosted !== undefined) data.isSelfHosted = body.isSelfHosted === true;
+  // NOTE: `isSelfHosted` is no longer accepted — self-hosted plans were removed
+  // with the LicenseKey architecture and are not a V1 service model.
   if (body.isActive !== undefined) data.isActive = body.isActive === true;
   return { errors, data };
 }
@@ -51,13 +52,12 @@ export async function GET(
 
   const plan = await prisma.plan.findUnique({
     where: { id },
-    include: { _count: { select: { subscriptions: true, licenseKeys: true } } },
+    include: { _count: { select: { subscriptions: true } } },
   });
   if (!plan) return apiError('Package not found', 404);
   return apiSuccess({
     ...plan,
     subscriptionCount: plan._count.subscriptions,
-    licenseKeyCount: plan._count.licenseKeys,
     _count: undefined,
   });
 }
@@ -114,7 +114,7 @@ export async function DELETE(
 
   const plan = await prisma.plan.findUnique({
     where: { id },
-    select: { id: true, name: true, _count: { select: { subscriptions: true, licenseKeys: true } } },
+    select: { id: true, name: true, _count: { select: { subscriptions: true } } },
   });
   if (!plan) return apiError('Package not found', 404);
 
@@ -123,7 +123,6 @@ export async function DELETE(
 
   const reasons: string[] = [];
   if (plan._count.subscriptions > 0) reasons.push(`${plan._count.subscriptions} subscription(s)`);
-  if (plan._count.licenseKeys > 0) reasons.push(`${plan._count.licenseKeys} license(s)`);
   if (purchaseRequestCount > 0) reasons.push(`${purchaseRequestCount} purchase request(s)`);
 
   if (reasons.length > 0) {

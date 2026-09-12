@@ -17,7 +17,6 @@ interface Plan {
   description: string | null;
   currency: string;
   features: string[];
-  isSelfHosted: boolean;
   /** V1 pricing rows from PlanPricing (Super Admin config). */
   pricing: Array<{
     deploymentMode: 'MANAGED' | 'CUSTOMER_DB';
@@ -60,12 +59,14 @@ export default function PricingPage() {
     staleTime: 5 * 60 * 1000,
   });
 
+  // Every catalog plan is a V1 plan (MANAGED / CUSTOMER_DB) — self-hosted
+  // plans no longer exist, so no filtering is required.
   const plans = data?.plans ?? [];
-  const paid = plans.filter((p) => !p.isSelfHosted);
+  const paid = plans;
 
   const goToPlan = (plan: Plan) => {
     // V1: free plan has no active pricing (hasActivePricing === false)
-    const isFree = !plan.hasActivePricing && !plan.isSelfHosted;
+    const isFree = !plan.hasActivePricing;
     if (isFree) {
       router.push('/contact?plan=Free');
     } else {
@@ -183,7 +184,7 @@ export default function PricingPage() {
                   </CardContent>
                   <CardFooter>
                     <Button className="w-full" onClick={() => goToPlan(plan)}>
-                      {!plan.hasActivePricing && !plan.isSelfHosted ? 'Get 7 Days Free Access' : 'Request Pricing'}
+                      {!plan.hasActivePricing ? 'Get 7 Days Free Access' : 'Request Pricing'}
                     </Button>
                   </CardFooter>
                 </Card>

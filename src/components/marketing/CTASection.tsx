@@ -13,7 +13,7 @@ interface CTASectionProps {
 
 export function CTASection({
   heading = 'Ready to get started? Join thousands of teams.',
-  subtext = 'Start monitoring smarter with real-time workforce intelligence — deployed in minutes, self-hosted if you need it.',
+  subtext = 'Start monitoring smarter with real-time workforce intelligence — deployed in minutes, with a Customer Database option if you need it.',
 }: CTASectionProps) {
   const router = useRouter();
   const [email, setEmail] = useState('');

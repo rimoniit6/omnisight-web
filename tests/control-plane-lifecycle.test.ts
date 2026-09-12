@@ -81,9 +81,11 @@ before(async () => {
     data: { email: 'sa@lifecycle.local', name: 'SA', role: 'super_admin', isActive: true },
   });
   saId = sa.id;
-  // Seed a self-hosted plan for license tests.
+  // NOTE: no self-hosted plan is created — the LicenseKey / self-hosted
+  // architecture was removed (Self-Hosted / PRIVATE is not a V1 service model).
+  // A normal V1 plan is created for the subscription life-cycle tests below.
   await db.plan.create({
-    data: { name: 'Enterprise_SelfHosted', priceMonthly: 0, isSelfHosted: true, maxDevices: -1, retentionDays: 0, features: [] },
+    data: { name: 'Lifecycle', priceMonthly: 5000, maxDevices: 50, retentionDays: 365, features: [] },
   });
 });
 
@@ -221,31 +223,22 @@ test('LC-05: subscription cancel clears pointer and is audited', async () => {
 });
 
 // LC-06
-test('LC-06: license issue and revoke without leaking the key into audit', async () => {
-  const token = await saToken();
-  const lic = await import('../src/app/api/admin/licenses/route');
-  const plan = await db.plan.findFirst({ where: { name: 'Enterprise_SelfHosted' }, select: { id: true } });
-  const gRes = await lic.POST(
-    req('http://localhost:3000/api/admin/licenses', token, 'POST', { organizationId: orgId, planId: plan!.id }),
+// The LicenseKey / self-hosted license architecture was REMOVED (Self-Hosted /
+// PRIVATE is not a V1 service model; activation is subscription-based). This
+// test is the regression guard that no active license API came back.
+test('LC-06: obsolete LicenseKey / self-hosted license API is gone', async () => {
+  const missing = /Cannot find module|ERR_MODULE_NOT_FOUND|Failed to resolve/i;
+  await assert.rejects(() => import('../src/app/api/admin/licenses/route'), missing, 'license issuance API must not exist');
+  await assert.rejects(
+    () => import('../src/app/api/admin/licenses/[licenseId]/revoke/route'),
+    missing,
+    'license revoke API must not exist',
   );
-  assert.equal(gRes.status, 201);
-  const gBody = await gRes.json();
-  const licenseId = gBody.license?.id ?? gBody.data?.id ?? gBody.id;
-  assert.ok(licenseId, 'license id returned');
-
-  const revoke = await import('../src/app/api/admin/licenses/[licenseId]/revoke/route');
-  const rRes = await revoke.PUT(
-    req(`http://localhost:3000/api/admin/licenses/${licenseId}/revoke`, token, 'PUT', { reason: 'test rotation' }),
-    { params: Promise.resolve({ licenseId }) },
+  await assert.rejects(
+    () => import('../src/app/api/license/validate/route'),
+    missing,
+    'public license validation endpoint must not exist',
   );
-  assert.equal(rRes.status, 200);
-  const row = await db.licenseKey.findUnique({ where: { id: licenseId }, select: { isRevoked: true, key: true } });
-  assert.equal(row?.isRevoked, true);
-  const audits = await db.auditLog.findMany({ where: { resource: 'license_key', resourceId: licenseId } });
-  assert.ok(audits.length >= 2, 'issue + revoke audited');
-  for (const a of audits) {
-    assert.ok(!a.description.includes(row!.key), 'license key must never appear in audit text');
-  }
 });
 
 // LC-07

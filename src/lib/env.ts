@@ -27,16 +27,10 @@ const productionRequired = z.object({
     .min(1, 'ENCRYPTION_KEY is required in production (32-byte random, hex)'),
 });
 
-// Additional requirements when running self-hosted/on-prem with a license.
-const selfHostedRequired = z.object({
-  SELF_HOSTED: z.string().optional(),
-  LICENSE_KEY: z
-    .string()
-    .regex(
-      /^OMNISIGHT-[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}$/,
-      'LICENSE_KEY must match OMNISIGHT-XXXX-XXXX-XXXX (when SELF_HOSTED=true and SELF_HOSTED_REQUIRE_LICENSE=true)'
-    ),
-});
+// NOTE: the self-hosted / license requirement block (SELF_HOSTED, LICENSE_KEY,
+// SELF_HOSTED_REQUIRE_LICENSE) was REMOVED with the LicenseKey architecture.
+// Self-Hosted / PRIVATE is not a V1 service model, so there is nothing to
+// license-check at startup.
 
 // ─── Parsers ───────────────────────────────────────────────────────────────
 
@@ -48,11 +42,8 @@ export interface EnvValidationResult {
 /**
  * Validate the current process.env. Returns a structured result; also throws a
  * clear aggregate error when a required variable is missing (fail-fast).
- *
- * @param opts.allowUnlicensedSelfHosted — default false. When true, a
- *   self-hosted install without a LICENSE_KEY is permitted (dev/bootstrap).
  */
-export function validateEnv(opts: { allowUnlicensedSelfHosted?: boolean } = {}): EnvValidationResult {
+export function validateEnv(): EnvValidationResult {
   const env = process.env as Record<string, string | undefined>;
   const errors: string[] = [];
 
@@ -62,19 +53,10 @@ export function validateEnv(opts: { allowUnlicensedSelfHosted?: boolean } = {}):
   }
 
   const isProduction = env.NODE_ENV === 'production';
-  const isSelfHosted = env.SELF_HOSTED === 'true';
 
   if (isProduction) {
     const prod = productionRequired.safeParse({ ENCRYPTION_KEY: env.ENCRYPTION_KEY });
     if (!prod.success) errors.push(...prod.error.issues.map((i) => i.message));
-  }
-
-  if (isSelfHosted && !opts.allowUnlicensedSelfHosted && env.SELF_HOSTED_REQUIRE_LICENSE !== 'false') {
-    const sh = selfHostedRequired.safeParse({
-      SELF_HOSTED: env.SELF_HOSTED,
-      LICENSE_KEY: env.LICENSE_KEY,
-    });
-    if (!sh.success) errors.push(...sh.error.issues.map((i) => i.message));
   }
 
   const result: EnvValidationResult = { ok: errors.length === 0, errors };
@@ -91,9 +73,9 @@ export function validateEnv(opts: { allowUnlicensedSelfHosted?: boolean } = {}):
  * Non-throwing variant — returns the validation result only. Useful for UI /
  * diagnostics where a thrown error would be awkward.
  */
-export function checkEnv(opts: { allowUnlicensedSelfHosted?: boolean } = {}): EnvValidationResult {
+export function checkEnv(): EnvValidationResult {
   try {
-    return validateEnv(opts);
+    return validateEnv();
   } catch (err) {
     return { ok: false, errors: [String((err as Error).message)] };
   }
@@ -102,4 +84,3 @@ export function checkEnv(opts: { allowUnlicensedSelfHosted?: boolean } = {}): En
 // ─── Convenience booleans (read-only, no validation side-effects) ──────────
 
 export const isProd = process.env.NODE_ENV === 'production';
-export const isSelfHostedEnv = process.env.SELF_HOSTED === 'true';

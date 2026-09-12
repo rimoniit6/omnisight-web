@@ -93,9 +93,8 @@ export async function GET(
           plan: { select: { name: true } },
         },
       },
-      licenseKey: {
-        select: { id: true, isActive: true, isRevoked: true, validFrom: true, validUntil: true, revokedAt: true, revokedReason: true, lastVerifiedAt: true },
-      },
+      // NOTE: `licenseKey` was removed with the LicenseKey / self-hosted
+      // architecture (not a V1 service model).
       _count: {
         select: {
           employees: true,

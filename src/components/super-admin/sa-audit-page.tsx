@@ -65,7 +65,7 @@ export function SuperAdminAuditPage() {
       <PageHeader
         eyebrow="Control Center"
         title="Audit Logs"
-        description="Control-plane activity: organization lifecycle, payments, licenses, packages and authentication events."
+        description="Control-plane activity: organization lifecycle, payments, packages and authentication events."
       />
 
       <div className="mb-4 flex flex-wrap items-center gap-3">

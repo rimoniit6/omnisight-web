@@ -384,7 +384,7 @@ export default function CustomizationPage() {
           <div className="flex items-center justify-between rounded-lg border border-border/60 p-4">
             <div>
               <div className="font-medium">Use my own analytics database</div>
-              <p className="text-sm text-muted-foreground">Self-hosted / BYODB</p>
+              <p className="text-sm text-muted-foreground">Bring your own analytics database (BYODB)</p>
             </div>
             <Switch checked={useOwnDb} onCheckedChange={setUseOwnDb} />
           </div>

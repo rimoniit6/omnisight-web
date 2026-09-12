@@ -1,10 +1,13 @@
-# OmniSight — self-hosted production image (Next.js standalone output).
+# OmniSight — production image (Next.js standalone output).
 #
 # Multi-stage: bun install -> next build -> lean runtime. The runtime keeps the
-# full node_modules + src so the entrypoint can apply Prisma migrations and the
-# idempotent self-hosted seed (Enterprise_SelfHosted plan) at first start — the
-# DB is only reachable at runtime, never at build time. See
-# scripts/install-self-hosted.sh for the equivalent scripted install.
+# full node_modules + src so the entrypoint can apply Prisma migrations at first
+# start — the DB is only reachable at runtime, never at build time.
+#
+# The container no longer creates any plan or seed data on boot: the obsolete
+# self-hosted plan bootstrap was removed with the LicenseKey architecture.
+# Reference data and the Super Admin are created by the explicit
+# `npm run db:seed:*` commands (see README).
 
 # ── deps ────────────────────────────────────────────────────────────────────
 FROM oven/bun:1 AS deps
@@ -45,8 +48,8 @@ COPY --from=build /app/.next/standalone ./
 COPY --from=build /app/.next/static ./.next/static
 COPY --from=build /app/public ./public
 
-# Entrypoint: deploy migrations, apply the idempotent self-hosted seed (creates
-# the Enterprise_SelfHosted plan), then start the standalone server.
+# Entrypoint: deploy migrations, then start the standalone server. The container
+# creates NO plan / pricing / demo data on boot.
 COPY scripts/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 

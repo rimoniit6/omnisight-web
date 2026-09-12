@@ -86,7 +86,8 @@ export async function GET(req: NextRequest) {
           description: p.description,
           currency: p.currency,
           features: parsePlanFeatures(p.features),
-          isSelfHosted: p.isSelfHosted,
+          // NOTE: `isSelfHosted` was removed with the self-hosted architecture —
+          // every catalog plan is a V1 MANAGED / CUSTOMER_DB plan.
           // ── V1 fields (source of truth) ──
           pricing: rows,
           hasActivePricing: rows.some((r) => r.basePrice > 0),
