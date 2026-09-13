@@ -6,6 +6,7 @@ import { hasActiveConsent } from '@/lib/consent';
 import { resolveOrgMonitoring } from '@/lib/jobs/settings';
 import { validateScreenshotUpload, extensionForMime, sanitizeFilenameSegment, sanitizeDisplayFilename, parsePngDimensions } from '@/lib/screenshots/storage';
 import { putScreenshot, deleteScreenshot, isNotFound } from '@/lib/storage';
+import { signalScreenshotRealtime } from '@/lib/screenshots/realtime-signal';
 import { log, requestContext } from '@/lib/logger';
 
 const MAX_SCREENSHOT_BYTES = 5 * 1024 * 1024; // 5 MB
@@ -231,6 +232,23 @@ export async function POST(req: NextRequest) {
         error: String((transactionError as Error)?.message ?? transactionError),
       });
       return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
+    }
+
+    // CUSTOMER_DB realtime delivery signal. The screenshot row just committed
+    // to the org's own database — the platform live-updates poller never reads
+    // it, so without this marker a CUSTOMER_DB org's admins never get the
+    // 'new-screenshot' event (their screenshot grid only refreshes on manual
+    // page load). MANAGED orgs (orgData === db) skip this — the poller
+    // broadcasts their Screenshot row directly. Fire-and-forget: a signal
+    // failure must never fail the upload (row + object are already stored).
+    if (orgData !== db) {
+      await signalScreenshotRealtime(db, orgData, {
+        organizationId: orgId,
+        employeeId: authResult.employee!.id,
+        employeeName: `${authResult.employee!.firstName} ${authResult.employee!.lastName}`.trim() || null,
+        appWindow: appWindow || null,
+        capturedAt,
+      });
     }
 
     log.info('agent.screenshot.upload.success', {

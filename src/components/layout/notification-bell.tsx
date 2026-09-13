@@ -111,10 +111,12 @@ function NotificationDetailPanel({
   notif,
   onClose,
   onMarkRead,
+  onLeadIgnore,
 }: {
   notif: NotificationItem;
   onClose: () => void;
   onMarkRead: (id: string, isLead: boolean) => void;
+  onLeadIgnore: (id: string) => void;
 }) {
   const isLead = notif.type === 'lead_submission';
   return (
@@ -229,7 +231,7 @@ function NotificationDetailPanel({
                   <Button
                     variant="outline"
                     className="w-full h-9 text-sm text-rose-600 hover:text-rose-700"
-                    onClick={() => handleLeadIgnore(notif.id)}
+                    onClick={() => onLeadIgnore(notif.id)}
                   >
                     <X className="w-4 h-4 mr-2" />
                     Ignore
@@ -405,6 +407,7 @@ export function NotificationBell() {
           notif={selectedNotif}
           onClose={handleClosePanel}
           onMarkRead={handleMarkRead}
+          onLeadIgnore={handleLeadIgnore}
         />
       )}
       <Popover open={notifOpen} onOpenChange={(open) => {

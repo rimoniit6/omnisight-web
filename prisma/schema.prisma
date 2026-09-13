@@ -1603,6 +1603,34 @@ model Screenshot {
   @@index([organizationId, processingStatus])
 }
 
+// ==================== Realtime Screenshot Signal ====================
+// Delivery signal for the live-updates realtime channel when a screenshot is
+// stored in a CUSTOMER_DB org (org-owned database). The screenshot row lives in
+// the org DB, which the platform poller never reads, so the upload path writes
+// this lightweight, org-scoped marker on the PLATFORM side. live-updates polls
+// this table (createdAt cursor) and broadcasts 'new-screenshot' exactly like a
+// MANAGED org's Screenshot row — keeping the realtime contract identical for
+// both storage modes. Deferred/retried captures simply write a second signal;
+// the WS client invalidates by employee id (stateless refetch), so a duplicate
+// is idempotent rather than a second analytics row. No FKs: employeeId is the
+// org-owned employee rowId (lives in the customer DB, unenforceable here) and
+// the organization itself is platform-side but deliberately relationless to
+// keep this table append-only + delete-light for high capture volume.
+
+model RealtimeScreenshotEvent {
+  id             String   @id @default(cuid())
+  organizationId String
+  employeeId     String // org-owned employee.rowId (employee lives in customer DB)
+  employeeName   String?
+  appWindow      String?
+  capturedAt     DateTime @default(now())
+  createdAt      DateTime @default(now())
+
+  // Live-updates poll cursor + per-org late/duplicate filtering.
+  @@index([createdAt])
+  @@index([organizationId, createdAt])
+}
+
 // ==================== App Whitelist/Blacklist ====================
 
 model AppListEntry {

@@ -1,0 +1,34 @@
+{
+  "tokens": {
+    "mgmt": "tok_mgmt_oPKI7ZlirP3vry9_zlcgxiZba8ad-CPI",
+    "cust": "tok_cust_s68g7mzWn9r58lRW7NluIzJ9PtnJ4ruP",
+    "disabled": "tok_disabled_0nmremlUBY542WaADt7zrPW5VPeoLHwf"
+  },
+  "orgs": {
+    "mgmt": {
+      "id": "org-e2e-mgmt",
+      "emp": "emp-e2e-mgmt",
+      "dev": "dev-e2e-mgmt",
+      "empCode": "E2E-MGMT-1"
+    },
+    "cust": {
+      "id": "org-e2e-cust",
+      "emp": "emp-e2e-cust",
+      "dev": "dev-e2e-cust",
+      "empCode": "E2E-CUST-1"
+    },
+    "disabled": {
+      "id": "org-e2e-disabled",
+      "emp": "emp-e2e-disabled",
+      "dev": "dev-e2e-disabled",
+      "empCode": "E2E-DISABLED-1"
+    }
+  },
+  "custDb": {
+    "host": "127.0.0.1",
+    "port": 5433,
+    "name": "omnisight_e2e_customer",
+    "user": "omnisight_user",
+    "password": "omnisight_password"
+  }
+}

@@ -19,6 +19,7 @@ import {
   activityPingInvalidation,
   projectTimeUpdateInvalidation,
   deviceClaimInvalidation,
+  screenshotInvalidation,
 } from '../src/lib/ws-invalidation';
 
 const EMP_A = 'emp-a';
@@ -110,12 +111,52 @@ test('project-time-update invalidates the affected project queries + employee pr
   assert.ok(!keys.some((k) => k[1] === 'proj-other'));
 });
 
+test('screenshot invalidates global screenshot views + the affected employee\'s screenshot/device queries', () => {
+  // A `new-screenshot` event means the agent uploaded a fresh capture for the
+  // affected employee. The global Screenshots page (prefix 'screenshots'),
+  // its stats, and the event stats must refresh (same as before the helper
+  // was factored out) AND the Employee Details Screenshot tab
+  // ('employee-screenshots') plus the capture button's online-device gate
+  // ('employee-devices') must refresh — otherwise a delivered screenshot
+  // never appears without a manual reload (the auto/manual capture bug).
+  const keys = screenshotInvalidation(EMP_A);
+  assert.deepEqual(keys, [
+    ['screenshots'],
+    ['screenshot-stats'],
+    ['event-stats'],
+    ['employee-screenshots', EMP_A],
+    ['employee-devices', EMP_A],
+  ]);
+  // No other employee's or tenant's queries are ever invalidated.
+  for (const key of keys) {
+    assert.ok(!key.includes(EMP_B));
+  }
+});
+
+test('screenshot prefix-match: invalidation keys hit the real parametrized query keys', () => {
+  const realEmployeeTabKey = ['employee-screenshots', EMP_A, 2];
+  const realEmployeeDevicesKey = ['employee-devices', EMP_A];
+  const realGlobalPageKey = ['screenshots', 'all', { org: 'org-1' }];
+  for (const key of screenshotInvalidation(EMP_A)) {
+    if (key[0] === 'employee-screenshots') {
+      assert.deepEqual(realEmployeeTabKey.slice(0, 2), key);
+    }
+    if (key[0] === 'employee-devices') {
+      assert.deepEqual(realEmployeeDevicesKey.slice(0, 2), key);
+    }
+    if (key[0] === 'screenshots') {
+      assert.deepEqual(realGlobalPageKey.slice(0, 1), key);
+    }
+  }
+});
+
 test('no event type produces an empty invalidation list', () => {
   assert.ok(employeePresenceInvalidation(EMP_A).length > 0);
   assert.ok(deviceStatusInvalidation(EMP_A).length > 0);
   assert.ok(activityPingInvalidation(EMP_A).length > 0);
   assert.ok(projectTimeUpdateInvalidation('proj-1', EMP_A).length > 0);
   assert.ok(deviceClaimInvalidation().length > 0);
+  assert.ok(screenshotInvalidation(EMP_A).length > 0);
 });
 
 test('device-claim invalidates the approvals list, badge count and global aggregates', () => {

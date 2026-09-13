@@ -319,7 +319,7 @@ async function pollOnce(): Promise<void> {
   const now = new Date();
 
   try {
-    const [changedDevices, newActivities, newNotifications, newScreenshots, newUsbEvents, breakActivities, newAutoTimeEntries, newClaims, newAnomalies, changedAppPolicy, newPolicyViolations, newAlerts, newLocations] =
+    const [changedDevices, newActivities, newNotifications, newScreenshots, newRealtimeSignals, newUsbEvents, breakActivities, newAutoTimeEntries, newClaims, newAnomalies, changedAppPolicy, newPolicyViolations, newAlerts, newLocations] =
       await Promise.all([
         db.device.findMany({
           where: { updatedAt: { gt: since } },
@@ -344,6 +344,26 @@ async function pollOnce(): Promise<void> {
           where: { createdAt: { gt: since } },
           include: {
             employee: { select: { firstName: true, lastName: true, organizationId: true } },
+          },
+          orderBy: { createdAt: 'desc' },
+          take: 5,
+        }),
+        // CUSTOMER_DB orgs: the screenshot row lives in the org's own database,
+        // so this poller never sees it. The upload route writes a compact
+        // platform-side delivery signal instead; broadcast it identically to a
+        // MANAGED screenshot so the realtime contract is the same for both
+        // storage modes. `capturedAt` is the analytics timestamp carried in as
+        //-is (NOT the signal's createdAt — reflects the true capture time).
+        db.realtimeScreenshotEvent.findMany({
+          where: { createdAt: { gt: since } },
+          select: {
+            id: true,
+            organizationId: true,
+            employeeId: true,
+            employeeName: true,
+            appWindow: true,
+            capturedAt: true,
+            createdAt: true,
           },
           orderBy: { createdAt: 'desc' },
           take: 5,
@@ -505,6 +525,7 @@ async function pollOnce(): Promise<void> {
       ...newActivities.map((a) => ({ ts: a.createdAt })),
       ...newNotifications.map((n) => ({ ts: n.createdAt })),
       ...newScreenshots.map((s) => ({ ts: s.createdAt })),
+      ...newRealtimeSignals.map((s) => ({ ts: s.createdAt })),
       ...newUsbEvents.map((u) => ({ ts: u.createdAt })),
       ...breakActivities.map((b) => ({ ts: b.createdAt })),
       ...newAutoTimeEntries.map((te) => ({ ts: te.updatedAt })),
@@ -633,6 +654,20 @@ async function pollOnce(): Promise<void> {
       });
     }
 
+    // New CUSTOMER_DB screenshot signals — same 'new-screenshot' contract as
+    // the MANAGED path above, emitted to the org's room. The client keys its
+    // invalidation by employeeId (stateless refetch), so the signal id vs a
+    // real screenshot id is immaterial.
+    for (const s of newRealtimeSignals) {
+      io.to(`org:${s.organizationId}`).emit('new-screenshot', {
+        id: s.id,
+        employeeId: s.employeeId,
+        employeeName: s.employeeName || 'Unknown',
+        appWindow: s.appWindow || 'Unknown',
+        timestamp: s.capturedAt.toISOString(),
+      });
+    }
+
     // Device claims (creation AND lifecycle transitions — the
     // claimStatus map keeps re-fetched rows silent; status is included so the
     // client can render approved/rejected/cancelled/expired accurately).
@@ -754,6 +789,7 @@ const REQUIRED_POLL_MODELS: (keyof PrismaClient)[] = [
   'notification',
   'alert',
   'screenshot',
+  'realtimeScreenshotEvent',
   'usbEvent',
   'timeEntry',
   'anomaly',

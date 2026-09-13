@@ -144,6 +144,28 @@ export function usbEventInvalidation(): string[][] {
 }
 
 /**
+ * Query keys invalidated by a `new-screenshot` event (an agent uploaded a
+ * screenshot for one employee).
+ *
+ * Employee-scoped targeted invalidations are essential: the Employee Details
+ * Screenshot tab (query key prefix 'employee-screenshots') and the capture
+ * button's online-device gate (prefix 'employee-devices') must refresh so a
+ * freshly delivered screenshot — automatic or command-triggered — appears
+ * without a manual reload, and so the button's online state stays current.
+ * The global Screenshots page ('screenshots' prefix), its stats, and the
+ * event stats refresh exactly as before this helper was factored out.
+ */
+export function screenshotInvalidation(employeeId: string): string[][] {
+  return [
+    ['screenshots'],
+    ['screenshot-stats'],
+    ['event-stats'],
+    ['employee-screenshots', employeeId],
+    ['employee-devices', employeeId],
+  ];
+}
+
+/**
  * Query keys invalidated by a `location-update` event (a new GPS fix arrived
  * for an employee). The LocationPanel refetches the employee's location API
  * to get the actual coordinates — coordinates are NEVER sent through the

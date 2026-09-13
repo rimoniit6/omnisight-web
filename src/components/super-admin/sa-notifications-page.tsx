@@ -19,6 +19,9 @@ import {
   X,
   Archive,
   ExternalLink,
+  Shield,
+  Brain,
+  UserPlus,
 } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -88,8 +91,8 @@ export function SuperAdminNotificationsPage() {
   const unreadCount = data?.unreadCount || 0;
 
   // Separate leads from notifications
-  const leads = items.filter((item) => item.type === 'lead_submission');
-  const notifications = items.filter((item) => item.type !== 'lead_submission');
+  const leads = items.filter((item: UnifiedItem) => item.type === 'lead_submission');
+  const notifications = items.filter((item: UnifiedItem) => item.type !== 'lead_submission');
 
   const markReadMutation = useMutation({
     mutationFn: async ({ id, isLead }: { id: string; isLead: boolean }) => {
@@ -135,6 +138,21 @@ export function SuperAdminNotificationsPage() {
 
   const handleMarkRead = (item: UnifiedItem) => {
     markReadMutation.mutate({ id: item.id, isLead: item.type === 'lead_submission' });
+  };
+
+  const handleLeadIgnore = (leadId: string) => {
+    const body: Record<string, unknown> = { id: leadId, leadStatus: 'IGNORED' };
+    fetch('/api/super-admin/notifications', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    }).then((res) => {
+      if (res.ok) {
+        queryClient.invalidateQueries({ queryKey: ['sa-notifications'] });
+        queryClient.invalidateQueries({ queryKey: ['notification-count', true] });
+        toast.success('Lead ignored');
+      }
+    });
   };
 
   const handleLeadAction = (leadId: string, action: 'contacted' | 'ignored') => {
@@ -247,7 +265,7 @@ export function SuperAdminNotificationsPage() {
               Landing Page Requests
             </h3>
             <div className="space-y-2">
-              {leads.map((lead) => (
+              {leads.map((lead: UnifiedItem) => (
                 <Card
                   key={lead.id}
                   className={cn(
@@ -340,7 +358,7 @@ export function SuperAdminNotificationsPage() {
             />
           ) : (
             <div className="space-y-2">
-              {notifications.map((notif) => {
+              {notifications.map((notif: UnifiedItem) => {
                 const TypeIcon = typeIcons[notif.type] || Bell;
                 const isUnread = notif.status === 'unread';
                 return (

@@ -26,6 +26,10 @@ export const BROADCAST_TABLES = [
   'Activity',
   'Notification',
   'Screenshot',
+  // Platform-side delivery signal for screenshots stored in a CUSTOMER_DB org
+  // (the analytics row lives in the org's own DB, which never hits this table —
+  // the upload route writes this signal instead so the poller wakes + emits).
+  'RealtimeScreenshotEvent',
   'UsbEvent',
   'TimeEntry',
   'DeviceClaim',

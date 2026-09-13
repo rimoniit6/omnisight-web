@@ -15,6 +15,7 @@ import {
   anomalyInvalidation,
   alertEventInvalidation,
   locationUpdateInvalidation,
+  screenshotInvalidation,
 } from '@/lib/ws-invalidation';
 
 // ─── Event Types ───
@@ -398,9 +399,9 @@ export function WebSocketProvider({ children }: { children: ReactNode }) {
         description: `${event.employeeName} — ${event.appWindow}`,
         timestamp: event.timestamp,
       });
-      queryClient.invalidateQueries({ queryKey: ['screenshots'] });
-      queryClient.invalidateQueries({ queryKey: ['screenshot-stats'] });
-      queryClient.invalidateQueries({ queryKey: ['event-stats'] });
+      for (const key of screenshotInvalidation(event.employeeId)) {
+        queryClient.invalidateQueries({ queryKey: key });
+      }
     });
 
     // ─── Agent Registration (legacy path: creation + approve/reject) ───

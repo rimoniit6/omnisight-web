@@ -1,7 +1,7 @@
 'use client';
 
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { useState, useCallback } from 'react';
+import { useQuery, useMutation } from '@tanstack/react-query';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import { formatDistanceToNow, format } from 'date-fns';
 import { Camera, Clock, Monitor, AlertTriangle, WifiOff, RefreshCw, ExternalLink, Eye, Crosshair, CheckCircle2, XCircle } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
@@ -124,7 +124,9 @@ function ScreenshotCard({ screenshot, onClick }: { screenshot: ScreenshotItem; o
 export function EmployeeScreenshotTab({ employeeId }: { employeeId: string }) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [page, setPage] = useState(1);
-  const queryClient = useQueryClient();
+  const [awaitingCapture, setAwaitingCapture] = useState(false);
+  const [captureExpired, setCaptureExpired] = useState(false);
+  const baselineTotal = useRef(0);
 
   const { data, isLoading, isError, refetch } = useQuery<ScreenshotListResponse>({
     queryKey: ['employee-screenshots', employeeId, page],
@@ -139,6 +141,7 @@ export function EmployeeScreenshotTab({ employeeId }: { employeeId: string }) {
       return res.json();
     },
     enabled: !!employeeId,
+    refetchInterval: awaitingCapture ? 4000 : false,
   });
 
   // Fetch employee devices to determine online status for capture button
@@ -177,11 +180,9 @@ export function EmployeeScreenshotTab({ employeeId }: { employeeId: string }) {
     },
     onSuccess: () => {
       toast.success('Screenshot capture command sent — the agent will capture shortly.');
-      // Refresh the screenshot list after a delay to allow the agent to capture + upload
-      setTimeout(() => {
-        refetch();
-        queryClient.invalidateQueries({ queryKey: ['employee-screenshots', employeeId] });
-      }, 8_000);
+      baselineTotal.current = data?.total ?? 0;
+      setCaptureExpired(false);
+      setAwaitingCapture(true);
     },
     onError: (err) => {
       toast.error(`Failed to send capture command: ${(err as Error).message}`);
@@ -195,6 +196,22 @@ export function EmployeeScreenshotTab({ employeeId }: { employeeId: string }) {
     }
     captureMutation.mutate(onlineDevice.id);
   }, [onlineDevice, captureMutation]);
+
+  useEffect(() => {
+    if (!awaitingCapture) return;
+    const stopAt = window.setTimeout(() => {
+      setAwaitingCapture(false);
+      setCaptureExpired(true);
+    }, 60_000);
+    return () => window.clearTimeout(stopAt);
+  }, [awaitingCapture]);
+
+  useEffect(() => {
+    if (awaitingCapture && data && data.total > baselineTotal.current) {
+      setAwaitingCapture(false);
+      setCaptureExpired(false);
+    }
+  }, [data, awaitingCapture]);
 
   const screenshots = data?.data ?? [];
   const totalPages = data?.totalPages ?? 1;
@@ -244,6 +261,28 @@ export function EmployeeScreenshotTab({ employeeId }: { employeeId: string }) {
             <CheckCircle2 className="w-4 h-4 text-emerald-600" />
             <p className="text-xs text-emerald-700">
               Capture command sent. The screenshot will appear here shortly once the agent processes it.
+            </p>
+          </CardContent>
+        </Card>
+      )}
+
+      {awaitingCapture && (
+        <Card className="border-primary/20 bg-muted/30">
+          <CardContent className="py-3 flex items-center gap-2">
+            <Crosshair className="w-4 h-4 text-primary animate-spin" />
+            <p className="text-xs text-muted-foreground">
+              Waiting for the agent to capture and upload the screenshot…
+            </p>
+          </CardContent>
+        </Card>
+      )}
+
+      {captureExpired && !awaitingCapture && (
+        <Card className="border-amber-200 bg-amber-50">
+          <CardContent className="py-3 flex items-center gap-2">
+            <AlertTriangle className="w-4 h-4 text-amber-600" />
+            <p className="text-xs text-amber-700">
+              No screenshot received yet. The agent may be offline or blocked (consent revoked, outside working hours, or capture unavailable). Verify the device is online and try again, or click Refresh.
             </p>
           </CardContent>
         </Card>
