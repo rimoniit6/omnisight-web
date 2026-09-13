@@ -14,8 +14,34 @@ services:
     networks:
       - omnisight_network
 
+  web:
+    build: .
+    container_name: omnisight_web
+    restart: always
+    ports:
+      - "3000:3000"
+    environment:
+      NODE_ENV: production
+      # Local storage root inside the container. The Dockerfile sets WORKDIR=/app,
+      # so the default local path resolves to /app/uploads.
+      STORAGE_DRIVER: local
+      STORAGE_LOCAL_PATH: /app/uploads
+      # Required runtime secrets — set these in production via .env or secrets:
+      # DATABASE_URL, DIRECT_URL, JWT_SECRET, ENCRYPTION_KEY,
+      # SUPER_ADMIN_EMAIL, SUPER_ADMIN_PASSWORD, NEXT_PUBLIC_APP_URL
+    volumes:
+      # Persist local screenshot/avatar files across container restarts.
+      # Mounted at /app/uploads so LocalStorageDriver writes screenshots to
+      # /app/uploads/screenshots/ and avatars to /app/uploads/public/uploads/avatars/.
+      - uploads:/app/uploads
+    depends_on:
+      - db
+    networks:
+      - omnisight_network
+
 volumes:
   pgdata:
+  uploads:
 
 networks:
   omnisight_network:

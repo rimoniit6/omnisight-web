@@ -3,7 +3,8 @@
  * binary artifacts (screenshots, avatars) physically live.
  *
  * Two drivers:
- *  - "local"    — filesystem under <cwd>/uploads (self-hosted, dev, tests)
+ *  - "local"    — filesystem under STORAGE_LOCAL_PATH (default <cwd>/uploads)
+ *                 (self-hosted, dev, tests, Docker with volume mount)
  *  - "supabase" — Supabase Storage buckets via the public REST API
  *                 (Vercel serverless: the filesystem is read-only, so
  *                 artifacts MUST live in object storage)
@@ -16,9 +17,21 @@
  *  STORAGE_DRIVER=supabase + SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY
  *  In production: missing credentials cause a hard failure (fail-closed).
  *  In development/test: falls back to local with a logged warning.
+ *
+ * Provider selection is configured ONLY via STORAGE_DRIVER.
+ * The legacy STORAGE_PROVIDER variable is NOT read by runtime code.
  */
-
 export type StorageDriverKind = 'local' | 'supabase';
+
+/**
+ * Capability queried by infrastructure code that needs to know whether the
+ * active storage lives on the local filesystem (e.g. the orphan-file sweep).
+ * Business logic must NOT branch on StorageDriverKind directly.
+ */
+export interface FilesystemBacked {
+  /** True when this driver stores objects on a locally reachable filesystem. */
+  isFilesystemBacked(): boolean;
+}
 
 export interface StorageObject {
   bytes: Buffer;

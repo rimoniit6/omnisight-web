@@ -102,6 +102,11 @@ export class SupabaseStorageDriver implements StorageDriver {
     const objectKey = rest.join('/');
     return `${this.base()}/object/public/${encodeURIComponent(bucket)}/${encodeKey(objectKey)}`;
   }
+
+  /** Supabase Storage is object storage, not a locally reachable filesystem. */
+  isFilesystemBacked(): boolean {
+    return false;
+  }
 }
 
 /** Path-safe key encoding: keep "/" as separators, escape everything else. */

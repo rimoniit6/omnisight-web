@@ -87,8 +87,25 @@ export function storage(): StorageDriver {
   return active;
 }
 
+/**
+ * Legacy helper preserved for backwards compatibility. New code should use
+ * isFilesystemBacked() instead, which is provider-agnostic.
+ */
 export function isSupabaseStorage(): boolean {
   return storage().kind === 'supabase';
+}
+
+/**
+ * True when the active storage driver is backed by a locally reachable
+ * filesystem (e.g. LocalStorageDriver). Infrastructure code that needs
+ * direct filesystem access (orphan sweep, local-only cleanup) should use
+ * this rather than branching on provider names.
+ */
+export function isFilesystemBacked(): boolean {
+  const driver = storage();
+  return typeof (driver as unknown as { isFilesystemBacked?: () => boolean }).isFilesystemBacked === 'function'
+    ? (driver as unknown as { isFilesystemBacked: () => boolean }).isFilesystemBacked()
+    : false;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

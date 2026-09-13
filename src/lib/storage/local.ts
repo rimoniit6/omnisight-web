@@ -7,38 +7,42 @@ import {
   SCREENSHOTS_KEY_PREFIX,
   AVATARS_KEY_PREFIX,
 } from './types';
+import { getLocalUploadsRoot } from './local-path';
 
 /**
  * Filesystem-backed storage (self-hosted / dev / tests).
  *
  * Key → path mapping:
- *  - screenshots/<orgId>/<file>  → <cwd>/uploads/screenshots/<file>
+ *  - screenshots/<orgId>/<file>  → <uploadsRoot>/screenshots/<file>
  *    (LEGACY FLAT layout: the org folder is a bucket-scoping concept for
  *     object storage only. Local keeps the pre-migration flat directory so
  *     the orphan-file sweep, existing on-disk files and the DB filePath
  *     values keep matching. The orgId segment is dropped, never a path.)
- *  - avatars/<file>              → <cwd>/public/uploads/avatars/<file>
+ *  - avatars/<file>              → <uploadsRoot>/public/uploads/avatars/<file>
  *    (public/ keeps the existing avatar URL scheme working without a proxy;
  *     the same files are served through src/app/uploads/avatars/[filename]
  *     on read-only hosts)
- *  - anything else               → <cwd>/uploads/<bucket>/<rest>
+ *  - anything else               → <uploadsRoot>/<bucket>/<rest>
  *
  * Keys are always treated as RELATIVE paths: backslashes, leading slashes,
  * "." and ".." segments are neutralized so a crafted key can never escape the
  * storage roots (defense in depth on top of the UUID/sanitized filenames the
  * call sites already generate).
+ *
+ * The local storage root is controlled by STORAGE_LOCAL_PATH (see local-path.ts).
  */
 export class LocalStorageDriver implements StorageDriver {
   readonly kind = 'local' as const;
 
   private rootFor(key: string): string {
+    const root = getLocalUploadsRoot();
     if (key.startsWith(SCREENSHOTS_KEY_PREFIX)) {
-      return join(process.cwd(), 'uploads', 'screenshots');
+      return join(root, 'screenshots');
     }
     if (key.startsWith(AVATARS_KEY_PREFIX)) {
-      return join(process.cwd(), 'public', 'uploads', 'avatars');
+      return join(root, 'public', 'uploads', 'avatars');
     }
-    return join(process.cwd(), 'uploads');
+    return root;
   }
 
   private resolve(key: string): string {
@@ -99,5 +103,10 @@ export class LocalStorageDriver implements StorageDriver {
 
   getPublicUrl(): string | null {
     return null;
+  }
+
+  /** Local filesystem storage is always filesystem-backed. */
+  isFilesystemBacked(): boolean {
+    return true;
   }
 }

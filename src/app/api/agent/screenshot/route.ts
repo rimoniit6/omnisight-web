@@ -173,6 +173,13 @@ export async function POST(req: NextRequest) {
         // the row is picked up by the bounded 'screenshot_processing' job and
         // transitioned to 'processed' or 'processing_failed' WITHOUT any image
         // work happening in this request lifecycle.
+        //
+        // filePath / thumbnailPath are APPLICATION/DISPLAY references, not
+        // provider-specific paths. They use the /uploads/screenshots/ convention
+        // for backwards compatibility, but the actual storage key is derived
+        // server-side from orgId + basename by the storage abstraction
+        // (screenshotKeyFromPath). This lets the same DB values work with both
+        // LocalStorageDriver and SupabaseStorageDriver.
         await tx.screenshot.create({
           data: {
             employeeId: authResult.employee!.id,

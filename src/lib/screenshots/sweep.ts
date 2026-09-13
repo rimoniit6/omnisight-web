@@ -7,15 +7,20 @@
  * static fs imports even when the code path is guarded by runtime checks.
  *
  * Only the retention background job (src/lib/jobs/retention.ts) imports this.
+ *
+ * The local storage root is read from getLocalScreenshotsDir() (local-path.ts)
+ * — the same source used by LocalStorageDriver — so there is ONE source of
+ * truth for where local screenshots live.
  */
 import { promises as fs } from 'fs';
-import { join, basename } from 'path';
+import { basename, join } from 'path';
 import { db } from '@/lib/db';
 import { getPrismaForOrg } from '@/lib/org-db';
 import { log } from '@/lib/logger';
-import { isSupabaseStorage } from '@/lib/storage';
+import { isFilesystemBacked } from '@/lib/storage';
+import { getLocalScreenshotsDir } from '@/lib/storage/local-path';
 
-const SCREENSHOT_UPLOAD_DIR = join(process.cwd(), 'uploads', 'screenshots');
+const SCREENSHOT_UPLOAD_DIR = getLocalScreenshotsDir();
 
 export interface OrphanSweepResult {
   scanned: number;
@@ -107,11 +112,10 @@ async function collectReferencedFilenames(chunk = 2000): Promise<Set<string>> {
 export async function sweepOrphanScreenshotFiles(
   opts: { minAgeMs?: number; limit?: number } = {}
 ): Promise<OrphanSweepResult> {
-  // Supabase Storage has no shared filesystem to sweep: objects live in
-  // buckets and every write/delete already goes through the driver (failed
-  // uploads remove their object best-effort). Orphan cleanup there is a
-  // no-op by design.
-  if (isSupabaseStorage()) {
+  // Object-storage drivers (Supabase, S3) have no shared local filesystem
+  // to sweep: objects live in buckets and every write/delete already goes
+  // through the driver. Orphan cleanup there is a no-op by design.
+  if (!isFilesystemBacked()) {
     return { scanned: 0, removed: 0, errors: [] };
   }
   const minAgeMs = opts.minAgeMs ?? 15 * 60 * 1000;
