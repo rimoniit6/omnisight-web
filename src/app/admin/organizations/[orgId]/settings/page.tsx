@@ -164,22 +164,22 @@ export default function AdminOrgSettingsPage() {
                   <Input
                     id="screenshot-interval"
                     type="number"
-                    min={1}
+                    min={0}
                     max={1440}
                     value={Number.isNaN(interval) ? '' : interval}
                     onChange={(e) => {
                       const n = parseInt(e.target.value, 10);
-                      setInterval(Number.isNaN(n) ? 1 : Math.max(1, Math.min(1440, n)));
+                      setInterval(Number.isNaN(n) ? 0 : Math.max(0, Math.min(1440, n)));
                     }}
                   />
                   <p className="text-xs text-muted-foreground">
-                    Minutes between agent screenshots for this organization (1–1440).
-                    This cadence is controlled here (super admin), not in the org-facing monitoring UI.
+                    Minutes between agent screenshots for this organization (0–1440; 0 disables
+                    screenshots). This cadence is controlled here (super admin), not in the org-facing monitoring UI.
                   </p>
                 </div>
 
                 <div className="flex justify-end">
-                  <Button onClick={save} disabled={saving || interval < 1 || interval > 1440}>
+                  <Button onClick={save} disabled={saving || interval < 0 || interval > 1440}>
                     {saving ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Save className="w-4 h-4 mr-2" />}
                     Save
                   </Button>

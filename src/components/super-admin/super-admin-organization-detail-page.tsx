@@ -837,12 +837,12 @@ export function SuperAdminOrganizationDetailPage() {
                     <Input
                       id="ss-interval"
                       type="number"
-                      min={1}
+                      min={0}
                       max={1440}
                       value={ssInterval}
                       onChange={(e) => {
                         const n = parseInt(e.target.value, 10);
-                        setSsInterval(Number.isNaN(n) ? 1 : Math.max(1, Math.min(1440, n)));
+                        setSsInterval(Number.isNaN(n) ? 0 : Math.max(0, Math.min(1440, n)));
                       }}
                       className="w-28"
                     />

@@ -60,10 +60,13 @@ export async function GET(req: NextRequest) {
     const hasScreenshots = planFeatures.includes('screenshots');
 
     // If the plan doesn't include screenshots, force-disable regardless of
-    // the org-level setting. If it does include them, use the org's interval.
-    const effectiveScreenshotFrequency = hasScreenshots
-      ? (org?.screenshotInterval ?? 5)
-      : 0;
+    // the org-level setting. The org-wide screenshot_enabled toggle is a
+    // second independent fail-closed gate: when either says no, the agent
+    // receives frequency 0 so its scheduler registers no screenshot job.
+    const effectiveScreenshotFrequency =
+      hasScreenshots && monitoring.screenshot_enabled
+        ? (org?.screenshotInterval ?? 5)
+        : 0;
 
     // Canonical break state for THIS employee (server-authoritative).
     const openBreak = await db.breakSession.findFirst({

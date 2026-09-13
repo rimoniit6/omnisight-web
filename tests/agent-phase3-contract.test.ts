@@ -5,7 +5,7 @@
  * modes (MANAGED / CUSTOMER_DB / PRIVATE), NOT TypeScript interfaces:
  *
  *   P3C-01  GET /api/agent/compat advertises serverVersion, minAgentVersion and
- *           exactly the supported deployment modes.
+ *           exactly the supported deployment modes (V1: MANAGED, CUSTOMER_DB).
  *   P3C-02  GET /api/agent/config returns a deployment block derived
  *           SERVER-SIDE from Organization.deploymentMode for each mode.
  *   P3C-03  Config ignores client-supplied deploymentMode (query spoof) —
@@ -22,6 +22,8 @@
  *           gated on org `location_tracking`, and rejects spoofed/address-like
  *           payload keys.
  *   P3C-09  Command poll delivers ONLY the authenticated device's own commands.
+ *   P3C-10  Org screenshot_enabled=false force-zeroes the agent cadence even on a
+ *           plan that includes the screenshots feature (independent fail-closed gate).
  *
  * Runs against a THROWAWAY PostgreSQL database.
  * Run: npx tsx --test tests/agent-phase3-contract.test.ts
@@ -64,6 +66,7 @@ type Dev = { id: string };
 let orgManaged: Org;
 let orgCustomer: Org; // CUSTOMER_DB
 let orgPrivate: Org; // PRIVATE
+let orgShotOff: Org; // CUSTOMER_DB, screenshots plan, org toggle OFF
 let empManaged: Emp;
 let empCustomer: Emp;
 let empPrivate: Emp;
@@ -73,6 +76,7 @@ let devPrivate: Dev;
 let tokManaged: string;
 let tokCustomer: string;
 let tokPrivate: string;
+let tokShotOff: string;
 
 /** Grant consent the same way the real flows do: published policy + granted row. */
 async function grantConsent(orgId: string, empId: string, consentType: string) {
@@ -225,10 +229,56 @@ before(async () => {
   devPrivate = seededPrivate.dev;
   tokPrivate = seededPrivate.token;
 
+  // PRIVATE is deprecated in V1 but the org must still pass AUTH: give it an
+  // ACTIVE subscription WITHOUT the screenshots feature, so "plan has no
+  // screenshots" (P3C-04) keeps holding while validateAgentToken stops
+  // rejecting the token with subscription_denied.
+  const planPrivate = await db.plan.create({
+    data: { name: 'P3C-Private', maxDevices: 5, features: [] },
+  });
+  await db.subscription.create({
+    data: {
+      organizationId: orgPrivate.id,
+      planId: planPrivate.id,
+      status: 'ACTIVE',
+      startDate: new Date(),
+      endDate: null,
+    },
+  });
+
+  // CUSTOMER_DB org WITH a screenshots plan feature BUT org screenshot_enabled
+  // = false → the org toggle is an INDEPENDENT fail-closed gate: the agent must
+  // receive frequency 0 even though the plan allows screenshots and the
+  // interval column is nonzero.
+  const seededShotOff = await seedOrg({
+    name: 'Shot Off Org',
+    slug: 'p3c-shotoff',
+    mode: 'CUSTOMER_DB',
+    screenshotInterval: 20,
+    empCode: 'P3C-SHOTOFF',
+    devKey: 'p3c-device-shotoff-0001',
+  });
+  orgShotOff = seededShotOff.org;
+  tokShotOff = seededShotOff.token;
+
+  const planShotOff = await db.plan.create({
+    data: { name: 'P3C-ShotOff', maxDevices: 5, features: ['screenshots'] },
+  });
+  await db.subscription.create({
+    data: {
+      organizationId: orgShotOff.id,
+      planId: planShotOff.id,
+      status: 'ACTIVE',
+      startDate: new Date(),
+      endDate: null,
+    },
+  });
+
   // Org-scoped monitoring overrides (server-authoritative policy).
   await db.organizationSetting.createMany({
     data: [
       { organizationId: orgPrivate.id, key: 'screenshot_enabled', value: 'false', category: 'monitoring' },
+      { organizationId: orgShotOff.id, key: 'screenshot_enabled', value: 'false', category: 'monitoring' },
       { organizationId: orgCustomer.id, key: 'location_tracking', value: 'true', category: 'monitoring' },
       { organizationId: orgPrivate.id, key: 'location_tracking', value: 'false', category: 'monitoring' },
     ],
@@ -283,8 +333,8 @@ test('P3C-01: /api/agent/compat advertises the full Phase 3 contract', async () 
   assert.ok(payload.minAgentVersion, 'minAgentVersion present');
   assert.deepEqual(
     [...payload.supportedDeploymentModes].sort(),
-    ['CUSTOMER_DB', 'MANAGED', 'PRIVATE'],
-    'all three deployment modes advertised'
+    ['CUSTOMER_DB', 'MANAGED'],
+    'V1 active modes only — PRIVATE is deprecated and must not be advertised'
   );
 });
 
@@ -353,6 +403,24 @@ test('P3C-04: screenshot policy/frequency come from the server, never the client
   }));
   const payloadM = await body(resM);
   assert.equal(payloadM.config.monitoring.screenshotFrequency, 0, 'no screenshots feature → capture impossible');
+});
+
+// ─── P3C-10: org screenshot_enabled=false zeroes frequency even on a screenshots plan ─
+
+test('P3C-10: org screenshot_enabled=false forces frequency 0 despite a screenshots plan', async () => {
+  const api = await import('../src/app/api/agent/config/route');
+
+  // Shot Off org: CUSTOMER_DB, ACTIVE plan WITH screenshots feature, interval 20,
+  // but org screenshot_enabled=false. A client query claiming otherwise must not
+  // re-enable it: the org toggle is an independent fail-closed gate.
+  const res = await api.GET(agentReq(tokShotOff, {
+    url: 'http://localhost:3000/api/agent/config?screenshotEnabled=true&screenshotFrequency=1',
+  }));
+  assert.equal(res.status, 200);
+  const payload = await body(res);
+  assert.equal(payload.deployment.mode, 'CUSTOMER_DB');
+  assert.equal(payload.config.monitoring.screenshotEnabled, false, 'org toggle wins over plan capability');
+  assert.equal(payload.config.monitoring.screenshotFrequency, 0, 'disabled toggle zeroes the cadence');
 });
 
 // ─── P3C-05: heartbeat across all three modes ───────────────────────────

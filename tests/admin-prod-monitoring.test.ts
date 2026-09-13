@@ -47,6 +47,7 @@ let orgB: { id: string };
 let adminAToken: string;
 let adminBToken: string;
 let viewerAToken: string;
+let testPlanId: string;
 
 before(async () => {
   const dbModule = await import('../src/lib/db');
@@ -56,10 +57,16 @@ before(async () => {
   orgA = await db.organization.create({ data: { name: 'Org A', slug: 'org-a-mon', timezone: 'UTC' } });
   orgB = await db.organization.create({ data: { name: 'Org B', slug: 'org-b-mon', timezone: 'UTC' } });
   
-  // Activate orgs
-  const subA = await db.subscription.create({ data: { organizationId: orgA.id, planId: "cmtmu2q5n0001fi1gce9dkp9f", status: 'ACTIVE', startDate: new Date(), endDate: new Date(Date.now() + 864e5) } });
+  // Activate orgs — the plan row must exist in this THROWAWAY db (ids are
+  // auto-generated, never reused across suites), so create it here.
+  const plan = await db.plan.create({
+    data: { name: 'MON-PROD Test', maxDevices: 50, features: ['screenshots'] },
+  });
+  testPlanId = plan.id;
+
+  const subA = await db.subscription.create({ data: { organizationId: orgA.id, planId: testPlanId, status: 'ACTIVE', startDate: new Date(), endDate: new Date(Date.now() + 864e5) } });
   await db.organization.update({ where: { id: orgA.id }, data: { subscriptionId: subA.id } });
-  const subB = await db.subscription.create({ data: { organizationId: orgB.id, planId: "cmtmu2q5n0001fi1gce9dkp9f", status: 'ACTIVE', startDate: new Date(), endDate: new Date(Date.now() + 864e5) } });
+  const subB = await db.subscription.create({ data: { organizationId: orgB.id, planId: testPlanId, status: 'ACTIVE', startDate: new Date(), endDate: new Date(Date.now() + 864e5) } });
   await db.organization.update({ where: { id: orgB.id }, data: { subscriptionId: subB.id } });
 
   adminAToken = await signJWT({ userId: 'admin-a', email: 'admin@a.test', role: 'admin', organizationId: orgA.id });
@@ -312,7 +319,7 @@ test('MON-PROD-13: activity_dedupe toggle is org-scoped — org A enable does NO
   assert.equal(a?.value, true, 'org A must now read true');
 
   const b = await getSetting(api, adminBToken, 'activity_dedupe');
-  assert.equal(b?.value, false, 'org B must remain at the default false');
+  assert.equal(b?.value, true, 'org B must remain at the DEFAULT (dedupe defaults ON — MON-PROD-12)');
   assert.equal(
     await db.organizationSetting.count({ where: { organizationId: orgB.id, key: 'activity_dedupe' } }),
     0,
@@ -322,7 +329,7 @@ test('MON-PROD-13: activity_dedupe toggle is org-scoped — org A enable does NO
   // The server-side resolver used by the activity route reflects the org row.
   const { resolveActivityDedupeEnabled } = await import('../src/lib/jobs/settings');
   assert.equal(await resolveActivityDedupeEnabled(orgA.id), true);
-  assert.equal(await resolveActivityDedupeEnabled(orgB.id), false);
+  assert.equal(await resolveActivityDedupeEnabled(orgB.id), true, 'org B resolves the registry default');
 });
 
 test('MON-PROD-14: agent_min_version text validation — version accepted, invalid + oversized rejected (422), empty clears', async () => {
@@ -381,4 +388,118 @@ test('MON-PROD-15: server-side keys never leak into the agent config payload', a
   // The agent-facing monitoring contract stays intact and reflects org A rows.
   assert.equal(typeof body.config.monitoring.heartbeatInterval, 'number');
   assert.equal(body.config.monitoring.screenshotEnabled, false, 'org A screenshot_enabled (set in MON-PROD-1) still false');
+});
+
+// ─── screenshotInterval RBAC (screenshot cadence is SUPER ADMIN-owned) ───
+
+test('MON-PROD-16: GET exposes screenshotInterval block; MANAGED org is read-only for org admins', async () => {
+  const api = await import('../src/app/api/settings/monitoring/route');
+
+  // orgA is MANAGED (column default) → cadence is centrally managed.
+  const res = await api.GET(req(adminAToken, { url: 'http://localhost:3000/api/settings/monitoring' }));
+  assert.equal(res.status, 200);
+  const body = await res.json();
+  const iv = body.screenshotInterval as Record<string, unknown>;
+  assert.ok(iv, 'screenshotInterval block must be present in GET');
+  assert.equal(iv.key, 'screenshotInterval');
+  assert.equal(iv.type, 'number');
+  assert.equal(iv.default, 5, 'column default');
+  assert.equal(iv.min, 0, '0 = disabled is legal');
+  assert.equal(iv.max, 1440);
+  assert.equal(iv.value, 5, 'no super-admin write yet → column default');
+  assert.equal(iv.writable, false, 'MANAGED cadence is centrally managed → read-only for org admins');
+  assert.equal(iv.deploymentMode, 'MANAGED');
+});
+
+test('MON-PROD-17: org admin cannot write screenshotInterval on a MANAGED org (403); legacy screenshot_frequency also blocked', async () => {
+  const api = await import('../src/app/api/settings/monitoring/route');
+
+  const res = await api.PUT(req(adminAToken, { method: 'PUT', body: { key: 'screenshotInterval', value: 30 } }));
+  assert.equal(res.status, 403, 'MANAGED cadence write must be rejected for org admins');
+
+  const legacy = await api.PUT(req(adminAToken, { method: 'PUT', body: { key: 'screenshot_frequency', value: 10 } }));
+  assert.equal(legacy.status, 403, 'legacy org-scoped cadence key must stay super-admin-only');
+
+  const col = await db.organization.findUnique({ where: { id: orgA.id }, select: { screenshotInterval: true } });
+  assert.equal(col?.screenshotInterval, 5, 'rejected writes must not touch the column');
+});
+
+test('MON-PROD-18: CUSTOMER_DB org admin may write screenshotInterval (0 = disabled); value lands on the column + is audited', async () => {
+  const api = await import('../src/app/api/settings/monitoring/route');
+
+  const orgC = await db.organization.create({
+    data: { name: 'Org C', slug: 'org-c-mon', timezone: 'UTC', deploymentMode: 'CUSTOMER_DB' },
+  });
+  const subC = await db.subscription.create({
+    data: { organizationId: orgC.id, planId: testPlanId, status: 'ACTIVE', startDate: new Date(), endDate: new Date(Date.now() + 864e5) },
+  });
+  await db.organization.update({ where: { id: orgC.id }, data: { subscriptionId: subC.id } });
+  const adminCToken = await signJWT({ userId: 'admin-c', email: 'admin@c.test', role: 'admin', organizationId: orgC.id });
+
+  // GET reports writable on CUSTOMER_DB.
+  const get = await api.GET(req(adminCToken, { url: 'http://localhost:3000/api/settings/monitoring' }));
+  assert.equal(get.status, 200);
+  const getBody = await get.json();
+  assert.equal(getBody.screenshotInterval?.writable, true, 'CUSTOMER_DB cadence is org-writable');
+  assert.equal(getBody.screenshotInterval?.deploymentMode, 'CUSTOMER_DB');
+
+  // 30 accepted and persisted to the Organization column.
+  const ok = await api.PUT(req(adminCToken, { method: 'PUT', body: { key: 'screenshotInterval', value: 30 } }));
+  assert.equal(ok.status, 200);
+  assert.equal((await ok.json()).data.value, 30);
+  assert.equal(
+    (await db.organization.findUnique({ where: { id: orgC.id }, select: { screenshotInterval: true } }))?.screenshotInterval,
+    30,
+    'cadence must persist to Organization.screenshotInterval'
+  );
+  const audit = await db.auditLog.findFirst({ where: { organizationId: orgC.id, resource: 'organization' } });
+  assert.ok(audit, 'cadence change must be audited');
+
+  // 0 (= disabled) is a legal write.
+  const zero = await api.PUT(req(adminCToken, { method: 'PUT', body: { key: 'screenshotInterval', value: 0 } }));
+  assert.equal(zero.status, 200);
+  assert.equal(
+    (await db.organization.findUnique({ where: { id: orgC.id }, select: { screenshotInterval: true } }))?.screenshotInterval,
+    0
+  );
+
+  // Out-of-range / malformed rejected (422) — 0 is the only new legal value.
+  for (const bad of [-1, 1441, 5.5, 1.5, 'abc']) {
+    assert.equal(
+      (await api.PUT(req(adminCToken, { method: 'PUT', body: { key: 'screenshotInterval', value: bad } }))).status,
+      422,
+      `screenshotInterval=${String(bad)} must be rejected`
+    );
+  }
+});
+
+test('MON-PROD-19: PRIVATE org admin may write; super_admin bypasses the MANAGED read-only ban', async () => {
+  const api = await import('../src/app/api/settings/monitoring/route');
+
+  const orgD = await db.organization.create({
+    data: { name: 'Org D', slug: 'org-d-mon', timezone: 'UTC', deploymentMode: 'PRIVATE' },
+  });
+  const subD = await db.subscription.create({
+    data: { organizationId: orgD.id, planId: testPlanId, status: 'ACTIVE', startDate: new Date(), endDate: new Date(Date.now() + 864e5) },
+  });
+  await db.organization.update({ where: { id: orgD.id }, data: { subscriptionId: subD.id } });
+  const adminDToken = await signJWT({ userId: 'admin-d', email: 'admin@d.test', role: 'admin', organizationId: orgD.id });
+
+  const put = await api.PUT(req(adminDToken, { method: 'PUT', body: { key: 'screenshotInterval', value: 12 } }));
+  assert.equal(put.status, 200, 'PRIVATE org admin may set cadence');
+
+  // Super admin scoped to a MANAGED org bypasses the read-only ban.
+  const superToken = await signJWT({ userId: 'root-mon', email: 'root@mon.test', role: 'super_admin', organizationId: orgA.id });
+  const viaSuper = await api.PUT(req(superToken, { method: 'PUT', body: { key: 'screenshotInterval', value: 60 } }));
+  assert.equal(viaSuper.status, 200, 'super admin may set cadence even on MANAGED');
+  assert.equal(
+    (await db.organization.findUnique({ where: { id: orgA.id }, select: { screenshotInterval: true } }))?.screenshotInterval,
+    60
+  );
+
+  // Super admin is still range-validated.
+  assert.equal(
+    (await api.PUT(req(superToken, { method: 'PUT', body: { key: 'screenshotInterval', value: -5 } }))).status,
+    422
+  );
 });

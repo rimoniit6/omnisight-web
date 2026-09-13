@@ -421,6 +421,88 @@ function MonitoringRow({ s, onSaved, badge, helper, disabled = false, confirmEna
   );
 }
 
+interface ScreenshotIntervalMeta {
+  key: string;
+  value: number;
+  type: 'number';
+  default: number;
+  min: number;
+  max: number;
+  writable: boolean;
+  deploymentMode: string;
+}
+
+/**
+ * Screenshot cadence control bound to the SUPER ADMIN-owned
+ * Organization.screenshotInterval column (exposed by GET /api/settings/monitoring
+ * as `screenshotInterval` with a mode-derived `writable` flag). Read-only on
+ * MANAGED plans (centrally managed); org-admins on CUSTOMER_DB/PRIVATE plans
+ * may write it via PUT with key 'screenshotInterval'.
+ */
+function ScreenshotIntervalRow({ meta, onSaved }: { meta: ScreenshotIntervalMeta; onSaved: () => void }) {
+  const [value, setValue] = useState<number>(meta.value);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+
+  const handleSave = async () => {
+    setSaving(true);
+    setError('');
+    try {
+      const res = await fetch('/api/settings/monitoring', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ key: 'screenshotInterval', value }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => null);
+        throw new Error(err?.error || 'Failed to update');
+      }
+      toast.success('Screenshot cadence updated — synced to agents on their next config refresh');
+      onSaved();
+    } catch (err) {
+      setValue(meta.value);
+      setError(err instanceof Error ? err.message : 'Failed to update screenshot interval');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const metaText =
+    meta.deploymentMode === 'MANAGED'
+      ? 'Centrally managed by OmniSight (super admin); read-only on this plan'
+      : 'Managed by your organization; 0 disables screenshots';
+
+  return (
+    <div className='flex items-center justify-between py-2 px-3 rounded-lg hover:bg-muted/50 transition-colors'>
+      <div className='min-w-0'>
+        <div className='flex items-center gap-2 flex-wrap'>
+          <Label className='text-sm font-medium'>Screenshot Interval (minutes)</Label>
+          {!meta.writable && <Badge variant='outline' className='text-[10px] h-4 px-1.5'>Managed by OmniSight</Badge>}
+        </div>
+        <p className='text-xs text-muted-foreground mt-0.5 font-mono truncate'>screenshotInterval · number · {metaText}</p>
+        {error && <p className='text-xs text-destructive mt-1'>{error}</p>}
+      </div>
+      <div className='flex items-center gap-2 shrink-0'>
+        <Input
+          type='number'
+          min={meta.min}
+          max={meta.max}
+          value={String(value)}
+          disabled={!meta.writable || saving}
+          onChange={(e) => {
+            const n = parseInt(e.target.value, 10);
+            setValue(Number.isNaN(n) ? 0 : Math.max(meta.min, Math.min(meta.max, n)));
+          }}
+          className='w-24 h-8'
+        />
+        <Button size='sm' variant='ghost' className='h-8 text-primary hover:text-primary' onClick={() => void handleSave()} disabled={saving || !meta.writable || value === meta.value}>
+          <Save className='w-3.5 h-3.5' />
+        </Button>
+      </div>
+    </div>
+  );
+}
+
 function AgentMonitoringCard() {
   const queryClient = useQueryClient();
 
@@ -434,6 +516,7 @@ function AgentMonitoringCard() {
   });
 
   const monitoring = (data?.data || []) as MonitoringSetting[];
+  const intervalMeta = (data?.screenshotInterval ?? null) as ScreenshotIntervalMeta | null;
 
   if (isLoading) {
     return (
@@ -460,6 +543,13 @@ function AgentMonitoringCard() {
         </div>
       </CardHeader>
       <CardContent className='space-y-3'>
+        {intervalMeta && (
+          <ScreenshotIntervalRow
+            key={`screenshotInterval:${String(intervalMeta.value)}`}
+            meta={intervalMeta}
+            onSaved={() => queryClient.invalidateQueries({ queryKey: ['monitoring-settings'] })}
+          />
+        )}
         {monitoring
           .filter((s) => !SERVER_SIDE_KEYS.includes(s.key)) // server-side only — rendered in the card below
           .map((s) => (

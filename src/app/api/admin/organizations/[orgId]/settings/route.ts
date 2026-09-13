@@ -10,7 +10,7 @@ import { log, requestContext } from '@/lib/logger';
 // longer exposes a screenshot cadence control (Prompt 3, item 1A), because the
 // desktop agent's cadence is now driven by this column via GET /api/agent/config.
 
-const MIN_INTERVAL = 1;
+const MIN_INTERVAL = 0; // 0 = screenshots disabled
 const MAX_INTERVAL = 1440; // 24 hours
 
 function parseInterval(value: unknown): number | null {
@@ -60,7 +60,7 @@ export async function GET(
 }
 
 // PUT /api/admin/organizations/[orgId]/settings — update the screenshot cadence.
-// Body: { screenshotInterval: number } (1-1440 minutes; 0 = disabled).
+// Body: { screenshotInterval: number } (0-1440 minutes; 0 = disabled).
 export async function PUT(
   req: NextRequest,
   { params }: { params: Promise<{ orgId: string }> }

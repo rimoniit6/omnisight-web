@@ -31,6 +31,8 @@ import {
   Maximize,
   Minimize,
   ExternalLink,
+  Crosshair,
+  XCircle,
 } from 'lucide-react';
 import { formatDistanceToNow, format } from 'date-fns';
 import { toast } from 'sonner';
@@ -72,6 +74,15 @@ import { DatePickerWithRange } from '@/components/ui/date-picker-with-range';
 import { DateRange } from 'react-day-picker';
 import { cn } from '@/lib/utils';
 import { useAuthStore } from '@/lib/store';
+import { isHeartbeatFresh } from '@/lib/presence';
+import { Card, CardContent } from '@/components/ui/card';
+
+interface DeviceInfo {
+  id: string;
+  name: string;
+  status: string;
+  lastHeartbeat: string | null;
+}
 
 type ViewMode = 'grid' | 'list';
 type SearchMode = 'general' | 'ocr';
@@ -107,6 +118,15 @@ interface ScreenshotStats {
   flaggedCount: number;
   totalStorage: number;
   recentByEmployee: { employeeId: string; _count: { id: number } }[];
+}
+
+interface CaptureState {
+  pending: boolean;
+  deviceId: string | null;
+  employeeId: string | null;
+  employeeName: string | null;
+  deviceName: string | null;
+  error: string | null;
 }
 
 function formatBytes(bytes: number) {
@@ -274,6 +294,37 @@ export function ScreenshotsPage() {
   const [flagReasonInput, setFlagReasonInput] = useState('');
   const [analyzing, setAnalyzing] = useState(false);
 
+  // Manual screenshot capture (admins only)
+  const [captureState, setCaptureState] = useState<CaptureState>({
+    pending: false,
+    deviceId: null,
+    employeeId: null,
+    employeeName: null,
+    deviceName: null,
+    error: null,
+  });
+  const captureBaselineRef = useRef<number>(0);
+
+  // Devices for the selected employee filter, used to determine online target
+  const { data: employeeDevicesData } = useQuery<{ devices: DeviceInfo[] }>({
+    queryKey: ['employee-devices-capture', employeeFilter],
+    queryFn: async () => {
+      if (employeeFilter === 'all') {
+        return { devices: [] };
+      }
+      const res = await fetch(`/api/employees/${employeeFilter}/devices`);
+      if (!res.ok) throw new Error(`http ${res.status}`);
+      return res.json();
+    },
+    enabled: !!employeeFilter && employeeFilter !== 'all',
+    staleTime: 15_000,
+  });
+
+  const targetDevice = employeeDevicesData?.devices?.find(
+    (d) => isHeartbeatFresh(d.lastHeartbeat ? new Date(d.lastHeartbeat) : null)
+  ) ?? null;
+
+  // Screenshot capture mutation
   // Batch analyze state
   const [selectedForBatch, setSelectedForBatch] = useState<Set<string>>(new Set());
   const [batchAnalyzing, setBatchAnalyzing] = useState(false);
@@ -461,6 +512,120 @@ export function ScreenshotsPage() {
     });
   };
 
+  // Manual screenshot capture mutation (defined after `screenshots` is available)
+  const captureMutation = useMutation({
+    mutationFn: async (deviceId: string) => {
+      const res = await fetch('/api/device-commands', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          deviceId,
+          commandType: 'screenshot.capture',
+          expiresInSeconds: 60,
+        }),
+      });
+      if (!res.ok) {
+        const body = (await res.json().catch(() => ({}))) as { error?: string };
+        throw new Error(body.error || `http ${res.status}`);
+      }
+      return res.json();
+    },
+    onSuccess: () => {
+      // Baseline captured in the pending-detection effect below.
+      setCaptureState((prev) => ({
+        ...prev,
+        pending: true,
+      }));
+    },
+    onError: (err) => {
+      setCaptureState((prev) => ({
+        ...prev,
+        pending: false,
+        error: (err as Error).message,
+      }));
+      toast.error(`Failed to send capture command: ${(err as Error).message}`);
+    },
+  });
+
+  // Reset capture state when filters change
+  useEffect(() => {
+    setCaptureState({
+      pending: false,
+      deviceId: null,
+      employeeId: null,
+      employeeName: null,
+      deviceName: null,
+      error: null,
+    });
+    captureBaselineRef.current = 0;
+  }, [employeeFilter, deviceFilter]);
+
+  // Detect new screenshot arrival for the target device
+  useEffect(() => {
+    if (!captureState.pending || !captureState.deviceId) return;
+
+    const targetScreenshots = screenshots.filter(
+      (s) => s.device?.id === captureState.deviceId
+    );
+
+    if (targetScreenshots.length > captureBaselineRef.current) {
+      setCaptureState((prev) => ({
+        ...prev,
+        pending: false,
+      }));
+      if (captureState.employeeName && captureState.deviceName) {
+        toast.success(
+          `Screenshot captured for ${captureState.employeeName} on ${captureState.deviceName}.`
+        );
+      }
+    }
+  }, [screenshots, captureState]);
+
+  // Timeout: stop awaiting after 60s if no screenshot arrived
+  useEffect(() => {
+    if (!captureState.pending) return;
+    const timer = window.setTimeout(() => {
+      setCaptureState((prev) => ({
+        ...prev,
+        pending: false,
+        error: 'timeout',
+      }));
+      if (captureState.employeeName && captureState.deviceName) {
+        toast.warning(
+          `No screenshot received for ${captureState.employeeName} on ${captureState.deviceName}. The agent may be offline or blocked.`
+        );
+      }
+    }, 60_000);
+    return () => window.clearTimeout(timer);
+  }, [captureState.pending]);
+
+  const handleCapture = useCallback(async () => {
+    if (!targetDevice || !employeeFilter || employeeFilter === 'all') {
+      if (!employeeFilter || employeeFilter === 'all') {
+        toast.error('Select an employee first to take a screenshot.');
+      } else {
+        toast.error('No online agent device found for this employee.');
+      }
+      return;
+    }
+    if (captureMutation.isPending) return;
+
+    const firstScreenshot = screenshots[0];
+    const employeeName = firstScreenshot?.employee
+      ? `${firstScreenshot.employee.firstName} ${firstScreenshot.employee.lastName}`.trim()
+      : employeeFilter;
+
+    setCaptureState({
+      pending: false,
+      deviceId: targetDevice.id,
+      employeeId: employeeFilter,
+      employeeName,
+      deviceName: targetDevice.name,
+      error: null,
+    });
+    captureMutation.mutate(targetDevice.id);
+  }, [targetDevice, employeeFilter, screenshots, captureMutation]);
+
   // Stats cards
   const statCards = [
     {
@@ -629,6 +794,35 @@ export function ScreenshotsPage() {
                 <RefreshCw className="w-3.5 h-3.5 mr-1.5" />
                 Refresh
               </Button>
+              {canMutate && (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      onClick={handleCapture}
+                      disabled={!targetDevice || captureMutation.isPending}
+                      className="h-8 bg-primary hover:bg-primary/90 text-primary-foreground disabled:opacity-40 disabled:cursor-not-allowed"
+                      title={captureState.deviceName ? `Take screenshot for ${captureState.employeeName || employeeFilter} on ${captureState.deviceName}` : 'Select an employee and ensure the agent is online'}
+                    >
+                      {captureMutation.isPending ? (
+                        <>
+                          <Crosshair className="w-3.5 h-3.5 animate-spin mr-1.5" />
+                          Capturing…
+                        </>
+                      ) : (
+                        <>
+                          <Camera className="w-3.5 h-3.5 mr-1.5" />
+                          Take Screenshot
+                        </>
+                      )}
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    <p className="text-xs">
+                      {targetDevice ? `Capture screenshot for ${captureState.employeeName || employeeFilter} on ${captureState.deviceName}` : 'Select an employee to capture a screenshot'}
+                    </p>
+                  </TooltipContent>
+                </Tooltip>
+              )}
               {canMutate && selectedForBatch.size > 0 && (
                 <Button
                   size="sm"
@@ -647,6 +841,54 @@ export function ScreenshotsPage() {
           </div>
         </div>
       </div>
+
+      {/* Capture pending state */}
+      {captureState.pending && captureState.deviceId && (
+        <Card className="border-primary/20 bg-muted/30">
+          <CardContent className="py-3 flex items-center gap-2">
+            <Crosshair className="w-4 h-4 text-primary animate-spin" />
+            <p className="text-xs text-muted-foreground">
+              Waiting for the agent to capture and upload a screenshot for {captureState.employeeName || employeeFilter} on {captureState.deviceName || 'device'}…
+            </p>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Capture timeout message */}
+      {captureState.error === 'timeout' && (
+        <Card className="border-amber-200 bg-amber-50">
+          <CardContent className="py-3 flex items-center gap-2">
+            <AlertTriangle className="w-4 h-4 text-amber-600" />
+            <p className="text-xs text-amber-700">
+              No screenshot received yet. The agent may be offline or blocked (consent revoked, outside working hours, or capture unavailable). Verify the device is online and try again, or click Refresh.
+            </p>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Capture error (non-timeout) */}
+      {captureMutation.isError && !captureState.pending && captureState.error && captureState.error !== 'timeout' && (
+        <Card className="border-destructive/20 bg-destructive/5">
+          <CardContent className="py-3 flex items-center gap-2">
+            <XCircle className="w-4 h-4 text-destructive" />
+            <p className="text-xs text-destructive">
+              Capture failed: {captureState.error}. Please try again.
+            </p>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* No online device for selected employee */}
+      {!targetDevice && employeeFilter && employeeFilter !== 'all' && devicesList?.data?.length > 0 && (
+        <Card className="border-amber-200 bg-amber-50">
+          <CardContent className="py-3 flex items-center gap-2">
+            <AlertTriangle className="w-4 h-4 text-amber-600" />
+            <p className="text-xs text-amber-700">
+              No online agent device found for this employee. The agent must be running and connected to capture screenshots.
+            </p>
+          </CardContent>
+        </Card>
+      )}
 
       {/* Content */}
       {isLoading ? (
