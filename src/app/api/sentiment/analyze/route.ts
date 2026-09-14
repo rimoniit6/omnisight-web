@@ -275,7 +275,7 @@ Activity Signals:
 - Total hours this week: ${signals.totalHoursThisWeek.toFixed(1)}h`;
 
   const result = await meterAiCall({ organizationId: orgId, operation: 'sentiment' }, () =>
-    callAIProvider(systemPrompt, userPrompt)
+    callAIProvider(systemPrompt, userPrompt, { organizationId: orgId })
   );
   if (!result || !result.text) {
     return { ok: false, error: result?.error || 'AI_UNAVAILABLE' };

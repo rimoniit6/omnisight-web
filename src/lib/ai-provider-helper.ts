@@ -182,7 +182,76 @@ type SettingsResult =
   | { settings: { provider: string; apiKey: string; baseUrl: string; model: string } }
   | { error: SettingsError };
 
-async function getSettings(): Promise<SettingsResult> {
+type ResolvedKey = { plaintext: string; needsReencrypt: boolean; code?: SettingsError };
+
+async function decryptStoredKey(stored: string, provider: string): Promise<ResolvedKey> {
+  if (!stored) return { plaintext: '', needsReencrypt: false };
+  if (isEncryptedSecret(stored)) {
+    const { plaintext, migrated } = decryptSecretWithMeta(stored);
+    if (!plaintext && !migrated) {
+      return { plaintext: '', needsReencrypt: false, code: 'AI_KEY_DECRYPT_FAILED' };
+    }
+    return { plaintext, needsReencrypt: migrated };
+  }
+  return { plaintext: stored, needsReencrypt: provider !== 'ollama' };
+}
+
+async function findOrgSetting(organizationId: string, key: string): Promise<string> {
+  const row = await db.organizationSetting.findUnique({
+    where: { organizationId_key: { organizationId, key } },
+  });
+  return row?.value ?? '';
+}
+
+async function getOrgSettings(organizationId: string): Promise<SettingsResult | null> {
+  const [providerValue, apiKeyValue, baseUrlValue, modelValue] = await Promise.all([
+    findOrgSetting(organizationId, 'ai_provider'),
+    findOrgSetting(organizationId, 'ai_api_key'),
+    findOrgSetting(organizationId, 'ai_base_url'),
+    findOrgSetting(organizationId, 'ai_model'),
+  ]);
+
+  const provider = providerValue.trim();
+  if (!provider) return null;
+
+  let apiKey = apiKeyValue;
+  if (apiKey) {
+    const resolved = await decryptStoredKey(apiKey, provider);
+    if (resolved.code) return { error: resolved.code };
+    apiKey = resolved.plaintext;
+    if (resolved.needsReencrypt) {
+      try {
+        await db.organizationSetting.update({
+          where: { organizationId_key: { organizationId, key: 'ai_api_key' } },
+          data: { value: encryptSecret(apiKey) },
+        });
+      } catch {
+        // Non-fatal: continue with the plaintext for this request.
+      }
+    }
+  }
+
+  if (provider === 'custom') {
+    const baseUrl = baseUrlValue.trim();
+    const model = modelValue.trim();
+    if (!baseUrl || !model) return null;
+    return { settings: { provider, apiKey, baseUrl: baseUrl.replace(/\/+$/, ''), model } };
+  }
+
+  if (!DEFAULT_BASE_URLS[provider]) return null;
+
+  if (provider !== 'ollama' && !apiKey) return null;
+
+  const baseUrl = (baseUrlValue.trim() || DEFAULT_BASE_URLS[provider]).replace(/\/+$/, '');
+  const model = modelValue.trim() || DEFAULT_MODELS[provider];
+
+  const configError = validateProviderConfig({ provider, baseUrl, model });
+  if (configError) return { error: 'AI_CONFIG_INCOMPATIBLE' };
+
+  return { settings: { provider, apiKey, baseUrl, model } };
+}
+
+async function getSystemSettings(): Promise<SettingsResult> {
   const [providerSetting, apiKeySetting, baseUrlSetting, modelSetting] =
     await Promise.all([
       db.systemSetting.findUnique({ where: { key: 'ai_provider' } }),
@@ -194,34 +263,16 @@ async function getSettings(): Promise<SettingsResult> {
   const provider = providerSetting?.value || '';
   if (!provider) return { error: 'AI_PROVIDER_NOT_CONFIGURED' };
 
-  // Decrypt the stored API key (encrypted at rest since Phase 3). Legacy
-  // plaintext values from older installs are upgraded to encrypted in place;
-  // legacy JWT_SECRET-derived envelopes are migrated to the dedicated key.
   let apiKey = apiKeySetting?.value || '';
   if (apiKey) {
-    if (isEncryptedSecret(apiKey)) {
-      const { plaintext, migrated } = decryptSecretWithMeta(apiKey);
-      if (!plaintext && !migrated) {
-        return { error: 'AI_KEY_DECRYPT_FAILED' };
-      }
-      apiKey = plaintext;
-      if (migrated) {
-        try {
-          await db.systemSetting.update({
-            where: { id: apiKeySetting!.id },
-            data: { value: encryptSecret(apiKey) },
-          });
-        } catch {
-          // Non-fatal: continue with the plaintext for this request.
-        }
-      }
-    } else if (provider !== 'ollama') {
-      // Legacy plaintext — upgrade to encryption at rest.
-      const upgraded = encryptSecret(apiKey);
+    const resolved = await decryptStoredKey(apiKey, provider);
+    if (resolved.code) return { error: resolved.code };
+    apiKey = resolved.plaintext;
+    if (resolved.needsReencrypt) {
       try {
         await db.systemSetting.update({
           where: { id: apiKeySetting!.id },
-          data: { value: upgraded },
+          data: { value: encryptSecret(apiKey) },
         });
       } catch {
         // Non-fatal: continue with the plaintext for this request.
@@ -253,6 +304,30 @@ async function getSettings(): Promise<SettingsResult> {
   if (configError) return { error: 'AI_CONFIG_INCOMPATIBLE' };
 
   return { settings: { provider, apiKey, baseUrl, model } };
+}
+
+export async function getSettings(organizationId?: string): Promise<SettingsResult> {
+  if (organizationId) {
+    const orgSettings = await getOrgSettings(organizationId);
+    if (orgSettings) return orgSettings;
+  }
+  return getSystemSettings();
+}
+
+/**
+ * Org-scoped AI Insights toggle for the screenshot background job (fail-close
+ * gate). Reads the per-org `ai_insights_enabled` OrganizationSetting, falls
+ * back to the platform SystemSetting, and defaults to ENABLED when neither is
+ * set — the same default the Insights engine and the admin UI toggle use. Only
+ * an explicit `false` disables; the value is treated as a boolean string.
+ */
+export async function aiInsightsEnabledForOrg(organizationId?: string): Promise<boolean> {
+  if (organizationId) {
+    const orgValue = await findOrgSetting(organizationId, 'ai_insights_enabled');
+    if (orgValue !== '') return orgValue !== 'false';
+  }
+  const row = await db.systemSetting.findUnique({ where: { key: 'ai_insights_enabled' } });
+  return row ? row.value !== 'false' : true;
 }
 
 // ── Response Extractors (Text-only) ─────────────────────────────────────────
@@ -375,10 +450,10 @@ function parseProviderUsage(provider: string, data: unknown): ProviderTokenUsage
 export async function callAIProvider(
   systemPrompt: string,
   userPrompt: string,
-  options?: { maxTokens?: number; temperature?: number }
+  options?: { maxTokens?: number; temperature?: number; organizationId?: string }
 ): Promise<AIProviderResult | null> {
   try {
-    const loaded = await getSettings();
+    const loaded = await getSettings(options?.organizationId);
     if ('error' in loaded) {
       return { text: null, provider: '', model: '', error: loaded.error };
     }
@@ -520,10 +595,10 @@ export async function callAIProviderVision(
   systemPrompt: string,
   userPrompt: string,
   image: ImageInput,
-  options?: { maxTokens?: number; temperature?: number }
+  options?: { maxTokens?: number; temperature?: number; organizationId?: string }
 ): Promise<AIProviderResult | null> {
   try {
-    const loaded = await getSettings();
+    const loaded = await getSettings(options?.organizationId);
     if ('error' in loaded) {
       return { text: null, provider: '', model: '', error: loaded.error };
     }

@@ -15,7 +15,7 @@ async function meterVisionCall(
   options?: { maxTokens?: number; temperature?: number }
 ): Promise<AIProviderResult | null> {
   return meterAiCall({ organizationId, operation: 'screenshot_analysis' }, () =>
-    callAIProviderVision(system, user, image, options)
+    callAIProviderVision(system, user, image, { ...options, organizationId })
   );
 }
 

@@ -259,6 +259,7 @@ Respond in valid JSON format with these exact fields:
       callAIProvider(systemPrompt, userPrompt, {
         maxTokens: 800,
         temperature: 0.3,
+        organizationId: org.id,
       })
     );
 

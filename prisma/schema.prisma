@@ -1558,6 +1558,13 @@ model Screenshot {
   appWindow      String?
   ocrText        String?
   aiAnalysis     String?
+  // Phase 3: vision PII redaction + task classification. piiRedacted is true
+  // when the stored image object was overwritten with a blurred (redacted)
+  // version; analysisFailed is true when an AI call was ATTEMPTED but failed
+  // or returned unparseable output (by-design AI skips — toggle off / no key —
+  // do not set it).
+  piiRedacted    Boolean  @default(false)
+  analysisFailed Boolean  @default(false)
   blurScore      Float?
   flagged        Boolean  @default(false)
   flagReason     String?

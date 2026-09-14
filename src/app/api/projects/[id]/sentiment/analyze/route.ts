@@ -43,7 +43,7 @@ async function generateProjectAIInsight(
   ].join('\n');
 
   const result = await meterAiCall({ organizationId: orgId, operation: 'sentiment_project' }, () =>
-    callAIProvider(systemPrompt, userPrompt)
+    callAIProvider(systemPrompt, userPrompt, { organizationId: orgId })
   );
   if (!result || !result.text) {
     return { ok: false, error: result?.error || 'AI_UNAVAILABLE' };
