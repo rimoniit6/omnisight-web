@@ -90,6 +90,9 @@ falcon-*.json
 # graft's local graph cache — regenerable, not committed (run `graft build`).
 /graft/
 
+# ── Deployment state (deployed SHA, not committed) ─────────────────────────
+.deploy/
+
 # ── Dependency lockfiles (canonical manager: bun) ───────────────────────────
 # omnisight-web is bun-canonical: bun.lock is the committed, authoritative lock
 # and matches the installed node_modules. npm-generated package-lock.json files

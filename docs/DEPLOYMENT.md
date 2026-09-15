@@ -334,6 +334,21 @@ sudo systemctl restart omnisight omnisight-live
 
 ## Rollback
 
+### Application Rollback (Docker)
+
+To restore the previous known-good application version:
+
+```bash
+cd /opt/omnisight
+./scripts/rollback.sh
+```
+
+This restarts web and live-updates with the previous SHA. Database data
+is preserved. The previous application version continues to use whatever
+database schema is currently applied.
+
+### Application Rollback (Manual)
+
 ```bash
 # Rollback to previous commit
 git checkout <previous-commit>
@@ -343,7 +358,19 @@ npm run build
 sudo systemctl restart omnisight omnisight-live
 ```
 
-Note: Database migrations are forward-only. If a migration needs rollback, restore from backup.
+### Database Rollback
+
+**Database migrations are forward-only.** If a failed deployment has
+already applied a migration, application rollback restores the previous
+code version but the database schema remains at the new version.
+
+To recover from a destructive migration:
+1. Restore the database from a backup taken before the migration
+2. Verify the restored schema matches the expected version
+3. Then rollback the application
+
+Never attempt to automatically reverse database migrations. The deploy
+and rollback scripts do NOT modify the database schema.
 
 ---
 
@@ -456,6 +483,105 @@ uses the `/health` liveness probe and depends on both `db` and `web-migrate`.
 
 Point the app at it via `NEXT_PUBLIC_LIVE_UPDATES_URL` (see *Live-Updates
 Service* under Vercel above).
+
+### Docker Compose Production Deployment
+
+For production, use `docker-compose.production.yml` which pulls immutable
+GHCR images instead of building locally. Both images (web and live-updates)
+MUST use the same commit SHA.
+
+**Prerequisites:**
+
+1. Docker and Docker Compose installed on the production server
+2. GHCR access: `docker login ghcr.io -u <user> -p <token>`
+3. `.env` file with production secrets (never committed)
+4. Repository cloned to `/opt/omnisight` on the production server
+
+**Deploy a specific SHA:**
+
+```bash
+cd /opt/omnisight
+
+IMAGE_TAG=<commit-sha> \
+GHCR_REPO=ghcr.io/rimoniit6/omnisight-web \
+GHCR_REPO_LIVE_UPDATES=ghcr.io/rimoniit6/omnisight-web-live-updates \
+  ./scripts/deploy.sh
+```
+
+The deploy script:
+1. Records the current deployed SHA (for rollback)
+2. Pulls both images from GHCR
+3. Runs `prisma migrate deploy` via the web-migrate service
+4. Starts/recreates web and live-updates containers
+5. Verifies health endpoints (`/api/health`, `/api/health/ready`, `/health`)
+6. Verifies both containers use the same SHA
+7. On failure: attempts automatic rollback to previous SHA
+
+**Rollback to previous SHA:**
+
+```bash
+cd /opt/omnisight
+
+GHCR_REPO=ghcr.io/rimoniit6/omnisight-web \
+GHCR_REPO_LIVE_UPDATES=ghcr.io/rimoniit6/omnisight-web-live-updates \
+  ./scripts/rollback.sh
+```
+
+Or rollback to a specific SHA:
+
+```bash
+ROLLBACK_SHA=<commit-sha> \
+GHCR_REPO=ghcr.io/rimoniit6/omnisight-web \
+GHCR_REPO_LIVE_UPDATES=ghcr.io/rimoniit6/omnisight-web-live-updates \
+  ./scripts/rollback.sh
+```
+
+**IMPORTANT:** Database migrations are forward-only. Rollback restores the
+previous application image but does NOT reverse schema migrations. If a
+failed deployment applied a forward-compatible migration, the database
+schema remains at the new version. See the Rollback section below for
+details.
+
+**Health verification (manual):**
+
+```bash
+./scripts/health-check.sh
+```
+
+**Deployment state files:**
+
+- `.deploy/current` — the currently deployed SHA
+- `.deploy/previous` — the SHA before the last deployment (for rollback)
+
+These files are gitignored and live only on the production server.
+
+**Automated deployment via CI:**
+
+The GitHub Actions CI workflow includes a `deploy` job that runs after
+Docker images are built and pushed. It deploys via SSH to the production
+server. Required GitHub secrets:
+
+- `PRODUCTION_HOST` — production server IP or hostname
+- `PRODUCTION_USER` — SSH user on the production server
+- `PRODUCTION_SSH_KEY` — private SSH key (ed25519 recommended)
+- `GHCR_TOKEN` — GitHub PAT with `read:packages` scope
+
+The deploy job:
+- Only runs on `main` branch pushes (never from PRs)
+- Uses concurrency group `production` to prevent simultaneous deployments
+- Validates all secrets are configured before attempting SSH
+- Authenticates to GHCR on the production server before pulling images
+- Runs the deploy script and verifies health
+
+**Production compose networking:**
+
+The production compose binds:
+- PostgreSQL: `127.0.0.1:5433:5432` (loopback only)
+- Web: `127.0.0.1:3000:3000` (loopback only)
+- Live-updates: `127.0.0.1:3010:3010` (loopback only)
+
+The host Caddy reverse-proxies public traffic to these loopback ports.
+Never expose these ports to the LAN or public internet.
 
 ### Prometheus Metrics
 

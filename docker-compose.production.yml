@@ -1,0 +1,139 @@
+# OmniSight — Production Compose
+#
+# Uses GHCR images pinned to an immutable commit SHA. Never use :latest
+# as the deployment identity. IMAGE_TAG must be a full git SHA.
+#
+# Usage:
+#   IMAGE_TAG=<sha> docker compose -f docker-compose.production.yml up -d
+#
+# Required environment (typically in .env on the production host):
+#   DATABASE_URL, DIRECT_URL, JWT_SECRET, ENCRYPTION_KEY,
+#   SUPER_ADMIN_EMAIL, SUPER_ADMIN_PASSWORD, SUPER_ADMIN_NAME,
+#   NEXT_PUBLIC_LIVE_UPDATES_URL, ALLOWED_ORIGIN
+#
+# GHCR authentication: docker login ghcr.io -u <user> -p <token>
+
+services:
+  db:
+    image: postgres:15-alpine
+    container_name: omnisight_db
+    restart: always
+    environment:
+      POSTGRES_USER: omnisight_user
+      POSTGRES_PASSWORD: omnisight_password
+      POSTGRES_DB: omnisight_db
+    ports:
+      # Loopback-only. Container-to-container access uses the compose network.
+      - "127.0.0.1:5433:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    networks:
+      - omnisight_network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U omnisight_user -d omnisight_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # One-shot migration. Pulls the web GHCR image, runs prisma migrate deploy,
+  # and exits. Must complete before web/live-updates start.
+  web-migrate:
+    image: ${GHCR_REPO:?GHCR_REPO required}:${IMAGE_TAG:?IMAGE_TAG required}
+    container_name: omnisight_migrate
+    env_file:
+      - .env
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgresql://omnisight_user:omnisight_password@db:5432/omnisight_db
+      DIRECT_URL: postgresql://omnisight_user:omnisight_password@db:5432/omnisight_db
+    command: ["npx", "prisma", "migrate", "deploy"]
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - omnisight_network
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /app/node_modules/@prisma/engines
+    restart: "no"
+
+  web:
+    image: ${GHCR_REPO:?GHCR_REPO required}:${IMAGE_TAG:?IMAGE_TAG required}
+    container_name: omnisight_web
+    restart: always
+    ports:
+      - "127.0.0.1:3000:3000"
+    env_file:
+      - .env
+    environment:
+      NODE_ENV: production
+      STORAGE_DRIVER: local
+      STORAGE_LOCAL_PATH: /app/uploads
+      DATABASE_URL: postgresql://omnisight_user:omnisight_password@db:5432/omnisight_db
+      DIRECT_URL: postgresql://omnisight_user:omnisight_password@db:5432/omnisight_db
+    volumes:
+      - uploads:/app/uploads
+    depends_on:
+      db:
+        condition: service_healthy
+      web-migrate:
+        condition: service_completed_successfully
+    networks:
+      - omnisight_network
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /app/.next/cache
+
+  live-updates:
+    image: ${GHCR_REPO_LIVE_UPDATES:?GHCR_REPO_LIVE_UPDATES required}:${IMAGE_TAG:?IMAGE_TAG required}
+    container_name: omnisight_live_updates
+    restart: always
+    ports:
+      - "127.0.0.1:3010:3010"
+    env_file:
+      - .env
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgresql://omnisight_user:omnisight_password@db:5432/omnisight_db
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY}
+      JWT_SECRET: ${JWT_SECRET}
+      ALLOWED_ORIGIN: ${ALLOWED_ORIGIN:-http://localhost:3000}
+      LIVE_UPDATES_PORT: "3010"
+    depends_on:
+      db:
+        condition: service_healthy
+      web-migrate:
+        condition: service_completed_successfully
+    networks:
+      - omnisight_network
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:3010/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  pgdata:
+  uploads:
+
+networks:
+  omnisight_network:
+    driver: bridge

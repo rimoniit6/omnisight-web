@@ -247,3 +247,86 @@ jobs:
           exit-code: 1
           severity: CRITICAL,HIGH
           ignore-unfixed: true
+
+  # ── Deploy to production ─────────────────────────────────────────────────
+  # Runs ONLY on main push, AFTER docker job succeeds. Deploys via SSH to the
+  # production server using the immutable commit SHA as the image tag.
+  #
+  # Required GitHub secrets:
+  #   PRODUCTION_HOST      — production server IP or hostname
+  #   PRODUCTION_USER      — SSH user on the production server
+  #   PRODUCTION_SSH_KEY   — private SSH key (ed25519 recommended)
+  #   GHCR_TOKEN           — GitHub PAT with read:packages scope (for GHCR pull)
+  #
+  # The deploy job uses no third-party SSH actions — only built-in ssh/ssh-agent.
+  # Concurrency group "production" prevents simultaneous deployments.
+  deploy:
+    name: Deploy to production
+    runs-on: ubuntu-latest
+    needs: [docker]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    # Sequential deployments only — never cancel an in-progress deploy.
+    concurrency:
+      group: production
+      cancel-in-progress: false
+    permissions:
+      contents: read
+    env:
+      IMAGE_TAG: ${{ github.sha }}
+      GHCR_REPO: ghcr.io/${{ github.repository }}
+      GHCR_REPO_LIVE_UPDATES: ghcr.io/${{ github.repository }}-live-updates
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate deployment secrets
+        run: |
+          missing=0
+          for var in PRODUCTION_HOST PRODUCTION_USER PRODUCTION_SSH_KEY GHCR_TOKEN; do
+            if [ -z "${!var:-}" ]; then
+              echo "WARN: Secret $var is not configured — deploy will be skipped"
+              missing=1
+            fi
+          done
+          if [ "$missing" = "1" ]; then
+            echo "Deploy secrets not configured. Set them in GitHub repo Settings → Secrets."
+            echo "Skipping deployment (not failing CI)."
+            exit 0
+          fi
+
+      - name: Set up SSH agent
+        if: env.PRODUCTION_HOST != ''
+        run: |
+          eval "$(ssh-agent -s)"
+          echo "${{ secrets.PRODUCTION_SSH_KEY }}" | ssh-add -
+          echo "SSH_AUTH_SOCK=$SSH_AUTH_SOCK" >> "$GITHUB_ENV"
+
+      - name: Add production host to known_hosts
+        if: env.PRODUCTION_HOST != ''
+        run: |
+          mkdir -p ~/.ssh
+          ssh-keyscan -H "${{ secrets.PRODUCTION_HOST }}" >> ~/.ssh/known_hosts 2>/dev/null || true
+
+      - name: Authenticate to GHCR on production server
+        if: env.PRODUCTION_HOST != ''
+        run: |
+          ssh "${{ secrets.PRODUCTION_USER }}@${{ secrets.PRODUCTION_HOST }}" \
+            "echo '${{ secrets.GHCR_TOKEN }}' | docker login ghcr.io -u ${{ github.actor }} --password-stdin"
+
+      - name: Deploy via SSH
+        if: env.PRODUCTION_HOST != ''
+        run: |
+          ssh "${{ secrets.PRODUCTION_USER }}@${{ secrets.PRODUCTION_HOST }}" \
+            "cd /opt/omnisight && \
+             IMAGE_TAG=${{ github.sha }} \
+             GHCR_REPO=${{ env.GHCR_REPO }} \
+             GHCR_REPO_LIVE_UPDATES=${{ env.GHCR_REPO_LIVE_UPDATES }} \
+             ./scripts/deploy.sh"
+
+      - name: Verify deployment health via SSH
+        if: env.PRODUCTION_HOST != ''
+        run: |
+          ssh "${{ secrets.PRODUCTION_USER }}@${{ secrets.PRODUCTION_HOST }}" \
+            "cd /opt/omnisight && \
+             IMAGE_TAG=${{ github.sha }} \
+             ./scripts/health-check.sh"
