@@ -235,9 +235,10 @@ test('REC-01: 100 initial records + 10 arriving during migration → 110 at dest
 
   // The migration row should reflect verified completion
   const mRow = await db.infrastructureMigration.findUnique({ where: { id: migrationId } });
-  assert.equal(mRow?.status, 'ready_to_activate');
-  assert.ok(mRow?.recordsDone! >= 110, `recordsDone ${mRow?.recordsDone} >= 110`);
-  assert.ok(mRow?.recordsTotal! >= 110, `recordsTotal ${mRow?.recordsTotal} >= 110`);
+  assert.ok(mRow, 'migration row should exist');
+  assert.equal(mRow.status, 'ready_to_activate');
+  assert.ok(mRow.recordsDone != null && mRow.recordsDone >= 110, `recordsDone ${mRow.recordsDone} >= 110`);
+  assert.ok(mRow.recordsTotal != null && mRow.recordsTotal >= 110, `recordsTotal ${mRow.recordsTotal} >= 110`);
 
   // Verify zero-drift or near-zero-drift: destination ≥ source
   const srcCount = await db.activity.count({ where: { organizationId: orgId } });

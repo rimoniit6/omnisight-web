@@ -193,7 +193,7 @@ export async function resolvePrice(args: ResolvePriceArgs): Promise<PriceBreakdo
 
   // Device pricing — both MANAGED and CUSTOMER_DB use device-based entitlement.
   const requestedQty = Math.max(0, Math.floor(args.deviceQuantity ?? 0));
-  let deviceQuantity = requestedQty;
+  const deviceQuantity = requestedQty;
   let deviceCharge = 0;
   let extraDevices = 0;
   if (includedDevices !== null) {

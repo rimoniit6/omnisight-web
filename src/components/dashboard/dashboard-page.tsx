@@ -104,15 +104,8 @@ const fadeVariants = {
 // Live Activity strip length (was the inline `.slice(0, 3)`).
 const TICKER_MAX = 3;
 
-export function DashboardPage() {
-  const { org } = useCurrentUser();
-
-  // Server-side enforcement blocks suspended orgs at the API level.
-  // This client-side check provides the user-facing suspension screen.
-  if (org && org.status !== 'active') {
-    return <SuspensionScreen />;
-  }
-
+// ── Dashboard body (hooks live here — only mounted when org is active) ──────
+function DashboardContent() {
   const { data, isLoading, error } = useQuery<DashboardData>({
     queryKey: ['dashboard'],
     queryFn: async () => {
@@ -372,4 +365,17 @@ export function DashboardPage() {
       </AnimatePresence>
     </div>
   );
+}
+
+// ── Top-level wrapper: suspension gate (no hooks after the conditional) ─────
+export function DashboardPage() {
+  const { org } = useCurrentUser();
+
+  // Server-side enforcement blocks suspended orgs at the API level.
+  // This client-side check provides the user-facing suspension screen.
+  if (org && org.status !== 'active') {
+    return <SuspensionScreen />;
+  }
+
+  return <DashboardContent />;
 }
