@@ -835,7 +835,7 @@ test('FCO-09: misconfigured org FAILS CLOSED — no silent fallback; device scan
     update: { useOwnDb: true, dbHost: 'localhost' },
   });
   await assert.rejects(async () => getPrismaForOrg(orgNId), OrgDbMisconfigurationError, 'incomplete useOwnDb config fails closed');
-  let cloudN = await getPrismaForOrg(orgNId).catch(() => null);
+  const cloudN = await getPrismaForOrg(orgNId).catch(() => null);
   assert.equal(cloudN, null, 'no silent cloud fallback for a config-broken org');
 
   // Org M: same broken state — the cross-org device scan must SKIP it.

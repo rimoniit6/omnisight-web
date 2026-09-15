@@ -14,7 +14,7 @@
 
 import { createServer } from 'http';
 import { Server } from 'socket.io';
-import { createHmac, timingSafeEqual } from 'crypto';
+import { createHmac, timingSafeEqual, createHash, createDecipheriv } from 'crypto';
 import { existsSync } from 'fs';
 import path from 'path';
 import { PrismaClient } from '@prisma/client';
@@ -32,14 +32,12 @@ import { NOTIFY_CHANNEL, ensureNotifyTriggers } from './notify-triggers';
 const ENCRYPTION_KEY = process.env.ENCRYPTION_KEY || process.env.JWT_SECRET || '';
 
 function deriveAesKey(secret: string): Buffer {
-  const { createHash } = require('crypto') as typeof import('crypto');
   return createHash('sha256').update(secret).digest();
 }
 
 function decryptSecret(encrypted: string): string {
   if (!encrypted) return '';
   try {
-    const { createDecipheriv } = require('crypto') as typeof import('crypto');
     const raw = Buffer.from(encrypted, 'base64');
     if (raw.length < 29) return ''; // IV(12) + tag(16) + at least 1 byte
     const iv = raw.subarray(0, 12);
