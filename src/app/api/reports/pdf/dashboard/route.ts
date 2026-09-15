@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { generateDashboardReport } from '@/lib/pdf-generator';
 import { format, startOfMonth, endOfMonth, startOfDay, endOfDay } from 'date-fns';
-import { authError, authenticateRequest, requireSessionOrg, isValidDate, parseJsonBody, BodyParseError } from '@/lib/api';
+import { authError, authenticateRequest, requireSessionOrg, isValidDate, parseJsonBody, BodyParseError, getPrismaForOrg } from '@/lib/api';
 import { hasRolePermission as hasRole } from '@/lib/auth';
 import { NON_INTERNAL_AGENT_ACTIVITY_FILTER } from '@/lib/agent-process';
 import { effectiveLiveStatus } from '@/lib/presence';
@@ -43,6 +43,10 @@ export async function POST(request: NextRequest) {
     // Phase 1: every tenant model (including Activity) carries a direct
     // organizationId — filter directly, never via joins.
     const orgFilter = { organizationId: scope.organizationId };
+
+    // ORG DATA BOUNDARY: Employee/Device/Activity/Alert/Project are org-owned
+    // (copied to the org DB at cutover) — the whole dashboard report resolves
+    // through the org client. Organization (control-plane) stays on `db`.
     const activityOrgFilter = { organizationId: scope.organizationId };
 
     // Parse date range — default to current month if not provided
@@ -54,6 +58,8 @@ export async function POST(request: NextRequest) {
         { status: 422 },
       );
     }
+
+    const orgData = (await getPrismaForOrg(scope.organizationId)).client;
 
     // ── Parallelize all independent queries ──
     const todayStart = startOfDay(new Date());
@@ -79,22 +85,22 @@ export async function POST(request: NextRequest) {
         ? db.organization.findUnique({ where: { id: scope.organizationId }, select: { name: true } })
         : Promise.resolve(null),
       // Total employees count
-      db.employee.count({ where: { status: 'active', ...orgFilter } }),
+      orgData.employee.count({ where: { status: 'active', ...orgFilter } }),
       // Active devices
-      db.device.findMany({ where: orgFilter, select: { status: true, lastHeartbeat: true } }),
+      orgData.device.findMany({ where: orgFilter, select: { status: true, lastHeartbeat: true } }),
       // Total activity duration
-      db.activity.aggregate({ where: activityWhereBase, _sum: { duration: true } }),
+      orgData.activity.aggregate({ where: activityWhereBase, _sum: { duration: true } }),
       // Productive activity duration
-      db.activity.aggregate({ where: { ...activityWhereBase, category: 'productive' }, _sum: { duration: true } }),
+      orgData.activity.aggregate({ where: { ...activityWhereBase, category: 'productive' }, _sum: { duration: true } }),
       // Today's hours
-      db.activity.aggregate({
+      orgData.activity.aggregate({
         where: { timestamp: { gte: todayStart, lte: todayEnd }, ...activityOrgFilter, ...NON_INTERNAL_AGENT_ACTIVITY_FILTER },
         _sum: { duration: true },
       }),
       // Pending alerts
-      db.alert.count({ where: { status: 'pending', ...orgFilter } }),
+      orgData.alert.count({ where: { status: 'pending', ...orgFilter } }),
       // Active projects
-      db.project.count({ where: { status: 'active', ...orgFilter } }),
+      orgData.project.count({ where: { status: 'active', ...orgFilter } }),
     ]);
 
     const effectiveBranding = await getEffectiveBranding(scope.organizationId);
@@ -119,14 +125,14 @@ export async function POST(request: NextRequest) {
     // single GROUP BY queries that return all the data we need.
 
     // Single query: total duration per employee
-    const empTotalAgg = await db.activity.groupBy({
+    const empTotalAgg = await orgData.activity.groupBy({
       by: ['employeeId'],
       where: activityWhereBase,
       _sum: { duration: true },
     });
 
     // Single query: productive duration per employee
-    const empProductiveAgg = await db.activity.groupBy({
+    const empProductiveAgg = await orgData.activity.groupBy({
       by: ['employeeId'],
       where: { ...activityWhereBase, category: 'productive' },
       _sum: { duration: true },
@@ -139,7 +145,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Fetch active employees with department info (needed for both breakdowns)
-    const activeEmployees = await db.employee.findMany({
+    const activeEmployees = await orgData.employee.findMany({
       where: { status: 'active', ...orgFilter },
       select: { id: true, firstName: true, lastName: true, departmentId: true, department: { select: { name: true } } },
     });
@@ -197,7 +203,7 @@ export async function POST(request: NextRequest) {
     const top5Performers = topPerformers;
 
     // ── Device status summary ──
-    const devices = await db.device.findMany({
+    const devices = await orgData.device.findMany({
       where: orgFilter,
       select: {
         name: true,
@@ -213,14 +219,14 @@ export async function POST(request: NextRequest) {
     }));
 
     // ── Recent 10 alerts ──
-    const recentAlerts = await db.alert.findMany({
+    const recentAlerts = await orgData.alert.findMany({
       where: orgFilter,
       orderBy: { createdAt: 'desc' },
       take: 10,
     });
 
     // ── Active projects ──
-    const activeProjects = await db.project.findMany({
+    const activeProjects = await orgData.project.findMany({
       where: { status: 'active', ...orgFilter },
       include: {
         members: { select: { id: true } },

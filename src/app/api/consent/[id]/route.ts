@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
 import { authenticateRequest, getPrismaForOrg, getSessionOrg } from '@/lib/api';
 import { hasRolePermission } from '@/lib/auth';
 import { applyConsentTransition, isValidConsentStatus } from '@/lib/consent';
@@ -116,14 +115,19 @@ export async function DELETE(
 
     const { id } = await params;
 
+    // ORG DATA BOUNDARY: Consent/ConsentLog/AuditLog are org-owned (copied to
+    // the org DB at cutover) — the delete path resolves through the org client
+    // (same boundary as PUT above).
+    const orgData = (await getPrismaForOrg(org.id)).client;
+
     // Tenant isolation: the consent must belong to the caller's organization.
-    const consent = await db.consent.findUnique({ where: { id, organizationId: org.id } });
+    const consent = await orgData.consent.findUnique({ where: { id, organizationId: org.id } });
     if (!consent) {
       return NextResponse.json({ error: 'Consent not found' }, { status: 404 });
     }
 
     // Immutable history: refuse to destroy a consent that produced audit logs.
-    const logCount = await db.consentLog.count({ where: { consentId: id } });
+    const logCount = await orgData.consentLog.count({ where: { consentId: id } });
     if (logCount > 0) {
       return NextResponse.json(
         {
@@ -134,7 +138,7 @@ export async function DELETE(
       );
     }
 
-    await db.$transaction(async (tx) => {
+    await orgData.$transaction(async (tx) => {
       await tx.auditLog.create({
         data: {
           action: 'delete',

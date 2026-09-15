@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { Prisma } from '@prisma/client';
-import { authError, requireSessionOrg } from '@/lib/api';
+import { authError, requireSessionOrg, getPrismaForOrg } from '@/lib/api';
 import { log, requestContext } from '@/lib/logger';
 
 export async function GET(req: NextRequest) {
@@ -16,6 +16,10 @@ export async function GET(req: NextRequest) {
       : {};
     const timeOrgFilter = scope.organizationId ? { organizationId: scope.organizationId } : {};
     const memberOrgFilter = scope.organizationId ? { organizationId: scope.organizationId } : {};
+
+    // ORG DATA BOUNDARY: Project/TimeEntry/ProjectMember are org-owned (copied
+    // to the org DB at cutover) — all stats resolve through the org client.
+    const orgData = (await getPrismaForOrg(scope.organizationId as string)).client;
 
     // Current month boundaries
     const now = new Date();
@@ -42,20 +46,20 @@ export async function GET(req: NextRequest) {
       budgetUtilization,
     ] = await Promise.all([
       // 1. Total projects by status
-      db.project.groupBy({
+      orgData.project.groupBy({
         by: ['status'],
         where: projectOrgFilter,
         _count: { id: true },
       }),
 
       // 2. Total hours across all projects this month
-      db.timeEntry.aggregate({
+      orgData.timeEntry.aggregate({
         where: { date: { gte: monthStart, lte: monthEnd }, ...timeOrgFilter },
         _sum: { hours: true },
       }),
 
       // 3. Top 5 projects by hours this week
-      db.timeEntry.groupBy({
+      orgData.timeEntry.groupBy({
         by: ['projectId'],
         where: { date: { gte: weekStart, lte: weekEnd }, ...timeOrgFilter },
         _sum: { hours: true },
@@ -64,13 +68,13 @@ export async function GET(req: NextRequest) {
       }),
 
       // 4. All active project IDs (for employee workload)
-      db.project.findMany({
+      orgData.project.findMany({
         where: { status: 'active', ...projectOrgFilter },
         select: { id: true },
       }),
 
       // 5. Overdue projects
-      db.project.findMany({
+      orgData.project.findMany({
         where: {
           status: 'active',
           deadline: { lt: now },
@@ -83,7 +87,7 @@ export async function GET(req: NextRequest) {
       }),
 
       // 6. Budget utilization: estimated vs actual hours per project
-      db.project.findMany({
+      orgData.project.findMany({
         where: { status: { in: ['active', 'on_hold'] }, ...projectOrgFilter },
         select: { id: true, name: true, estimatedHours: true, budgetType: true, hourlyRate: true },
       }),
@@ -96,7 +100,7 @@ export async function GET(req: NextRequest) {
     // Enrich top projects with names
     const topProjectIds = topProjectsThisWeek.map((p) => p.projectId);
     const topProjectNames = topProjectIds.length > 0
-      ? await db.project.findMany({
+      ? await orgData.project.findMany({
           where: { id: { in: topProjectIds }, ...projectOrgFilter },
           select: { id: true, name: true, color: true },
         })
@@ -122,7 +126,7 @@ export async function GET(req: NextRequest) {
     }> = [];
 
     if (activeProjectIdList.length > 0) {
-      const memberships = await db.projectMember.findMany({
+      const memberships = await orgData.projectMember.findMany({
         where: { projectId: { in: activeProjectIdList }, leftAt: null, ...memberOrgFilter },
         include: {
           employee: { select: { id: true, firstName: true, lastName: true, avatar: true, status: true } },
@@ -155,7 +159,7 @@ export async function GET(req: NextRequest) {
     // Budget utilization: compute actual hours per project
     const budgetProjectIds = budgetUtilization.map((p) => p.id);
     const actualHours = budgetProjectIds.length > 0
-      ? await db.timeEntry.groupBy({
+      ? await orgData.timeEntry.groupBy({
           by: ['projectId'],
           where: { projectId: { in: budgetProjectIds }, ...timeOrgFilter },
           _sum: { hours: true },

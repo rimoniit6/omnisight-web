@@ -31,8 +31,12 @@ export async function GET(
 
     const { id } = await params;
 
+    // ORG DATA BOUNDARY: Project/TimeEntry are org-owned (copied to the org DB
+    // at cutover) — resolve through the org client.
+    const orgData = (await getPrismaForOrg(scope.organizationId as string)).client;
+
     // Resolve inside the caller's org only; cross-org ids -> 404.
-    const project = await db.project.findFirst({
+    const project = await orgData.project.findFirst({
       where: { id, ...(scope.organizationId ? { organizationId: scope.organizationId } : {}) },
       include: {
         department: { select: { id: true, name: true } },
@@ -65,16 +69,16 @@ export async function GET(
 
     // Compute total hours, billable hours and the manual vs auto breakdown.
     const [hoursAgg, memberHours, sourceAgg] = await Promise.all([
-      db.timeEntry.aggregate({
+      orgData.timeEntry.aggregate({
         where: { projectId: id },
         _sum: { hours: true },
       }),
-      db.timeEntry.groupBy({
+      orgData.timeEntry.groupBy({
         by: ['employeeId'],
         where: { projectId: id },
         _sum: { hours: true },
       }),
-      db.timeEntry.groupBy({
+      orgData.timeEntry.groupBy({
         by: ['source'],
         where: { projectId: id },
         _sum: { hours: true },
@@ -85,7 +89,7 @@ export async function GET(
 
     const totalHours = hoursAgg._sum.hours || 0;
 
-    const billableAgg = await db.timeEntry.aggregate({
+    const billableAgg = await orgData.timeEntry.aggregate({
       where: { projectId: id, billable: true },
       _sum: { hours: true },
     });

@@ -14,7 +14,10 @@ export async function POST(
     if (!admin.ok) return authError(admin);
 
     const { id } = await params;
-    const recording = await db.audioRecording.findFirst({
+    // ORG DATA BOUNDARY: AudioRecording is org-owned (copied to the org DB at
+    // cutover) — read through the org client (JobRun below is control plane).
+    const orgDataRead = (await getPrismaForOrg(admin.organizationId)).client;
+    const recording = await orgDataRead.audioRecording.findFirst({
       where: { id, organizationId: admin.organizationId },
     });
 

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
-import { authError, requireSessionOrg, validatePagination } from '@/lib/api';
+import { authError, requireSessionOrg, validatePagination, getPrismaForOrg } from '@/lib/api';
 import { orgDayWindow, safeTimezone, zonedDayStart, zonedDayEnd, localDayKey } from '@/lib/timezone';
 import { sessionDurationSeconds } from '@/lib/breaks/service';
 import { log, requestContext } from '@/lib/logger';
@@ -42,6 +42,10 @@ export async function GET(req: NextRequest) {
     });
     const timezone = safeTimezone(org?.timezone);
 
+    // ORG DATA BOUNDARY: Employee/BreakSession are org-owned — resolve the
+    // org client so history reflects the authoritative post-cutover data.
+    const orgData = (await getPrismaForOrg(orgId)).client;
+
     const rawDay = searchParams.get('day');
     if (rawDay && !/^\d{4}-\d{2}-\d{2}$/.test(rawDay)) {
       return NextResponse.json({ error: 'day must be a YYYY-MM-DD date' }, { status: 400 });
@@ -55,7 +59,7 @@ export async function GET(req: NextRequest) {
     const rawEmployee = searchParams.get('employeeId');
     let employeeId: string | undefined;
     if (rawEmployee) {
-      const employee = await db.employee.findFirst({
+      const employee = await orgData.employee.findFirst({
         where: { OR: [{ id: rawEmployee }, { employeeId: rawEmployee }], organizationId: orgId },
         select: { id: true },
       });
@@ -80,7 +84,7 @@ export async function GET(req: NextRequest) {
     };
 
     const [sessions, total] = await Promise.all([
-      db.breakSession.findMany({
+      orgData.breakSession.findMany({
         where,
         include: {
           employee: {
@@ -96,7 +100,7 @@ export async function GET(req: NextRequest) {
         skip: pagination.skip,
         take: pageSize,
       }),
-      db.breakSession.count({ where }),
+      orgData.breakSession.count({ where }),
     ]);
 
     const data = sessions.map((s) => ({

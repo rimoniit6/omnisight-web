@@ -18,7 +18,7 @@
 // production deployments run) and by the regression test suite.
 
 import { db } from '@/lib/db';
-import { hashPassword } from '@/lib/auth';
+import { hashPassword, assertProductionSecret, assertAdminEmailNotPlaceholder } from '@/lib/auth';
 
 /**
  * The two environment keys the bootstrap reads. Using a Record type keeps
@@ -62,9 +62,11 @@ export function validateSuperAdminEnv(env: SuperAdminEnv = process.env): { email
   if (!EMAIL_RE.test(email)) {
     throw new Error(`SUPER_ADMIN_EMAIL is not a valid email address: ${email}`);
   }
+  assertAdminEmailNotPlaceholder(email);
   if (password.length < 12) {
     throw new Error('SUPER_ADMIN_PASSWORD must be at least 12 characters');
   }
+  assertProductionSecret(password, 'SUPER_ADMIN_PASSWORD', 12);
   if (!/[A-Z]/.test(password) || !/[a-z]/.test(password) || !/\d/.test(password)) {
     throw new Error('SUPER_ADMIN_PASSWORD must contain uppercase, lowercase and at least one digit');
   }

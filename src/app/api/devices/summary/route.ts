@@ -1,7 +1,7 @@
 'use server';
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
-import { authError, requireSessionOrg } from '@/lib/api';
+import { authError, requireSessionOrg, getPrismaForOrg } from '@/lib/api';
 import { effectiveDeviceStatus } from '@/lib/device-status';
 import { log, requestContext } from '@/lib/logger';
 
@@ -12,7 +12,11 @@ export async function GET(req: NextRequest) {
 
     const orgWhere: Record<string, unknown> = scope.organizationId ? { organizationId: scope.organizationId } : {};
 
-    const rows = await db.device.findMany({
+    // ORG DATA BOUNDARY: Device is org-owned (copied to the org DB at
+    // cutover) — the summary resolves through the org client.
+    const orgData = (await getPrismaForOrg(scope.organizationId as string)).client;
+
+    const rows = await orgData.device.findMany({
       where: orgWhere,
       select: { id: true, status: true, lastHeartbeat: true },
     });

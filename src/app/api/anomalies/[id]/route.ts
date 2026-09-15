@@ -18,8 +18,11 @@ export async function GET(
     if (!org) return NextResponse.json({ error: 'No organization found' }, { status: 404 });
 
     const { id } = await params;
+    // ORG DATA BOUNDARY: Anomaly is org-owned (copied to the org DB at
+    // cutover) — resolve through the org client (PUT below already does).
+    const orgData = (await getPrismaForOrg(org.id)).client;
     // Tenant isolation: the anomaly must belong to the caller's organization.
-    const anomaly = await db.anomaly.findFirst({
+    const anomaly = await orgData.anomaly.findFirst({
       where: { id, organizationId: org.id },
       include: {
         employee: { select: { id: true, firstName: true, lastName: true, employeeId: true, avatar: true, designation: true, departmentId: true, department: { select: { name: true } } } },

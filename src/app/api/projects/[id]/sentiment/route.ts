@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
-import { authError, requireSessionOrg } from '@/lib/api';
+import { authError, requireSessionOrg, getPrismaForOrg } from '@/lib/api';
 import { log, requestContext } from '@/lib/logger';
 
 // GET /api/projects/[projectId]/sentiment
@@ -30,8 +30,12 @@ export async function GET(
       return NextResponse.json({ error: 'Invalid project id' }, { status: 400 });
     }
 
+    // ORG DATA BOUNDARY: Project/SentimentRecord are org-owned (copied to the
+    // org DB at cutover) — resolve through the org client.
+    const orgData = (await getPrismaForOrg(scope.organizationId as string)).client;
+
     // Project must exist in the caller's org; cross-org ids -> 404.
-    const project = await db.project.findFirst({
+    const project = await orgData.project.findFirst({
       where: { id, ...(scope.organizationId ? { organizationId: scope.organizationId } : {}) },
       select: { id: true, name: true, status: true, organizationId: true },
     });
@@ -41,7 +45,7 @@ export async function GET(
 
     // All project sentiment rows for this project (org is guaranteed by the
     // project FK, but scope defensively by projectId).
-    const records = await db.sentimentRecord.findMany({
+    const records = await orgData.sentimentRecord.findMany({
       where: { projectId: id },
       include: {
         employee: {

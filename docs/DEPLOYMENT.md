@@ -61,21 +61,25 @@ npm install
 cp .env.example .env
 ```
 
-Set all required environment variables:
+> `.env.example` and `.env.production.example` are TRACKED templates: they only ever
+> contain `CHANGE_ME_*` placeholders. Real secrets live in your local (gitignored)
+> `.env`. Production startup REJECTS the placeholders on purpose, and CI runs
+> `secrets:scan` (scripts/secret-scan.mjs) to fail on any real-looking secret in a
+> tracked file — do not bypass it. Generate fresh secrets for every environment:
 
 ```env
 # Database
 DATABASE_URL="postgresql://user:password@localhost:5432/omnisight?schema=public"
 DIRECT_URL="postgresql://user:password@localhost:5432/omnisight?schema=public"
 
-# Authentication
-JWT_SECRET="<64-char random string>"
+# Authentication (generate fresh values, never reuse or commit)
+JWT_SECRET=$(openssl rand -base64 48)
 SUPER_ADMIN_EMAIL="admin@yourcompany.com"
-SUPER_ADMIN_PASSWORD="<strong password>"
+SUPER_ADMIN_PASSWORD=$(openssl rand -base64 18)
 SUPER_ADMIN_NAME="System Administrator"
 
-# Encryption
-ENCRYPTION_KEY="<64-char hex string>"
+# Encryption (64-char hex — see rotation note below)
+ENCRYPTION_KEY=<node -e "console.log(require('crypto').randomBytes(32).toString('hex'))">
 
 # Storage
 STORAGE_DRIVER=local
@@ -98,6 +102,25 @@ APP_URL="https://yourdomain.com"
 # Prometheus metrics (secures /api/metrics). Disabled if unset.
 METRICS_TOKEN="<a long random string>"
 ```
+
+#### Secret generation & rotation
+
+- Generation (run once per environment, store in a vault — never in git):
+  - `JWT_SECRET`: `openssl rand -base64 48`
+  - `ENCRYPTION_KEY`: 64 hex chars from `crypto.randomBytes(32).toString('hex')`
+  - `SUPER_ADMIN_PASSWORD`: `openssl rand -base64 18`
+- Rotation semantics (be precise, not optimistic):
+  - **`JWT_SECRET` rotation invalidates every existing session/token** immediately.
+    Plan a maintenance window; all logged-in users must re-authenticate.
+  - **`ENCRYPTION_KEY` rotation is NOT seamless.** Existing encrypted data
+    (agent credentials, workflow secrets) was encrypted with the old key — a
+    plain key swap breaks reads. You must run a controlled re-encryption
+    migration (decrypt with the old key, encrypt with the new one) before, or
+    concurrently with, switching the env value; backup first.
+  - **Super Admin password rotation** forces the operator to re-login and
+    revokes sessions that predate the change.
+  - After any rotation, re-run `npm run secrets:scan` and verify
+    `GET /api/health/ready`.
 
 ### 4. Database Setup
 
@@ -329,33 +352,107 @@ Note: Database migrations are forward-only. If a migration needs rollback, resto
 ### Docker Quick Start
 
 A multi-stage `Dockerfile` (Next.js standalone) and `docker-compose.yml`
-(PostgreSQL + app) are provided:
+(PostgreSQL + app) are provided. The compose stack includes:
 
-```bash
-cp .env.production.example .env   # then fill in the secrets
-```
-
-```bash
-docker compose up -d --build
-```
+- **`db`** — PostgreSQL 15 (Alpine), loopback-only on the host.
+- **`web-migrate`** — one-shot migration job. Runs `prisma migrate deploy`
+  against the database and exits. Must complete successfully before the web
+  service starts.
+- **`web`** — the Next.js application server.
 
 The app container:
 
-1. Applies Prisma migrations on entry.
-2. Serves on `0.0.0.0:${PORT:-3000}`.
+1. Runs as the unprivileged `omnisight` user (uid 1001) — never root.
+2. Serves on `0.0.0.0:${PORT:-3000}` inside the container only — the compose
+   file publishes it **loopback-only** (`127.0.0.1:3000`).
+3. Runs with a read-only root filesystem: runtime writes go to the `uploads`
+   volume (`/app/uploads`) and transient tmpfs mounts (`/tmp`,
+   `/app/.next/cache`). `cap_drop: [ALL]` + `no-new-privileges` are enabled.
+
+**Migrations are NOT applied automatically on container startup.** They are
+executed as an explicit, single-run deployment step by the `web-migrate`
+service. This ensures:
+
+- The serving container never independently attempts schema migration.
+- Migration failures are visible and prevent the web service from starting.
+- Multiple web replicas cannot execute migrations concurrently.
 
 It does **not** create any plan, pricing or demo data on boot. Reference data
 (the Plan catalog) and the Super Admin account are created by the explicit
 commands documented in the README.
 
-Realtime/live updates: the compose stack runs only PostgreSQL + the app. For
-realtime functionality, also start the Bun live-updates service on a host that
-can reach the same database:
+Required environment file (never committed):
 
 ```bash
-cd mini-services/live-updates
-bun index.ts
+cp .env.production.example .env   # then fill in the secrets
 ```
+
+`.env` is gitignored and MUST never be committed. The compose services load
+it via `env_file: .env`, so each container receives exactly the runtime
+variables in it. Two variables are overridden by compose so the containers can
+reach the database: `DATABASE_URL` and `DIRECT_URL`, both pointing at the
+`db` service (`db:5432`) with the same bootstrap credentials the `db`
+service declares. If you change the `POSTGRES_USER/PASSWORD/DB` on the `db`
+service, update them in the `web` and `web-migrate` blocks to match.
+
+Start the stack:
+
+```bash
+docker compose up -d --build
+```
+
+This automatically:
+1. Starts PostgreSQL and waits for it to be healthy.
+2. Runs the `web-migrate` one-shot migration job.
+3. Starts the web server after migration succeeds.
+
+To run migrations manually (e.g. after a code update):
+
+```bash
+docker compose run --rm web-migrate
+```
+
+To restart the web server without re-running migrations:
+
+```bash
+docker compose restart web
+```
+
+Verify:
+
+```bash
+# Containers run as the expected non-root user (uid 1001):
+docker exec omnisight_web id
+# -> uid=1001(omnisight) gid=1001(omnisight)
+
+# Health / ready endpoint:
+curl -sf http://127.0.0.1:3000/api/health
+
+# PostgreSQL is reachable on the host ONLY via loopback - nothing on the LAN:
+ss -ltn | grep -E ':(3000|5433)\s'    # both must show 127.0.0.1 bindings only
+```
+
+**Migration failure procedure:**
+
+If the `web-migrate` service fails:
+1. **Do NOT** start/restart the web service blindly.
+2. Inspect the migration error: `docker compose logs web-migrate`
+3. Resolve the issue (database connectivity, permission, schema conflict).
+4. Re-run migration: `docker compose run --rm web-migrate`
+5. Only after migration succeeds, start the web service.
+6. **Never** use `prisma db push` as an emergency workaround — it has no
+   migration history and can destroy data.
+
+Networking model: the production gateway is Caddy on the host. The host
+`Caddyfile` reverse-proxies to `localhost:3000` (web) and `localhost:3010`
+(realtime) via the loopback bindings — do not open `3000`/`5433` to the LAN.
+If local development on a separate machine truly requires remote access,
+change the compose bindings to `0.0.0.0` deliberately and never on a public
+network.
+
+Realtime/live updates: `docker compose up` automatically starts the live-updates
+WebSocket service on port 3010 alongside PostgreSQL and the app. The service
+uses the `/health` liveness probe and depends on both `db` and `web-migrate`.
 
 Point the app at it via `NEXT_PUBLIC_LIVE_UPDATES_URL` (see *Live-Updates
 Service* under Vercel above).

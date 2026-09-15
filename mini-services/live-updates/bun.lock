@@ -5,6 +5,7 @@
     "": {
       "name": "live-updates-service",
       "dependencies": {
+        "@prisma/client": "^6.19.0",
         "pg": "^8.13.0",
         "socket.io": "^4.7.0",
       },
@@ -14,6 +15,8 @@
     },
   },
   "packages": {
+    "@prisma/client": ["@prisma/client@6.19.3", "", { "peerDependencies": { "prisma": "*", "typescript": ">=5.1.0" }, "optionalPeers": ["prisma", "typescript"] }, "sha512-mKq3jQFhjvko5LTJFHGilsuQs+W+T3Gm451NzuTDGQxwCzwXHYnIu2zGkRoW+Exq3Rob7yp2MfzSrdIiZVhrBg=="],
+
     "@prisma/config": ["@prisma/config@6.19.3", "", { "dependencies": { "c12": "3.1.0", "deepmerge-ts": "7.1.5", "effect": "3.21.0", "empathic": "2.0.0" } }, "sha512-CBPT44BjlQxEt8kiMEauji2WHTDoVBOKl7UlewXmUgBPnr/oPRZC3psci5chJnYmH0ivEIog2OU9PGWoki3DLQ=="],
 
     "@prisma/debug": ["@prisma/debug@6.19.3", "", {}, "sha512-ljkJ+SgpXNktLG0Q/n4JGYCkKf0f8oYLyjImS2I8e2q2WCfdRRtWER062ZV/ixaNP2M2VKlWXVJiGzZaUgbKZw=="],

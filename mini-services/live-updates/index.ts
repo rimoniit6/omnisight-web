@@ -25,6 +25,158 @@ import { nextPollCursor } from './poll-cursor';
 import { loadPersistedCursor, persistCursor } from './cursor-store';
 import { NOTIFY_CHANNEL, ensureNotifyTriggers } from './notify-triggers';
 
+// ─── Minimal AES-256-GCM decryption (mirrors src/lib/crypto.ts) ────────────
+// The live-updates service is a standalone Bun process and cannot import
+// the main app's crypto module. This implements the same AES-256-GCM
+// envelope decryption using the same ENCRYPTION_KEY derivation.
+const ENCRYPTION_KEY = process.env.ENCRYPTION_KEY || process.env.JWT_SECRET || '';
+
+function deriveAesKey(secret: string): Buffer {
+  const { createHash } = require('crypto') as typeof import('crypto');
+  return createHash('sha256').update(secret).digest();
+}
+
+function decryptSecret(encrypted: string): string {
+  if (!encrypted) return '';
+  try {
+    const { createDecipheriv } = require('crypto') as typeof import('crypto');
+    const raw = Buffer.from(encrypted, 'base64');
+    if (raw.length < 29) return ''; // IV(12) + tag(16) + at least 1 byte
+    const iv = raw.subarray(0, 12);
+    const tag = raw.subarray(12, 28);
+    const ciphertext = raw.subarray(28);
+    const key = deriveAesKey(ENCRYPTION_KEY);
+    const decipher = createDecipheriv('aes-256-gcm', key, iv);
+    decipher.setAuthTag(tag);
+    const decrypted = Buffer.concat([decipher.update(ciphertext), decipher.final()]);
+    return decrypted.toString('utf-8');
+  } catch {
+    return '';
+  }
+}
+
+// ─── CUSTOMER_DB per-org database resolution (Phase 6) ─────────────────────
+// For CUSTOMER_DB organizations (useOwnDb=true), org-owned realtime data
+// lives in the customer's database, not the platform database. The poller
+// must resolve each org's database before querying org-owned events.
+// MANAGED orgs continue using the platform `db` client.
+//
+// SECURITY: credentials are NEVER logged. Failed connections are caught and
+// skipped per-org — one unavailable customer DB never crashes the service.
+
+type OrgDbEntry = { client: PrismaClient; host: string; name: string };
+const orgDbCache = new Map<string, OrgDbEntry>();
+const MAX_ORG_DB_CACHED = 50;
+
+/**
+ * Load CUSTOMER_DB org IDs from OrganizationSettings at startup. This is a
+ * snapshot — newly activated orgs are picked up on the next refresh cycle.
+ */
+async function loadCustomerDbOrgs(): Promise<Set<string>> {
+  try {
+    const rows = await db.organizationSettings.findMany({
+      where: { useOwnDb: true, dbHost: { not: null }, dbName: { not: null }, dbUser: { not: null } },
+      select: { organizationId: true },
+      take: MAX_ORG_DB_CACHED,
+    });
+    return new Set(rows.map((r) => r.organizationId));
+  } catch (err) {
+    console.error('[live-updates] failed to load CUSTOMER_DB orgs:', err);
+    return new Set();
+  }
+}
+
+/**
+ * Get or create a cached PrismaClient for a CUSTOMER_DB org. Returns null if
+ * the org's config is incomplete or the connection fails (fail-closed — never
+ * falls back to platform DB for org-owned data).
+ */
+async function getOrgDbClient(orgId: string): Promise<PrismaClient | null> {
+  const cached = orgDbCache.get(orgId);
+  if (cached) return cached.client;
+
+  try {
+    const settings = await db.organizationSettings.findUnique({
+      where: { organizationId: orgId },
+      select: {
+        useOwnDb: true, dbHost: true, dbPort: true, dbName: true,
+        dbUser: true, dbPassword: true, dbSsl: true,
+      },
+    });
+    if (!settings?.useOwnDb || !settings.dbHost || !settings.dbName || !settings.dbUser) {
+      return null;
+    }
+    if (!settings.dbPassword) return null;
+
+    const password = decryptSecret(settings.dbPassword);
+    const port = settings.dbPort ?? 5432;
+    const sslParams = settings.dbSsl ? '?sslmode=require' : '';
+    const connectionString = `postgresql://${encodeURIComponent(settings.dbUser)}:${encodeURIComponent(password)}@${settings.dbHost}:${port}/${settings.dbName}${sslParams}`;
+
+    const client = new PrismaClient({
+      datasources: { db: { url: connectionString } },
+      log: ['error'],
+    });
+
+    // Verify connectivity with a lightweight query
+    await client.$queryRaw`SELECT 1`;
+
+    orgDbCache.set(orgId, { client, host: settings.dbHost, name: settings.dbName });
+    return client;
+  } catch (err) {
+    console.error(`[live-updates] customer DB connection failed for org ${orgId}:`, (err as Error)?.message ?? err);
+    return null;
+  }
+}
+
+/**
+ * Invalidate the cached client for an org (call after cutover or settings change).
+ */
+function invalidateOrgDbCacheEntry(orgId: string): void {
+  const entry = orgDbCache.get(orgId);
+  if (entry) {
+    entry.client.$disconnect().catch(() => {});
+    orgDbCache.delete(orgId);
+  }
+}
+
+/**
+ * Prune the cache when it exceeds MAX_ORG_DB_CACHED entries.
+ */
+function pruneOrgDbCache(): void {
+  if (orgDbCache.size > MAX_ORG_DB_CACHED) {
+    const excess = orgDbCache.size - MAX_ORG_DB_CACHED;
+    const keys = [...orgDbCache.keys()];
+    for (let i = 0; i < excess; i++) {
+      const entry = orgDbCache.get(keys[i]);
+      entry?.client.$disconnect().catch(() => {});
+      orgDbCache.delete(keys[i]);
+    }
+  }
+}
+
+// Periodic refresh of the CUSTOMER_DB org set (every 5 minutes).
+let customerDbOrgIds = new Set<string>();
+
+/**
+ * Build a Prisma WHERE clause that excludes CUSTOMER_DB organizations.
+ * When the set is empty, returns undefined (no filter applied — all orgs are
+ * MANAGED). Uses `OrganizationSettings.useOwnDb`, the same runtime authority
+ * that `getPrismaForOrg()` relies on.
+ */
+function excludeCustomerDbOrgs(): { organizationId?: { notIn: string[] } } | undefined {
+  if (customerDbOrgIds.size === 0) return undefined;
+  return { organizationId: { notIn: [...customerDbOrgIds] } };
+}
+
+async function refreshCustomerDbOrgs(): Promise<void> {
+  try {
+    customerDbOrgIds = await loadCustomerDbOrgs();
+  } catch {
+    // Non-fatal
+  }
+}
+
 // ─── Configuration ───────────────────────────────────────────────────────────
 
 const PORT = Number(process.env.LIVE_UPDATES_PORT || 3010);
@@ -127,7 +279,16 @@ function extractCookie(cookieHeader: string | undefined, name: string): string |
 
 // ─── Server ──────────────────────────────────────────────────────────────────
 
-const httpServer = createServer();
+// Lightweight liveness probe. Does NOT query the database — one unavailable
+// CUSTOMER_DB must not make the entire service unhealthy.
+const httpServer = createServer((req, res) => {
+  if (req.url === '/health' && req.method === 'GET') {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ status: 'ok', uptime: Math.floor(process.uptime()) }));
+    return;
+  }
+  // Everything else (WebSocket upgrade, Socket.IO polling) is handled by Socket.IO.
+});
 const io = new Server(httpServer, {
   path: '/socket.io',
   cors: {
@@ -322,13 +483,13 @@ async function pollOnce(): Promise<void> {
     const [changedDevices, newActivities, newNotifications, newScreenshots, newRealtimeSignals, newUsbEvents, breakActivities, newAutoTimeEntries, newClaims, newAnomalies, changedAppPolicy, newPolicyViolations, newAlerts, newLocations] =
       await Promise.all([
         db.device.findMany({
-          where: { updatedAt: { gt: since } },
+          where: { updatedAt: { gt: since }, ...excludeCustomerDbOrgs() },
           include: {
             employee: { select: { id: true, firstName: true, lastName: true, organizationId: true } },
           },
         }),
         db.activity.findMany({
-          where: { createdAt: { gt: since }, type: { in: ['application', 'website'] } },
+          where: { createdAt: { gt: since }, type: { in: ['application', 'website'] }, ...excludeCustomerDbOrgs() },
           include: {
             employee: { select: { id: true, firstName: true, lastName: true, departmentId: true, organizationId: true } },
           },
@@ -336,7 +497,7 @@ async function pollOnce(): Promise<void> {
           take: 20,
         }),
         db.notification.findMany({
-          where: { createdAt: { gt: since } },
+          where: { createdAt: { gt: since }, ...excludeCustomerDbOrgs() },
           orderBy: { createdAt: 'desc' },
           take: 10,
         }),
@@ -372,7 +533,7 @@ async function pollOnce(): Promise<void> {
         // employeeId/organizationId columns directly, so select them explicitly
         // (the poll previously crashed on the missing relation include).
         db.usbEvent.findMany({
-          where: { createdAt: { gt: since } },
+          where: { createdAt: { gt: since }, ...excludeCustomerDbOrgs() },
           select: {
             id: true,
             eventType: true,
@@ -387,7 +548,7 @@ async function pollOnce(): Promise<void> {
           take: 5,
         }),
         db.activity.findMany({
-          where: { createdAt: { gt: since }, title: { contains: 'Break Mode' } },
+          where: { createdAt: { gt: since }, title: { contains: 'Break Mode' }, ...excludeCustomerDbOrgs() },
           include: {
             employee: { select: { id: true, firstName: true, lastName: true, organizationId: true } },
           },
@@ -405,7 +566,7 @@ async function pollOnce(): Promise<void> {
         // Manual TimeEntry rows are deliberately NOT broadcast: their own
         // mutations already invalidate the client cache.
         db.timeEntry.findMany({
-          where: { source: 'ACTIVITY_AUTO', updatedAt: { gt: since } },
+          where: { source: 'ACTIVITY_AUTO', updatedAt: { gt: since }, ...excludeCustomerDbOrgs() },
           select: {
             id: true,
             projectId: true,
@@ -425,7 +586,7 @@ async function pollOnce(): Promise<void> {
         // to pending) reach the org's admins in real time. Emission is
         // transition-only via claimStatus.
         db.deviceClaim.findMany({
-          where: { updatedAt: { gt: since } },
+          where: { updatedAt: { gt: since }, ...excludeCustomerDbOrgs() },
           include: {
             device: { select: { id: true, name: true, hostname: true, organizationId: true } },
             employee: { select: { id: true, firstName: true, lastName: true } },
@@ -438,7 +599,7 @@ async function pollOnce(): Promise<void> {
         // changes are already reflected by the anomalies page's own mutation
         // invalidation, so broadcasting them again would be redundant noise.
         db.anomaly.findMany({
-          where: { createdAt: { gt: since } },
+          where: { createdAt: { gt: since }, ...excludeCustomerDbOrgs() },
           select: {
             id: true,
             organizationId: true,
@@ -458,7 +619,7 @@ async function pollOnce(): Promise<void> {
         // sessions see policy edits in real time (Prisma sets updatedAt =
         // createdAt on create, so creation is covered).
         db.appListEntry.findMany({
-          where: { updatedAt: { gt: since } },
+          where: { updatedAt: { gt: since }, ...excludeCustomerDbOrgs() },
           select: {
             id: true,
             appName: true,
@@ -473,13 +634,13 @@ async function pollOnce(): Promise<void> {
         // N-10: new alerts (createdAt cursor) — org room event so the Alerts
         // page refreshes without a manual reload.
         db.alert.findMany({
-          where: { createdAt: { gt: since } },
+          where: { createdAt: { gt: since }, ...excludeCustomerDbOrgs() },
           orderBy: { createdAt: 'desc' },
           take: 10,
         }),
         // New policy violations (agent enforcement events) — new rows only.
         db.policyViolation.findMany({
-          where: { createdAt: { gt: since } },
+          where: { createdAt: { gt: since }, ...excludeCustomerDbOrgs() },
           select: {
             id: true,
             organizationId: true,
@@ -498,7 +659,7 @@ async function pollOnce(): Promise<void> {
         // the event as a signal to refetch the employee's location API —
         // coordinates are NEVER sent through the WebSocket (privacy).
         db.locationEvent.findMany({
-          where: { createdAt: { gt: since } },
+          where: { createdAt: { gt: since }, ...excludeCustomerDbOrgs() },
           select: {
             id: true,
             employeeId: true,
@@ -770,6 +931,224 @@ async function pollOnce(): Promise<void> {
       });
     }
 
+    // ─── CUSTOMER_DB org polling (Phase 6) ──────────────────────────────────
+    // After the platform poll, poll each CUSTOMER_DB org's database for
+    // org-owned events. The platform DB holds no org-owned data for these orgs
+    // after cutover, so they must be queried separately. Each org's DB is
+    // resolved independently — a failed connection only skips that org.
+    for (const cdbOrgId of customerDbOrgIds) {
+      try {
+        const orgClient = await getOrgDbClient(cdbOrgId);
+        if (!orgClient) continue; // misconfigured or unreachable — skip
+
+        const [
+          cdbDevices, cdbActivities, cdbNotifications, cdbUsbEvents,
+          cdbBreakActivities, cdbTimeEntries, cdbClaims, cdbAnomalies,
+          cdbAppPolicy, cdbPolicyViolations, cdbAlerts, cdbLocations,
+        ] = await Promise.all([
+          orgClient.device.findMany({
+            where: { updatedAt: { gt: since } },
+            include: { employee: { select: { id: true, firstName: true, lastName: true, organizationId: true } } },
+          }),
+          orgClient.activity.findMany({
+            where: { createdAt: { gt: since }, type: { in: ['application', 'website'] } },
+            include: { employee: { select: { id: true, firstName: true, lastName: true, departmentId: true, organizationId: true } } },
+            orderBy: { createdAt: 'desc' }, take: 20,
+          }),
+          orgClient.notification.findMany({
+            where: { createdAt: { gt: since } },
+            orderBy: { createdAt: 'desc' }, take: 10,
+          }),
+          orgClient.usbEvent.findMany({
+            where: { createdAt: { gt: since } },
+            select: { id: true, eventType: true, deviceName: true, vendorName: true, blocked: true, employeeId: true, organizationId: true, createdAt: true },
+            orderBy: { createdAt: 'desc' }, take: 5,
+          }),
+          orgClient.activity.findMany({
+            where: { createdAt: { gt: since }, title: { contains: 'Break Mode' } },
+            include: { employee: { select: { id: true, firstName: true, lastName: true, organizationId: true } } },
+            orderBy: { createdAt: 'desc' }, take: 50,
+          }),
+          orgClient.timeEntry.findMany({
+            where: { source: 'ACTIVITY_AUTO', updatedAt: { gt: since } },
+            select: { id: true, projectId: true, employeeId: true, hours: true, organizationId: true, createdAt: true, updatedAt: true, project: { select: { name: true } } },
+            orderBy: { updatedAt: 'desc' }, take: 10,
+          }),
+          orgClient.deviceClaim.findMany({
+            where: { updatedAt: { gt: since } },
+            include: { device: { select: { id: true, name: true, hostname: true, organizationId: true } }, employee: { select: { id: true, firstName: true, lastName: true } } },
+            orderBy: { updatedAt: 'desc' }, take: 5,
+          }),
+          orgClient.anomaly.findMany({
+            where: { createdAt: { gt: since } },
+            select: { id: true, organizationId: true, employeeId: true, deviceId: true, type: true, severity: true, status: true, title: true, createdAt: true },
+            orderBy: { createdAt: 'desc' }, take: 10,
+          }),
+          orgClient.appListEntry.findMany({
+            where: { updatedAt: { gt: since } },
+            select: { id: true, appName: true, listType: true, isActive: true, organizationId: true, updatedAt: true },
+            orderBy: { updatedAt: 'desc' }, take: 10,
+          }),
+          orgClient.policyViolation.findMany({
+            where: { createdAt: { gt: since } },
+            select: { id: true, organizationId: true, employeeId: true, deviceId: true, executableName: true, severity: true, createdAt: true },
+            orderBy: { createdAt: 'desc' }, take: 10,
+          }),
+          orgClient.alert.findMany({
+            where: { createdAt: { gt: since } },
+            orderBy: { createdAt: 'desc' }, take: 10,
+          }),
+          orgClient.locationEvent.findMany({
+            where: { createdAt: { gt: since } },
+            select: { id: true, employeeId: true, organizationId: true, createdAt: true },
+            orderBy: { createdAt: 'desc' }, take: 20,
+          }),
+        ]);
+
+        // Broadcast CUSTOMER_DB device status changes
+        for (const dev of cdbDevices) {
+          const prev = deviceStatus.get(dev.id);
+          if (prev === dev.status) continue;
+          deviceStatus.set(dev.id, dev.status);
+          const emp = dev.employee;
+          if (!emp) continue;
+          io.to(`org:${emp.organizationId}`).emit('device-status', {
+            deviceId: dev.id, deviceName: dev.name, oldStatus: prev || dev.status,
+            newStatus: dev.status, employeeId: emp.id,
+            employeeName: `${emp.firstName} ${emp.lastName}`, timestamp: now.toISOString(),
+          });
+        }
+
+        // Broadcast CUSTOMER_DB activities
+        for (const a of cdbActivities) {
+          const emp = a.employee;
+          if (!emp) continue;
+          io.to(`org:${emp.organizationId}`).emit(
+            'activity-ping',
+            buildActivityPing(a, emp, departmentNames.get(emp.departmentId || '') || 'Unassigned')
+          );
+        }
+
+        // Broadcast CUSTOMER_DB notifications
+        for (const n of cdbNotifications) {
+          io.to(`org:${n.organizationId}`).emit('notification', {
+            id: n.id, title: n.title, message: n.message, type: n.type,
+            priority: n.priority, timestamp: n.createdAt.toISOString(),
+          });
+        }
+
+        // Broadcast CUSTOMER_DB alerts
+        for (const a of cdbAlerts) {
+          io.to(`org:${a.organizationId}`).emit('alert-event', {
+            id: a.id, title: a.title, type: a.type, severity: a.severity,
+            status: a.status, timestamp: a.createdAt.toISOString(),
+          });
+        }
+
+        // Broadcast CUSTOMER_DB break events
+        for (const b of cdbBreakActivities) {
+          const emp = b.employee;
+          if (!emp) continue;
+          const ended = (b.title || '').includes('Ended');
+          const payload = {
+            employeeId: emp.id, employeeName: `${emp.firstName} ${emp.lastName}`,
+            action: ended ? 'ended' : 'started', timestamp: b.createdAt.toISOString(),
+          };
+          io.to(`org:${emp.organizationId}`).emit('break-status', payload);
+          io.to(`org:${emp.organizationId}`).emit(ended ? 'break-ended' : 'break-started', payload);
+        }
+
+        // Broadcast CUSTOMER_DB device claims
+        for (const c of cdbClaims) {
+          const prev = claimStatus.get(c.id);
+          if (prev === c.status) continue;
+          claimStatus.set(c.id, c.status);
+          const dev = c.device;
+          if (!dev) continue;
+          io.to(`org:${dev.organizationId}`).emit('device-claim', {
+            id: c.id, deviceId: dev.id, deviceName: dev.name, hostname: dev.hostname,
+            employeeName: c.employee ? `${c.employee.firstName} ${c.employee.lastName}`.trim() : null,
+            status: c.status, timestamp: c.updatedAt.toISOString(),
+          });
+        }
+
+        // Broadcast CUSTOMER_DB USB events
+        for (const u of cdbUsbEvents) {
+          if (!u.organizationId || !u.employeeId) continue;
+          io.to(`org:${u.organizationId}`).emit('usb-event', {
+            id: u.id, employeeId: u.employeeId, employeeName: null,
+            eventType: u.eventType, deviceName: u.deviceName || 'Unknown Device',
+            vendorName: u.vendorName || null, blocked: u.blocked,
+            timestamp: u.createdAt.toISOString(),
+          });
+        }
+
+        // Broadcast CUSTOMER_DB project time updates
+        for (const te of cdbTimeEntries) {
+          io.to(`org:${te.organizationId}`).emit('project-time-update', {
+            id: te.id, projectId: te.projectId, projectName: te.project?.name ?? 'Unknown',
+            employeeId: te.employeeId, hours: te.hours, timestamp: te.createdAt.toISOString(),
+          });
+        }
+
+        // Broadcast CUSTOMER_DB anomalies
+        for (const a of cdbAnomalies) {
+          io.to(`org:${a.organizationId}`).emit('anomaly', {
+            id: a.id, organizationId: a.organizationId, employeeId: a.employeeId,
+            deviceId: a.deviceId, type: a.type, severity: a.severity, status: a.status,
+            title: a.title, timestamp: a.createdAt.toISOString(),
+          });
+        }
+
+        // Broadcast CUSTOMER_DB app policy changes
+        for (const p of cdbAppPolicy) {
+          io.to(`org:${p.organizationId}`).emit('app-policy', {
+            id: p.id, appName: p.appName, listType: p.listType, isActive: p.isActive,
+            timestamp: p.updatedAt.toISOString(),
+          });
+        }
+
+        // Broadcast CUSTOMER_DB policy violations
+        for (const v of cdbPolicyViolations) {
+          io.to(`org:${v.organizationId}`).emit('policy-violation', {
+            id: v.id, organizationId: v.organizationId, employeeId: v.employeeId,
+            deviceId: v.deviceId, executableName: v.executableName, severity: v.severity,
+            timestamp: v.createdAt.toISOString(),
+          });
+        }
+
+        // Broadcast CUSTOMER_DB location updates
+        for (const loc of cdbLocations) {
+          io.to(`org:${loc.organizationId}`).emit('location-update', {
+            id: loc.id, employeeId: loc.employeeId, timestamp: loc.createdAt.toISOString(),
+          });
+        }
+
+        // CUSTOMER_DB employee presence (from customer DB heartbeats)
+        const cdbPresenceEvents: PresenceEvent[] = derivePresenceEvents(
+          employeePresence,
+          cdbDevices.map((dev) => ({
+            employeeId: dev.employeeId,
+            organizationId: dev.organizationId,
+            lastHeartbeat: dev.lastHeartbeat,
+            employeeName:
+              dev.employee && (dev.employee.firstName || dev.employee.lastName)
+                ? `${dev.employee.firstName} ${dev.employee.lastName}`.trim()
+                : null,
+          })),
+          now
+        );
+        for (const ev of cdbPresenceEvents) {
+          io.to(`org:${ev.organizationId}`).emit('employee-presence', ev);
+        }
+
+      } catch (err) {
+        // Non-fatal: skip this org's events for this round. The platform poll
+        // and other CUSTOMER_DB orgs are unaffected.
+        console.error(`[live-updates] CUSTOMER_DB poll failed for org ${cdbOrgId}:`, (err as Error)?.message ?? err);
+      }
+    }
+
   } catch (err) {
     console.error('[live-updates] pollOnce error:', err);
   }
@@ -870,6 +1249,44 @@ async function startNotifyListener(): Promise<Client> {
   return client;
 }
 
+// ─── Cross-process cache invalidation listener (Phase 8) ─────────────────
+// Listens on 'omnisight_cache_invalidation' channel for events broadcast by
+// the Next.js app (infra-connect.ts) when infrastructure changes complete.
+// Invalidates the local orgDbCache so stale Prisma clients are not reused.
+const CACHE_INVALIDATION_CHANNEL = 'omnisight_cache_invalidation';
+
+async function startCacheInvalidationListener(): Promise<void> {
+  const url = new URL(resolveDbUrl());
+  url.searchParams.delete('connection_limit');
+  const client = new Client({ connectionString: url.toString() });
+
+  client.on('notification', (msg) => {
+    if (msg.channel !== CACHE_INVALIDATION_CHANNEL || !msg.payload) return;
+    try {
+      const parsed = JSON.parse(msg.payload) as { orgId?: string; cache?: string };
+      if (!parsed.orgId) return;
+
+      if (parsed.cache === 'db' || parsed.cache === 'all') {
+        invalidateOrgDbCacheEntry(parsed.orgId);
+        console.log(`[live-updates] cache invalidation received for org ${parsed.orgId} (db)`);
+      }
+      if (parsed.cache === 'storage' || parsed.cache === 'all') {
+        // live-updates doesn't cache storage drivers — no-op
+        console.log(`[live-updates] cache invalidation received for org ${parsed.orgId} (storage)`);
+      }
+    } catch {
+      // Malformed payload — ignore
+    }
+  });
+
+  client.on('error', (err) => {
+    console.error('[live-updates] cache invalidation listener error:', err.message);
+  });
+
+  await client.connect();
+  await client.query(`LISTEN ${CACHE_INVALIDATION_CHANNEL}`);
+}
+
 async function start(): Promise<void> {
   // Fail fast on a stale/partial generated client (LM-P2-1): never start a
   // service that would throw every poll cycle.
@@ -920,6 +1337,16 @@ async function start(): Promise<void> {
   await refreshDepartments();
   cursor = await loadCursor();
 
+  // Load CUSTOMER_DB org set at startup (Phase 6).
+  try {
+    customerDbOrgIds = await loadCustomerDbOrgs();
+    if (customerDbOrgIds.size > 0) {
+      console.log(`[live-updates] CUSTOMER_DB orgs loaded: ${customerDbOrgIds.size}`);
+    }
+  } catch (err) {
+    console.error('[live-updates] initial CUSTOMER_DB org load failed:', err);
+  }
+
   httpServer.listen(PORT, () => {
     console.log(`⚡ OmniSight Live Updates WebSocket service on port ${PORT}`);
     console.log(`   Auth: JWT handshake + session cookie | Org-scoped rooms | DB-driven events`);
@@ -933,7 +1360,16 @@ async function start(): Promise<void> {
     console.error('[live-updates] notify listener failed to start (5s poll remains):', err);
   }
 
+  // LISTEN for cross-process cache invalidation (when infra changes in Next.js)
+  try {
+    await startCacheInvalidationListener();
+    console.log(`[live-updates] cache invalidation listener started`);
+  } catch (err) {
+    console.error('[live-updates] cache invalidation listener failed (5-min refresh remains):', err);
+  }
+
   setInterval(refreshDepartments, 60_000);
+  setInterval(refreshCustomerDbOrgs, 300_000); // Refresh CUSTOMER_DB org set every 5 minutes
   setInterval(() => void runPollSafe(), POLL_INTERVAL_MS);
 }
 
@@ -944,6 +1380,12 @@ start().catch((err) => {
 
 function shutdown(): void {
   httpServer.close(() => {
+    // Disconnect all cached CUSTOMER_DB org clients
+    for (const [orgId, entry] of orgDbCache) {
+      try { entry.client.$disconnect(); } catch { /* ignore */ }
+    }
+    orgDbCache.clear();
+
     const closeNotify = notifyClient ? notifyClient.end().catch(() => {}) : Promise.resolve();
     void closeNotify.then(() => {
       db.$disconnect();

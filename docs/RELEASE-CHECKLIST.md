@@ -6,15 +6,16 @@ at deploy time — never silently assumed done).
 
 ## Environment & secrets
 
-- [ ] `.env` configured for the target environment (see `.env.example`; never commit real secrets).
-- [ ] `JWT_SECRET`, `ENCRYPTION_KEY`, `DATABASE_URL` set to real (non-placeholder) values — verified by `GET /api/health/ready`.
-- [ ] Secrets rotated/confirmed since any historical commit scan.
+- [ ] `.env` configured for the target environment. Tracked `.env.example` / `.env.production.example` contain `CHANGE_ME_*` placeholders only — never real secrets (CI `secrets:scan` enforces this).
+- [ ] `JWT_SECRET`, `ENCRYPTION_KEY`, `DATABASE_URL` set to real (non-placeholder) values — verified by `GET /api/health/ready` (production startup rejects placeholders).
+- [ ] Rotate secrets that ever appeared in a public git history. `JWT_SECRET` rotation invalidates sessions (maintenance window); `ENCRYPTION_KEY` rotation is NOT seamless and needs a controlled re-encryption migration — see DEPLOYMENT docs.
+- [ ] Super Admin password is a strong, unique value (the old bundled `Rimon0000000`-style defaults are rejected on startup and in `bootstrap-super-admin`).
 - [ ] `STORAGE_DRIVER` matches the environment (`supabase` requires real `SUPABASE_URL` + `SUPABASE_SERVICE_ROLE_KEY`; placeholders fail closed).
 
 ## Database
 
 - [ ] Backup verified (operator responsibility — frequency/retention/PITR documented in DEPLOYMENT docs).
-- [ ] `prisma migrate deploy` applied against staging, then production.
+- [ ] `prisma migrate deploy` applied against staging, then production. For Docker deployments: `docker compose run --rm web-migrate` (the `web-migrate` one-shot service handles this automatically on `docker compose up`).
 - [ ] Post-migration smoke: `GET /api/health/database` → 200 `{ status: 'ok' }`.
 - [ ] No destructive migration in the release set (Phase 5 is additive-only).
 

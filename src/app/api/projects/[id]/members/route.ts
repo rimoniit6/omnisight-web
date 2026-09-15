@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { Prisma } from '@prisma/client';
 import { db } from '@/lib/db';
-import { authError, requireSessionOrg, requireAdminOrg } from '@/lib/api';
+import { authError, requireSessionOrg, requireAdminOrg, getPrismaForOrg } from '@/lib/api';
 import { log, requestContext } from '@/lib/logger';
 
 export async function GET(
@@ -14,14 +14,18 @@ export async function GET(
 
     const { id } = await params;
 
-    const project = await db.project.findFirst({
+    // ORG DATA BOUNDARY: Project/ProjectMember/TimeEntry are org-owned (copied
+    // to the org DB at cutover) — resolve through the org client.
+    const orgData = (await getPrismaForOrg(scope.organizationId as string)).client;
+
+    const project = await orgData.project.findFirst({
       where: { id, ...(scope.organizationId ? { organizationId: scope.organizationId } : {}) },
     });
     if (!project) {
       return NextResponse.json({ error: 'Project not found' }, { status: 404 });
     }
 
-    const members = await db.projectMember.findMany({
+    const members = await orgData.projectMember.findMany({
       where: { projectId: id, leftAt: null },
       include: {
         employee: {
@@ -40,7 +44,7 @@ export async function GET(
     // Compute total hours per member for this project
     const memberIds = members.map((m) => m.employeeId);
     const hoursByEmployee = memberIds.length > 0
-      ? await db.timeEntry.groupBy({
+      ? await orgData.timeEntry.groupBy({
           by: ['employeeId'],
           where: { projectId: id, employeeId: { in: memberIds } },
           _sum: { hours: true },
@@ -60,7 +64,7 @@ export async function GET(
     sunday.setHours(23, 59, 59, 999);
 
     const weekHoursByEmployee = memberIds.length > 0
-      ? await db.timeEntry.groupBy({
+      ? await orgData.timeEntry.groupBy({
           by: ['employeeId'],
           where: {
             projectId: id,
@@ -126,8 +130,12 @@ export async function POST(
       }
     }
 
+    // ORG DATA BOUNDARY (POST): Project/Employee/ProjectMember are org-owned —
+    // validate and create through the org client.
+    const orgData = (await getPrismaForOrg(admin.organizationId)).client;
+
     // Project must belong to the caller's org; cross-org ids -> 404.
-    const project = await db.project.findFirst({
+    const project = await orgData.project.findFirst({
       where: { id, organizationId: admin.organizationId },
     });
     if (!project) {
@@ -135,7 +143,7 @@ export async function POST(
     }
 
     // Cross-org validation: employee must belong to the SAME org as the project.
-    const employee = await db.employee.findFirst({
+    const employee = await orgData.employee.findFirst({
       where: { id: employeeId, organizationId: admin.organizationId },
     });
     if (!employee) {
@@ -154,7 +162,7 @@ export async function POST(
     // `create` and blow up on the unique constraint; a lost race surfaces as a
     // clean 409 instead.
     try {
-      const member = await db.$transaction(async (tx) => {
+      const member = await orgData.$transaction(async (tx) => {
         const existing = await tx.projectMember.findUnique({
           where: { projectId_employeeId: { projectId: id, employeeId } },
         });

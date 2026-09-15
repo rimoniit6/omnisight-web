@@ -49,8 +49,10 @@ git push origin v0.2.1
 
 - **VPS:** `git pull && npx prisma migrate deploy && npm run build
   && sudo systemctl restart omnisight omnisight-live`.
-- **Docker:** `docker compose up -d --build` (the entrypoint applies migrations,
-  then starts the server — no plan or seed data is created on boot).
+- **Docker:** `docker compose up -d --build` (the `web-migrate` one-shot
+  service applies migrations, then the web server starts — no plan or seed
+  data is created on boot). To run migrations manually after a code update:
+  `docker compose run --rm web-migrate`.
 - **Vercel + Supabase:** push to the connected GitHub branch; migrations run via
   the configured deploy hook.
 

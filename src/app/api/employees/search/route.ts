@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
-import { apiError, apiSuccess, requireSessionOrg, authError } from '@/lib/api';
+import { apiError, apiSuccess, requireSessionOrg, authError, getPrismaForOrg } from '@/lib/api';
 import { Prisma } from '@prisma/client';
 import { log, requestContext } from '@/lib/logger';
 
@@ -113,9 +113,13 @@ export async function GET(req: NextRequest) {
     : [{ createdAt: 'desc' }];
 
   try {
+    // ORG DATA BOUNDARY: Employee is org-owned (copied to the org DB at
+    // cutover) — the search resolves through the org client.
+    const orgData = (await getPrismaForOrg(scope.organizationId as string)).client;
+
     const [data, total] = await Promise.all([
-      db.employee.findMany({ where, select, orderBy, skip: offset, take: limit }),
-      db.employee.count({ where }),
+      orgData.employee.findMany({ where, select, orderBy, skip: offset, take: limit }),
+      orgData.employee.count({ where }),
     ]);
 
     return apiSuccess({

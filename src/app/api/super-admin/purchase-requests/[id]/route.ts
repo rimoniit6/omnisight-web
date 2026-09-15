@@ -2,6 +2,7 @@ import { NextRequest } from 'next/server';
 import { db } from '@/lib/db';
 import { requireSuperAdmin, requireDbVerifiedRole, apiError, apiSuccess, authError, parseJsonBody, BodyParseError } from '@/lib/api';
 import { activatePendingSubscription } from '@/lib/subscription-activation';
+import { isCustomerDbReady } from '@/lib/org-db';
 import { Prisma } from '@prisma/client';
 import { log, requestContext } from '@/lib/logger';
 
@@ -203,10 +204,31 @@ export async function PATCH(
   // ── activate ────────────────────────────────────────────────────────────
   // Creates/reuses the organization, provisions the PENDING subscription
   // carrying the snapshot terms, and activates via the EXISTING lifecycle.
+  //
+  // CUSTOMER_DB GATING (Phase 2): a CUSTOMER_DB purchase cannot activate
+  // until its customer database infrastructure is configured and validated.
+  // The activation creates the org + PENDING subscription but does NOT activate
+  // the subscription — the admin completes activation via the normal lifecycle
+  // once infrastructure is ready. This prevents the split-brain where an org
+  // is "active" on CUSTOMER_DB but still reading/writing the platform DB.
   if (action === 'activate') {
     const plan = await db.plan.findUnique({ where: { id: request.planId }, select: { id: true, name: true, isActive: true } });
     if (!plan) return apiError('The requested plan no longer exists', 410);
     if (!plan.isActive) return apiError('The requested plan has been deactivated', 410);
+
+    // CUSTOMER_DB readiness gate: check if an existing org already has
+    // infrastructure configured, or defer activation for new orgs.
+    const isCustomerDb = request.deploymentMode === 'CUSTOMER_DB';
+    const existingOrg = await db.organization.findFirst({ where: { email: request.contactEmail } });
+    if (isCustomerDb && existingOrg) {
+      const readiness = await isCustomerDbReady(existingOrg.id);
+      if (!readiness.ready) {
+        return apiError(
+          `CUSTOMER_DB activation blocked: ${readiness.reason}. Complete infrastructure setup (Settings → Data Infrastructure) before activating.`,
+          409,
+        );
+      }
+    }
 
     const claimedId = await db.$transaction(async (tx) => {
       // 0) Single-flight claim — atomic CAS on the request status so two
@@ -301,8 +323,41 @@ export async function PATCH(
     }
     const subscriptionId: string = claimedId;
 
-    // 4) Activate through the EXISTING lifecycle helper (PENDING → ACTIVE,
-    //    org pointer, audit) — same code path as direct subscription activation.
+    // 4) CUSTOMER_DB DEFERRAL: a CUSTOMER_DB org's subscription must not be
+    //    activated until its customer database infrastructure is configured and
+    //    validated. The org + PENDING subscription + PAID invoice are created,
+    //    but activation is deferred to the Subscriptions lifecycle (PATCH
+    //    /api/super-admin/subscriptions/[id] action 'activate'). The purchase
+    //    request is marked ACTIVATED with a deferral note — this is a safe,
+    //    recoverable state, not a failure.
+    if (isCustomerDb) {
+      const updated = await db.$transaction(async (tx) => {
+        const u = await tx.purchaseRequest.update({
+          where: { id },
+          data: {
+            status: 'ACTIVATED',
+            activatedSubscriptionId: subscriptionId,
+            activatedAt: new Date(),
+            statusHistory: withHistory(request.statusHistory, {
+              status: 'ACTIVATED',
+              at: new Date().toISOString(),
+              by: admin.email,
+              note: `CUSTOMER_DB: subscription created but activation deferred until customer database infrastructure is configured and validated`,
+            }),
+          },
+        });
+        await tx.auditLog.create({
+          data: { action: 'update', resource: 'purchase_request', resourceId: id, description: `Super admin (${admin.email}) activated purchase request ${request.requestNumber} → subscription ${subscriptionId} (CUSTOMER_DB — activation deferred until infrastructure setup)`, userId: admin.userId, organizationId: null },
+        });
+        return u;
+      });
+      log.info('api.super-admin.purchase-requests.activate-deferred-cdb', { requestId: id, subscriptionId }, requestContext(req));
+      return apiSuccess({ ...updated, subscriptionId, deferred: true, reason: 'CUSTOMER_DB: activation deferred until customer database infrastructure is configured. Complete setup in Settings → Data Infrastructure, then activate from Subscriptions.' });
+    }
+
+    // 5) MANAGED path: activate through the EXISTING lifecycle helper
+    //    (PENDING → ACTIVE, org pointer, audit) — same code path as direct
+    //    subscription activation.
     const activation = await activatePendingSubscription(subscriptionId, { userId: admin.userId, email: admin.email }, `Purchase request ${request.requestNumber}`);
     if (!activation.ok) {
       // Activation failed AFTER the atomic claim — the request's subscription

@@ -1,7 +1,7 @@
 'use server';
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
-import { authError, requireSessionOrg } from '@/lib/api';
+import { authError, requireSessionOrg, getPrismaForOrg } from '@/lib/api';
 import { hasActiveConsent } from '@/lib/consent';
 import { resolveOrgMonitoring } from '@/lib/jobs/settings';
 import { log, requestContext } from '@/lib/logger';
@@ -20,7 +20,12 @@ export async function GET(
     const scope = await requireSessionOrg(request, { allowGlobal: true });
     if (!scope.ok) return authError(scope);
 
-    const employee = await db.employee.findFirst({
+    // ORG DATA BOUNDARY: Employee/Consent are org-owned (copied to the org DB
+    // at cutover) — resolve through the org client so the consent check reads
+    // the same database the Agent enforcement path reads.
+    const orgData = (await getPrismaForOrg(scope.organizationId as string)).client;
+
+    const employee = await orgData.employee.findFirst({
       where: { id, ...(scope.organizationId ? { organizationId: scope.organizationId } : {}) },
       select: { id: true, organizationId: true },
     });
@@ -29,7 +34,7 @@ export async function GET(
     }
 
     const [consentGranted, monitoring] = await Promise.all([
-      hasActiveConsent(employee.id, 'location'),
+      hasActiveConsent(employee.id, 'location', orgData),
       resolveOrgMonitoring(employee.organizationId),
     ]);
 

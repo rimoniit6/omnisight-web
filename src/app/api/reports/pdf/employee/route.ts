@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { generateEmployeeReport } from '@/lib/pdf-generator';
 import { format, startOfMonth, endOfMonth } from 'date-fns';
-import { authError, requireManagerOrg, isValidDate, parseJsonBody, BodyParseError } from '@/lib/api';
+import { authError, requireManagerOrg, isValidDate, parseJsonBody, BodyParseError, getPrismaForOrg } from '@/lib/api';
 import { NON_INTERNAL_AGENT_ACTIVITY_FILTER, excludeInternalAgentActivities } from '@/lib/agent-process';
 import { log, requestContext } from '@/lib/logger';
 import { getEffectiveBranding } from '@/lib/branding';
@@ -31,10 +31,14 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // ORG DATA BOUNDARY: Employee/Activity are org-owned (copied to the org
+    // DB at cutover) — the PDF data resolves through the org client.
+    const orgData = (await getPrismaForOrg(scope.organizationId)).client;
+
     // Tenant isolation: the employee MUST belong to the caller's org. A
     // foreign employeeId returns 404 (existence concealed) — never a PDF of
     // another organization's employee.
-    const employee = await db.employee.findFirst({
+    const employee = await orgData.employee.findFirst({
       where: { id: employeeId, organizationId: scope.organizationId },
       include: { department: true, organization: true },
     });
@@ -60,7 +64,7 @@ export async function POST(request: NextRequest) {
     const [rawActivities, totalResult, productiveResult] = await Promise.all([
       // Fetch activities in date range — only select fields needed for the PDF
       // No need to include employee data — we already have the employee's name
-      db.activity.findMany({
+      orgData.activity.findMany({
         where: {
           employeeId,
           timestamp: { gte: startDate, lte: endDate },
@@ -79,13 +83,13 @@ export async function POST(request: NextRequest) {
         take: 200,
       }),
       // Aggregate total stats
-      db.activity.aggregate({
+      orgData.activity.aggregate({
         where: { employeeId, timestamp: { gte: startDate, lte: endDate }, ...NON_INTERNAL_AGENT_ACTIVITY_FILTER },
         _sum: { duration: true },
         _count: true,
       }),
       // Productive activities aggregate
-      db.activity.aggregate({
+      orgData.activity.aggregate({
         where: {
           employeeId,
           category: 'productive',

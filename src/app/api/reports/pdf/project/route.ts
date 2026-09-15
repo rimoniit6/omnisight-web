@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { generateProjectReport } from '@/lib/pdf-generator';
 import { format } from 'date-fns';
-import { authError, authenticateRequest, requireSessionOrg } from '@/lib/api';
+import { authError, authenticateRequest, requireSessionOrg, getPrismaForOrg } from '@/lib/api';
 import { hasRolePermission as hasRole } from '@/lib/auth';
 import { log, requestContext } from '@/lib/logger';
 import { getEffectiveBranding } from '@/lib/branding';
@@ -36,8 +36,12 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // ORG DATA BOUNDARY: Project/ProjectMember/TimeEntry are org-owned (copied
+    // to the org DB at cutover) — the PDF data resolves through the org client.
+    const orgData = (await getPrismaForOrg(scope.organizationId)).client;
+
     // Fetch project with department, scoped to the session org (cross-org 404).
-    const project = await db.project.findFirst({
+    const project = await orgData.project.findFirst({
       where: { id: projectId, organizationId: scope.organizationId },
       include: { department: true },
     });
@@ -52,13 +56,13 @@ export async function POST(request: NextRequest) {
     // Fetch members with employee data (same org boundary). Only the name is
     // rendered into the PDF — never load the full row (it carries
     // agentPassword).
-    const members = await db.projectMember.findMany({
+    const members = await orgData.projectMember.findMany({
       where: { projectId, organizationId: scope.organizationId },
       include: { employee: { select: { id: true, firstName: true, lastName: true } } },
     });
 
     // Fetch time entries for the project (same org boundary).
-    const timeEntries = await db.timeEntry.findMany({
+    const timeEntries = await orgData.timeEntry.findMany({
       where: { projectId, organizationId: scope.organizationId },
       include: { employee: { select: { id: true, firstName: true, lastName: true } } },
       orderBy: { date: 'desc' },

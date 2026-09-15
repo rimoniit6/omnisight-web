@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { Prisma } from '@prisma/client';
-import { authError, requireSessionOrg, requireAdminOrg, validatePagination } from '@/lib/api';
+import { authError, requireSessionOrg, requireAdminOrg, validatePagination, getPrismaForOrg } from '@/lib/api';
 import { log, requestContext } from '@/lib/logger';
 
 // Authoritative value sets (mirror of the Project model comments). The UI and
@@ -104,9 +104,14 @@ function validateProjectPayload(body: Record<string, unknown>): { ok: true; data
   };
 }
 
-/** Case-insensitive duplicate-name check (SQLite has no `mode: insensitive`). */
+/**
+ * Case-insensitive duplicate-name check (SQLite has no `mode: insensitive`).
+ * Runs on the ORG client — Project rows are org-owned (copied to the org DB
+ * at cutover), so duplicates must be checked against the destination DB.
+ */
 async function findDuplicateName(organizationId: string, name: string, excludeId?: string) {
-  const existing = await db.project.findMany({
+  const orgData = (await getPrismaForOrg(organizationId)).client;
+  const existing = await orgData.project.findMany({
     where: { organizationId, ...(excludeId ? { id: { not: excludeId } } : {}) },
     select: { id: true, name: true },
   });
@@ -185,17 +190,22 @@ async function findDuplicateName(organizationId: string, name: string, excludeId
     const memberOrgFilter = scope.organizationId ? { organizationId: scope.organizationId } : {};
     const timeOrgFilter = scope.organizationId ? { organizationId: scope.organizationId } : {};
 
+    // ORG DATA BOUNDARY: Project/ProjectMember/TimeEntry are org-owned (copied
+    // to the org DB at cutover) — the whole listing resolves through the org
+    // client.
+    const orgData = (await getPrismaForOrg(scope.organizationId)).client;
+
     // Server-side sorting: fetch the (filtered) id+sort-key set, compute
     // hours, sort in JS, then slice the page. This keeps pagination correct
     // for hour-based sorts that SQL can't express directly.
-    const allMatching = await db.project.findMany({
+    const allMatching = await orgData.project.findMany({
       where,
       select: { id: true, name: true, createdAt: true, deadline: true },
       orderBy: { createdAt: 'desc' },
     });
 
     const hoursByProject = allMatching.length > 0
-      ? await db.timeEntry.groupBy({
+      ? await orgData.timeEntry.groupBy({
           by: ['projectId'],
           where: { projectId: { in: allMatching.map((p) => p.id) }, ...timeOrgFilter },
           _sum: { hours: true },
@@ -233,7 +243,7 @@ async function findDuplicateName(organizationId: string, name: string, excludeId
     const [projects, statusCounts, priorityCounts, totalMembers, uniqueMembers, totalHours, overdueCount, dailyAverageHours] =
       await Promise.all([
         pageIds.length > 0
-          ? db.project.findMany({
+          ? orgData.project.findMany({
               where: { id: { in: pageIds } },
               include: {
                 department: { select: { id: true, name: true } },
@@ -249,17 +259,17 @@ async function findDuplicateName(organizationId: string, name: string, excludeId
               },
             })
           : Promise.resolve([]),
-        db.project.groupBy({ by: ['status'], where: orgFilter, _count: { id: true } }),
-        db.project.groupBy({ by: ['priority'], where: orgFilter, _count: { id: true } }),
-        db.projectMember.count({ where: { leftAt: null, ...memberOrgFilter } }),
-        db.projectMember.groupBy({
+        orgData.project.groupBy({ by: ['status'], where: orgFilter, _count: { id: true } }),
+        orgData.project.groupBy({ by: ['priority'], where: orgFilter, _count: { id: true } }),
+        orgData.projectMember.count({ where: { leftAt: null, ...memberOrgFilter } }),
+        orgData.projectMember.groupBy({
           by: ['employeeId'],
           where: { leftAt: null, ...memberOrgFilter },
           _count: { employeeId: true },
         }),
-        db.timeEntry.aggregate({ where: timeOrgFilter, _sum: { hours: true } }),
-        db.project.count({ where: { status: 'active', deadline: { lt: new Date() }, ...orgFilter } }),
-        db.project.aggregate({ where: orgFilter, _min: { createdAt: true } }),
+        orgData.timeEntry.aggregate({ where: timeOrgFilter, _sum: { hours: true } }),
+        orgData.project.count({ where: { status: 'active', deadline: { lt: new Date() }, ...orgFilter } }),
+        orgData.project.aggregate({ where: orgFilter, _min: { createdAt: true } }),
       ]);
 
     // Reorder the page to the server-side sorted id order.
@@ -360,9 +370,13 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    // ORG DATA BOUNDARY (POST): Project/Department/AuditLog are org-owned —
+    // validate and create through the org client.
+    const orgData = (await getPrismaForOrg(admin.organizationId)).client;
+
     // Cross-org validation: departmentId must belong to the caller's org.
     if (departmentId) {
-      const dept = await db.department.findFirst({
+      const dept = await orgData.department.findFirst({
         where: { id: departmentId, organizationId: admin.organizationId },
         select: { id: true },
       });
@@ -371,7 +385,7 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    const project = await db.$transaction(async (tx) => {
+    const project = await orgData.$transaction(async (tx) => {
       const created = await tx.project.create({
         data: {
           name: trimmedName,

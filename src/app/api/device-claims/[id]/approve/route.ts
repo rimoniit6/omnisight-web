@@ -1,7 +1,7 @@
 'use server';
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
-import { authError, requireAdminOrg, SAFE_EMPLOYEE_SELECT } from '@/lib/api';
+import { authError, requireAdminOrg, SAFE_EMPLOYEE_SELECT, getPrismaForOrg } from '@/lib/api';
 import { checkDeviceEntitlement } from '@/lib/device-entitlement';
 import { checkRateLimit, RATE_LIMITS, getClientIpFromHeaders } from '@/lib/rate-limit';
 import { createOrgNotification } from '@/lib/notifications/service';
@@ -60,9 +60,16 @@ export async function POST(
       );
     }
 
+    // ORG DATA BOUNDARY: DeviceClaim/Device/Employee/Project/ProjectMember/
+    // AuditLog/Notification are org-owned (copied to the org DB at cutover)
+    // and the agent-side discover/cancel paths already write there — the whole
+    // approval resolves through the org client. Organization (control-plane
+    // entitlement counter) stays on the platform client.
+    const orgData = (await getPrismaForOrg(admin.organizationId)).client;
+
     // Claim must be pending and inside the admin's organization (cross-org ids
     // are indistinguishable from missing ones → 404).
-    const claim = await db.deviceClaim.findFirst({
+    const claim = await orgData.deviceClaim.findFirst({
       where: { id, organizationId: admin.organizationId },
       include: { device: true },
     });
@@ -83,7 +90,7 @@ export async function POST(
     }
 
     // Employee must exist in the SAME organization.
-    const employee = await db.employee.findFirst({
+    const employee = await orgData.employee.findFirst({
       where: { id: employeeId as string, organizationId: admin.organizationId },
       include: { department: true },
     });
@@ -96,7 +103,7 @@ export async function POST(
 
     // Validate every project belongs to the org and is assignable.
     const validProjects = projects.length
-      ? await db.project.findMany({
+      ? await orgData.project.findMany({
           where: {
             id: { in: projects },
             organizationId: admin.organizationId,
@@ -117,15 +124,17 @@ export async function POST(
       );
     }
 
-    const result = await db.$transaction(async (tx) => {
+    const result = await orgData.$transaction(async (tx) => {
       // Serialize concurrent approvals for the SAME employee by taking a row
       // lock on the Employee row (SELECT ... FOR UPDATE).
       await tx.$queryRaw`SELECT id FROM "Employee" WHERE id = ${employee.id} FOR UPDATE`;
 
       // Re-check the entitlement inside the transaction so two concurrent
       // approvals cannot both squeeze through the pre-transaction check when
-      // only ONE slot remains (last-slot race guard).
-      const org = await tx.organization.findUnique({
+      // only ONE slot remains (last-slot race guard). The Organization row is
+      // control-plane — read it on the platform client inside the same logical
+      // step (the counter update below likewise stays on `db`).
+      const org = await db.organization.findUnique({
         where: { id: admin.organizationId },
         select: { activeDeviceCount: true },
       });
@@ -182,9 +191,11 @@ export async function POST(
 
       // Adjust activeDeviceCount: decrement for deactivated online devices,
       // increment for the newly approved device (net change may be zero).
+      // Control-plane counter — deliberately updated on the platform client
+      // (Organization is NOT migrated to the org DB).
       const netDelta = 1 - deactivatedOnline.length;
       if (netDelta !== 0) {
-        await tx.organization.updateMany({
+        await db.organization.updateMany({
           where: { id: admin.organizationId },
           data: { activeDeviceCount: netDelta > 0 ? { increment: netDelta } : { decrement: -netDelta } },
         });

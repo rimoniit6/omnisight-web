@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
-import { authError, requireManagerOrg, parseJsonBody, BodyParseError } from '@/lib/api';
+import { authError, requireManagerOrg, parseJsonBody, BodyParseError, getPrismaForOrg } from '@/lib/api';
 import { log, requestContext } from '@/lib/logger';
 import { safeTimezone, localDayKey, dayKeysBetween } from '@/lib/timezone';
 import { rebuildDaysForOrg } from '@/lib/jobs/workday-summary';
@@ -82,7 +82,10 @@ export async function POST(req: NextRequest) {
       if (typeof employeeId !== 'string' || employeeId.length === 0) {
         return NextResponse.json({ error: 'employeeId must be a non-empty string' }, { status: 422 });
       }
-      const employee = await db.employee.findFirst({
+      // ORG DATA BOUNDARY: Employee is org-owned — validate against the org
+      // client (rebuildDaysForOrg already reads/writes the org DB).
+      const orgData = (await getPrismaForOrg(orgId)).client;
+      const employee = await orgData.employee.findFirst({
         where: { id: employeeId, organizationId: orgId },
         select: { id: true },
       });

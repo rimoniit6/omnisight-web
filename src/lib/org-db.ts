@@ -23,6 +23,7 @@
 import { PrismaClient } from '@prisma/client';
 import { db } from '@/lib/db';
 import { decryptSecret } from '@/lib/crypto';
+import { startCacheInvalidationListener } from '@/lib/cache-invalidation';
 
 // Result of resolving which client a request should use.
 export type OrgDbClient =
@@ -43,10 +44,26 @@ export class OrgDbMisconfigurationError extends Error {
 }
 
 // Cache of dedicated analytics clients keyed by organizationId.
-const orgDbClients = new Map<string, PrismaClient>();
+// Each entry tracks the generation at creation time for stale detection.
+const orgDbClients = new Map<string, { client: PrismaClient; generation: number }>();
 
 // Bounded cache: evict stale clients periodically / when too large.
 const MAX_CACHED_CLIENTS = 100;
+
+// Global generation counter — incremented on cache invalidation events.
+let cacheGeneration = 0;
+
+// Start listening for cross-process cache invalidation events.
+startCacheInvalidationListener((msg) => {
+  cacheGeneration++;
+  if (msg.cache === 'db' || msg.cache === 'all') {
+    const entry = orgDbClients.get(msg.orgId);
+    if (entry) {
+      try { entry.client.$disconnect(); } catch { /* ignore */ }
+      orgDbClients.delete(msg.orgId);
+    }
+  }
+});
 
 function pruneCache() {
   if (orgDbClients.size > MAX_CACHED_CLIENTS) {
@@ -55,10 +72,10 @@ function pruneCache() {
     const keys = [...orgDbClients.keys()];
     for (let i = 0; i < excess; i++) {
       const k = keys[i];
-      const client = orgDbClients.get(k);
+      const entry = orgDbClients.get(k);
       // Best-effort disconnect; ignore errors.
       try {
-        client?.$disconnect();
+        entry?.client.$disconnect();
       } catch {
         /* ignore */
       }
@@ -72,10 +89,10 @@ function pruneCache() {
  * org updates its database settings so the next getPrismaForOrg recreates it).
  */
 export async function invalidateOrgDbCache(orgId: string): Promise<void> {
-  const client = orgDbClients.get(orgId);
-  if (client) {
+  const entry = orgDbClients.get(orgId);
+  if (entry) {
     try {
-      await client.$disconnect();
+      await entry.client.$disconnect();
     } catch {
       /* ignore */
     }
@@ -133,7 +150,14 @@ export async function getPrismaForOrg(
 
   const cached = orgDbClients.get(orgId);
   if (cached) {
-    return { mode: 'own', client: cached, orgId };
+    // Validate the cached entry is not stale (generation mismatch = another
+    // process invalidated this org's cache while we were using it).
+    if (cached.generation === cacheGeneration) {
+      return { mode: 'own', client: cached.client, orgId };
+    }
+    // Stale entry — disconnect and recreate.
+    try { cached.client.$disconnect(); } catch { /* ignore */ }
+    orgDbClients.delete(orgId);
   }
 
   const host = settings.dbHost;
@@ -150,10 +174,53 @@ export async function getPrismaForOrg(
     log: process.env.NODE_ENV === 'development' ? ['warn', 'error'] : ['error'],
   });
 
-  orgDbClients.set(orgId, client);
+  orgDbClients.set(orgId, { client, generation: cacheGeneration });
   pruneCache();
 
   return { mode: 'own', client, orgId };
+}
+
+/**
+ * Check whether a CUSTOMER_DB organization is actually ready to run on its own
+ * database. Returns { ready: true } when ALL of the following hold:
+ *   1. OrganizationSettings.useOwnDb = true
+ *   2. Database config is complete (host, name, user all present)
+ *   3. dbTestStatus = 'success' (connection test passed)
+ *
+ * Returns { ready: false, reason } otherwise. This is the authoritative gate
+ * for purchase activation and subscription activation of CUSTOMER_DB orgs.
+ *
+ * SECURITY: fails closed — a misconfigured org is never considered ready.
+ */
+export async function isCustomerDbReady(
+  orgId: string,
+): Promise<{ ready: true } | { ready: false; reason: string }> {
+  const settings = await db.organizationSettings.findUnique({
+    where: { organizationId: orgId },
+    select: {
+      useOwnDb: true,
+      dbHost: true,
+      dbPort: true,
+      dbName: true,
+      dbUser: true,
+      dbTestStatus: true,
+    },
+  });
+
+  if (!settings) {
+    return { ready: false, reason: 'Organization settings not found — infrastructure not configured' };
+  }
+  if (!settings.useOwnDb) {
+    return { ready: false, reason: 'Customer database not enabled (useOwnDb=false) — infrastructure setup required' };
+  }
+  if (!settings.dbHost || !settings.dbName || !settings.dbUser) {
+    return { ready: false, reason: 'Database configuration incomplete (host, name, or user missing)' };
+  }
+  if (settings.dbTestStatus !== 'success') {
+    return { ready: false, reason: `Database connection test not passing (status: ${settings.dbTestStatus ?? 'not-run'})` };
+  }
+
+  return { ready: true };
 }
 
 /**

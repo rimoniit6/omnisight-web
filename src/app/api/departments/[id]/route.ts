@@ -17,7 +17,10 @@ export async function GET(
     const { id } = await params;
     // Phase 2 privacy: org-less sessions have no tenant context — conceal as not found.
     if (!scope.organizationId) return NextResponse.json({ error: 'Department not found' }, { status: 404 });
-    const dept = await db.department.findFirst({
+    // ORG DATA BOUNDARY: Department is org-owned (copied to the org DB at
+    // cutover) — the detail view resolves through the org client.
+    const orgData = (await getPrismaForOrg(scope.organizationId)).client;
+    const dept = await orgData.department.findFirst({
       where: { id, organizationId: scope.organizationId },
       include: {
         employees: { where: { status: 'active' }, select: { id: true, firstName: true, lastName: true, email: true } },

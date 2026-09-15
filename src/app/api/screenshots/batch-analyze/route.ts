@@ -44,8 +44,10 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Maximum 10 screenshots per batch' }, { status: 400 });
     }
 
-    // Fetch all screenshots with employee info (scoped to caller's org)
-    const screenshots = await db.screenshot.findMany({
+    // Fetch all screenshots with employee info (scoped to caller's org).
+    // ORG DATA BOUNDARY: Screenshot is org-owned (copied to the org DB at
+    // cutover) — read through the org client (updates below already use it).
+    const screenshots = await orgData.screenshot.findMany({
       where: { id: { in: screenshotIds }, organizationId: orgId },
       include: {
         employee: { select: { firstName: true, lastName: true, designation: true } },

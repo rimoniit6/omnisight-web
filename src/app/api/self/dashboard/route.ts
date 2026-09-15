@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
+import { getPrismaForOrg } from '@/lib/api';
 import { getScopedEmployee } from '@/lib/self-guard';
 import { excludeInternalAgentActivities } from '@/lib/agent-process';
 import { effectiveDeviceStatus } from '@/lib/device-status';
@@ -27,8 +27,14 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: scopeError || 'Employee not found' }, { status: 404 });
     }
 
+    // ORG DATA BOUNDARY: Employee/Activity/Device/Consent/Anomaly are
+    // org-owned (copied to the org DB at cutover) — the whole read resolves
+    // through the org client so the self portal never shows stale platform
+    // copies after a CUSTOMER_DB activation.
+    const orgData = (await getPrismaForOrg(scoped.organizationId)).client;
+
     // Fetch employee with department
-    const employee = await db.employee.findUnique({
+    const employee = await orgData.employee.findUnique({
       where: { id: scoped.id },
       select: {
         id: true,
@@ -73,7 +79,7 @@ export async function GET(req: NextRequest) {
     // Load the FULL 14-day window (prev week + this week) in ONE round trip;
     // today, this week and the previous week are all derived from the same
     // rows — three queries became one.
-    const windowActivities = excludeInternalAgentActivities(await db.activity.findMany({
+    const windowActivities = excludeInternalAgentActivities(await orgData.activity.findMany({
       where: {
         employeeId: employee.id,
         timestamp: { gte: prevWeekStart, lte: todayEnd },
@@ -128,7 +134,7 @@ export async function GET(req: NextRequest) {
       : 0;
 
     // --- Device count, online status and names ---
-    const devices = await db.device.findMany({
+    const devices = await orgData.device.findMany({
       where: { employeeId: employee.id },
       select: { id: true, name: true, status: true, lastHeartbeat: true },
     });
@@ -150,7 +156,7 @@ export async function GET(req: NextRequest) {
       'email_monitoring',
     ];
 
-    const consents = await db.consent.findMany({
+    const consents = await orgData.consent.findMany({
       where: { employeeId: employee.id },
       select: { consentType: true, status: true },
     });
@@ -170,7 +176,7 @@ export async function GET(req: NextRequest) {
     sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
     sevenDaysAgo.setHours(0, 0, 0, 0);
 
-    const recentAnomalyCount = await db.anomaly.count({
+    const recentAnomalyCount = await orgData.anomaly.count({
       where: {
         employeeId: employee.id,
         createdAt: { gte: sevenDaysAgo },

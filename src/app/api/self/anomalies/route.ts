@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
 import { getScopedEmployee } from '@/lib/self-guard';
-import { validatePagination } from '@/lib/api';
+import { validatePagination, getPrismaForOrg } from '@/lib/api';
 import { log, requestContext } from '@/lib/logger';
 
 // GET /api/self/anomalies?employeeId=xxx&status=&severity=
@@ -35,9 +34,12 @@ export async function GET(req: NextRequest) {
     if (status) where.status = status;
     if (severity) where.severity = severity;
 
+    // ORG DATA BOUNDARY: Anomaly is org-owned — resolve the org client.
+    const orgData = (await getPrismaForOrg(scoped.organizationId)).client;
+
     // Fetch paginated anomalies with basic employee info
     const [anomalies, total] = await Promise.all([
-      db.anomaly.findMany({
+      orgData.anomaly.findMany({
         where,
         include: {
           employee: {
@@ -56,7 +58,7 @@ export async function GET(req: NextRequest) {
         skip,
         take: pageSize,
       }),
-      db.anomaly.count({ where }),
+      orgData.anomaly.count({ where }),
     ]);
 
     const totalPages = Math.ceil(total / pageSize);

@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
 import { getScopedEmployee } from '@/lib/self-guard';
-import { validatePagination } from '@/lib/api';
+import { validatePagination, getPrismaForOrg } from '@/lib/api';
 import { NON_INTERNAL_AGENT_ACTIVITY_FILTER } from '@/lib/agent-process';
 import { log, requestContext } from '@/lib/logger';
 
@@ -52,9 +51,13 @@ export async function GET(req: NextRequest) {
       where.timestamp = ts;
     }
 
+    // ORG DATA BOUNDARY: Activity/Device are org-owned — resolve the org
+    // client so the self portal reads the authoritative post-cutover data.
+    const orgData = (await getPrismaForOrg(scoped.organizationId)).client;
+
     // Fetch paginated activities with device info
     const [activities, total] = await Promise.all([
-      db.activity.findMany({
+      orgData.activity.findMany({
         where,
         include: {
           device: { select: { id: true, name: true, hostname: true } },
@@ -63,7 +66,7 @@ export async function GET(req: NextRequest) {
         skip,
         take: pageSize,
       }),
-      db.activity.count({ where }),
+      orgData.activity.count({ where }),
     ]);
 
     // Aggregate stats: total duration and by-category breakdown
@@ -76,7 +79,7 @@ export async function GET(req: NextRequest) {
       aggregateWhere.timestamp = ts;
     }
 
-    const aggregateActivities = await db.activity.findMany({
+    const aggregateActivities = await orgData.activity.findMany({
       where: aggregateWhere,
       select: { duration: true, category: true },
     });

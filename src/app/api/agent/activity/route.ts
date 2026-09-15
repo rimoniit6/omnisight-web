@@ -382,7 +382,11 @@ export async function POST(req: NextRequest) {
         (error as { code?: string }).code === 'P2002' &&
         JSON.stringify((error as { meta?: { target?: unknown } }).meta?.target ?? '').includes('batchId');
       if (!isReceiptConflict) throw error;
-      const existing = await db.activityBatchReceipt.findUnique({
+      // ORG DATA BOUNDARY: ActivityBatchReceipt is org-owned — the replay
+      // lookup MUST hit the same client that created the receipt (orgData),
+      // never the platform DB, or a post-cutover duplicate batch would 500
+      // instead of returning the dedupe summary.
+      const existing = await orgData.activityBatchReceipt.findUnique({
         where: {
           organizationId_employeeId_batchId: {
             organizationId,

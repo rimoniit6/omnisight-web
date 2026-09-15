@@ -36,7 +36,11 @@ export async function POST(
     const orgId = scope.organizationId;
 
     const { id } = await params;
-    const screenshot = await db.screenshot.findFirst({
+    // ORG DATA BOUNDARY: Screenshot is org-owned (copied to the org DB at
+    // cutover) — read through the org client (the analysis update at the end
+    // of this handler already does).
+    const orgData = (await getPrismaForOrg(orgId)).client;
+    const screenshot = await orgData.screenshot.findFirst({
       where: { id, organizationId: orgId },
       include: {
         employee: { select: { firstName: true, lastName: true, designation: true } },
@@ -133,7 +137,6 @@ Respond in valid JSON:
     const flagged = category === 'Unproductive';
     const flagReason = flagged ? `Non-work activity detected: ${appName}` : null;
 
-    const orgData = (await getPrismaForOrg(orgId)).client;
     const updated = await orgData.screenshot.update({
       where: { id },
       data: {

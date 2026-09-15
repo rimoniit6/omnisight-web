@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import sharp from 'sharp';
 import { db } from '@/lib/db';
+import { getPrismaForOrg } from '@/lib/api';
 import { getRequestToken, hasRolePermission } from '@/lib/auth';
 import { verifySessionToken } from '@/lib/session';
 import { getClientIpFromHeaders, UNKNOWN_CLIENT_IP } from '@/lib/client-ip';
@@ -51,7 +52,10 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ success: false, error: 'Admin access required' }, { status: 403 });
       }
       if (payload.organizationId) {
-        const employee = await db.employee.findUnique({
+        // ORG DATA BOUNDARY: Employee is org-owned (copied to the org DB at
+        // cutover) — the tenant gate reads the authoritative org client.
+        const orgData = (await getPrismaForOrg(payload.organizationId)).client;
+        const employee = await orgData.employee.findUnique({
           where: { id },
           select: { organizationId: true },
         });
@@ -102,40 +106,45 @@ export async function POST(request: NextRequest) {
     const avatarUrl = `/uploads/avatars/${avatarFilename}`;
 
     // ─── Update database + audit log ──────────────────────────────────────
-    await db.$transaction(async (tx) => {
-      if (type === 'employee') {
-        await tx.employee.update({
-          where: { id },
-          data: { avatar: avatarUrl },
-        });
-      } else {
-        await tx.appUser.update({
-          where: { id },
-          data: { avatar: avatarUrl },
-        });
-      }
+    // CLIENT SPLIT: Employee + AuditLog are org-owned (copied to the org DB
+    // at cutover) — they update on the org client; AppUser is identity
+    // control plane and stays platform-side. No transaction mixes clients.
+    if (type === 'employee') {
+      const orgData = payload.organizationId
+        ? (await getPrismaForOrg(payload.organizationId)).client
+        : db;
+      await orgData.employee.update({
+        where: { id },
+        data: { avatar: avatarUrl },
+      });
+    } else {
+      await db.appUser.update({
+        where: { id },
+        data: { avatar: avatarUrl },
+      });
+    }
 
-      // ─── Audit log ─────────────────────────────────────────────────────
-      const orgId = payload.organizationId;
-      if (orgId) {
-        await tx.auditLog.create({
-          data: {
-            action: 'update',
-            resource: type,
-            resourceId: id,
-            description: `Avatar updated for ${type} ${id}`,
-            userId: payload.userId,
-            // Canonical spoof-resistant client IP (same resolver as rate
-            // limiting / other audit logs) — never the raw left-most XFF entry.
-            ipAddress: (() => {
-              const ip = getClientIpFromHeaders(request.headers);
-              return ip === UNKNOWN_CLIENT_IP ? null : ip;
-            })(),
-            organizationId: orgId,
-          },
-        });
-      }
-    });
+    // ─── Audit log ─────────────────────────────────────────────────────
+    const orgId = payload.organizationId;
+    if (orgId) {
+      const orgData = (await getPrismaForOrg(orgId)).client;
+      await orgData.auditLog.create({
+        data: {
+          action: 'update',
+          resource: type,
+          resourceId: id,
+          description: `Avatar updated for ${type} ${id}`,
+          userId: payload.userId,
+          // Canonical spoof-resistant client IP (same resolver as rate
+          // limiting / other audit logs) — never the raw left-most XFF entry.
+          ipAddress: (() => {
+            const ip = getClientIpFromHeaders(request.headers);
+            return ip === UNKNOWN_CLIENT_IP ? null : ip;
+          })(),
+          organizationId: orgId,
+        },
+      });
+    }
 
     // ─── Response ────────────────────────────────────────────────────────
     return NextResponse.json({ success: true, avatar: avatarUrl });

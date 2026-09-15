@@ -37,8 +37,8 @@ export function AppSidebar({ onNavigate }: AppSidebarProps) {
 
   // S-2: role-aware navigation — a viewer must never see admin-only items.
   // API RBAC remains the security boundary; this is UX filtering only.
-  // Platform rule: an org-less super_admin sees ONLY the Control Center;
-  // tenant operational groups appear once the SA has an organization context.
+  // Workspace rule: a super_admin sees ONLY the Control Center — with or
+  // without an organization context (AUTHORIZATION ≠ NAVIGATION).
   const role = displayUser?.role ?? null;
   const visibleGroups = visibleGroupsFor(role, Boolean(organization));
 

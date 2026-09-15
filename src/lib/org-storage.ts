@@ -18,11 +18,21 @@ import { db } from '@/lib/db';
 import { decryptSecret } from '@/lib/crypto';
 import { StorageDriver } from '@/lib/storage/types';
 import { SupabaseStorageDriver } from '@/lib/storage/supabase';
+import { startCacheInvalidationListener } from '@/lib/cache-invalidation';
 
 export type OrgStorageResolution = { mode: 'platform' } | { mode: 'org'; orgId: string; driver: StorageDriver };
 
-const orgStorageDrivers = new Map<string, SupabaseStorageDriver>();
+const orgStorageDrivers = new Map<string, { driver: SupabaseStorageDriver; generation: number }>();
 const MAX_CACHED = 100;
+let storageCacheGeneration = 0;
+
+// Listen for cross-process cache invalidation events.
+startCacheInvalidationListener((msg) => {
+  storageCacheGeneration++;
+  if (msg.cache === 'storage' || msg.cache === 'all') {
+    orgStorageDrivers.delete(msg.orgId);
+  }
+});
 
 function prune() {
   if (orgStorageDrivers.size > MAX_CACHED) {
@@ -93,10 +103,14 @@ export async function getOrgStorage(
   }
 
   const cached = orgStorageDrivers.get(orgId);
-  if (cached) return { mode: 'org', orgId, driver: cached };
+  if (cached && cached.generation === storageCacheGeneration) {
+    return { mode: 'org', orgId, driver: cached.driver };
+  }
+  // Stale or missing — evict if stale and recreate.
+  if (cached) orgStorageDrivers.delete(orgId);
 
   const driver = buildDriver(settings!.storageUrl!, settings!.storageKey!);
-  orgStorageDrivers.set(orgId, driver);
+  orgStorageDrivers.set(orgId, { driver, generation: storageCacheGeneration });
   prune();
 
   return { mode: 'org', orgId, driver };

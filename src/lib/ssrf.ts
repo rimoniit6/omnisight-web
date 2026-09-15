@@ -145,6 +145,63 @@ export async function isSafeTarget(url: string): Promise<boolean> {
   return !!addresses && addresses.length > 0;
 }
 
+/**
+ * Validate that a hostname (or IP literal) resolves exclusively to public
+ * addresses. Unlike isSafeTarget, this does NOT require an http(s) URL —
+ * it validates bare hostnames for TCP connections (e.g. PostgreSQL).
+ *
+ * Returns { ok: true } when safe, or { ok: false; reason: string } when the
+ * destination is private/reserved/unresolvable.
+ */
+export async function validateHostIsPublic(
+  hostname: string,
+): Promise<{ ok: true } | { ok: false; reason: string }> {
+  const bare = hostname.replace(/^\[|\]$/g, '').replace(/\.$/, '');
+  if (!bare) return { ok: false, reason: 'Empty hostname' };
+
+  if (isPrivateHostname(bare)) {
+    return { ok: false, reason: `Hostname "${bare}" resolves to a private/internal destination` };
+  }
+
+  // IPv6 literal
+  if (bare.includes(':')) {
+    return isPrivateIPv6(bare)
+      ? { ok: false, reason: `IPv6 address "${bare}" is private/reserved` }
+      : { ok: true };
+  }
+
+  // IPv4 literal or encoded variants — reject all non-canonical forms
+  if (
+    parseCanonicalIPv4(bare) ||
+    /^\d+$/.test(bare) || // pure decimal IP (e.g. 2130706433)
+    /^0[xX][0-9a-fA-F]+$/.test(bare) || // hex IP (e.g. 0x7f000001)
+    /^\d{1,3}(\.\d{1,3}){1,3}$/.test(bare) || // any dotted-quad (short, octal, etc.)
+    /^\d+\.\d+\.\d+\.\d+$/.test(bare) // broader dotted-quad catch (e.g. 0177.0.0.1)
+  ) {
+    if (!parseCanonicalIPv4(bare) || isPrivateIPv4(bare)) {
+      return { ok: false, reason: `IP address "${bare}" is private/reserved/non-canonical` };
+    }
+    return { ok: true };
+  }
+
+  // Hostname: resolve DNS and check every address
+  try {
+    const addresses = await lookup(bare, { all: true, verbatim: true });
+    if (addresses.length === 0) {
+      return { ok: false, reason: `Hostname "${bare}" did not resolve to any address` };
+    }
+    for (const addr of addresses) {
+      const isPrivate = addr.family === 4 ? isPrivateIPv4(addr.address) : isPrivateIPv6(addr.address);
+      if (isPrivate) {
+        return { ok: false, reason: `Hostname "${bare}" resolved to private address ${addr.address}` };
+      }
+    }
+    return { ok: true };
+  } catch {
+    return { ok: false, reason: `Hostname "${bare}" could not be resolved (DNS failure)` };
+  }
+}
+
 export interface SafeFetchResult {
   ok: boolean;
   status: number;

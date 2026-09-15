@@ -18,7 +18,15 @@ import type { Prisma } from '@prisma/client';
 import { encryptSecret, maskSecret } from '@/lib/crypto';
 import { invalidateOrgDbCache } from '@/lib/org-db';
 import { invalidateOrgStorageCache } from '@/lib/org-storage';
+import { validateHostIsPublic, safeFetch } from '@/lib/ssrf';
+import { broadcastCacheInvalidation } from '@/lib/cache-invalidation';
+import { ensureCacheInvalidationListener } from '@/lib/cache-listener';
 import type { DbSpec, StorageSpec } from '@/lib/infrastructure';
+
+// Start listening for cross-process cache invalidation events on first import.
+// This ensures any process that performs infrastructure changes also receives
+// invalidation events from other processes.
+ensureCacheInvalidationListener();
 
 export interface ProbeResult {
   ok: boolean;
@@ -144,6 +152,14 @@ function isTransientError(err: unknown): boolean {
 }
 
 export async function testDbConnection(spec: DbSpec, timeoutMs: number = DEFAULT_TIMEOUT_MS): Promise<ProbeResult> {
+  // ── SSRF gate: reject private/reserved destinations before any connection ──
+  if (spec.host) {
+    const hostCheck = await validateHostIsPublic(spec.host);
+    if (!hostCheck.ok) {
+      return { ok: false, code: PROBE_CODES.INVALID_CONFIG, message: `Database host rejected: ${hostCheck.reason}` };
+    }
+  }
+
   let lastError: unknown;
 
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
@@ -157,7 +173,7 @@ export async function testDbConnection(spec: DbSpec, timeoutMs: number = DEFAULT
       database: spec.name,
       user: spec.user,
       password: spec.password ?? '',
-      ssl: spec.ssl ? { rejectUnauthorized: false } : undefined,
+      ssl: spec.ssl ? { rejectUnauthorized: true } : undefined,
       connectionTimeoutMillis: timeoutMs,
       statement_timeout: timeoutMs,
     });
@@ -208,23 +224,28 @@ export async function testStorageConnection(
     return { ok: true, message: 'Platform-managed local storage — nothing to test', code: 'platform' };
   }
 
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
     const base = spec.url.replace(/\/+$/, '');
-    const res = await fetch(`${base}/storage/v1/bucket`, {
-      method: 'GET',
-      headers: {
-        apikey: spec.key ?? '',
-        Authorization: `Bearer ${spec.key ?? ''}`,
+    const res = await safeFetch(
+      `${base}/storage/v1/bucket`,
+      {
+        method: 'GET',
+        headers: {
+          apikey: spec.key ?? '',
+          Authorization: `Bearer ${spec.key ?? ''}`,
+        },
       },
-      signal: controller.signal,
-    });
+      timeoutMs,
+    );
+
+    if (!res) {
+      return { ok: false, code: 'unreachable', message: 'Supabase storage host rejected as unsafe or unreachable' };
+    }
 
     if (res.status === 200) {
       let buckets: string[] = [];
       try {
-        const data = (await res.json()) as Array<{ id: string }>;
+        const data = JSON.parse(res.text) as Array<{ id: string }>;
         buckets = (data || []).map((b) => b.id);
       } catch {
         /* non-JSON body */
@@ -243,8 +264,6 @@ export async function testStorageConnection(
     const e = err as { message?: string; name?: string };
     if (e.name === 'AbortError') return { ok: false, code: 'timeout', message: 'Supabase storage request timed out' };
     return { ok: false, code: 'unreachable', message: `Cannot reach the Supabase storage host (${(e.message || 'unknown error').slice(0, 120)})` };
-  } finally {
-    clearTimeout(timer);
   }
 }
 
@@ -310,15 +329,17 @@ export async function applyDatabaseSwitch(
     });
   }
   await invalidateOrgDbCache(orgId);
+  // Broadcast to other processes (Next.js instances, live-updates service)
+  await broadcastCacheInvalidation(orgId, 'db');
 }
 
 /**
  * ROLLBACK the org's analytics reads to the platform database after a FAILED
- * cutover. Unlike applyDatabaseSwitch({useOwnDb:false}) this KEEPS the org's
- * host/port/name/user/password configuration — the destination the org chose
- * is still valid, only the active switch is undone — so activation can be
- * retried through the normal flow without re-entering credentials. The failed
- * test-status is persisted so the UI surfaces why the org is back on platform.
+ * cutover. KEEPS the org's host/port/name/user/password configuration — the
+ * destination the org chose is still valid, only the active switch is undone —
+ * so activation can be retried through the normal flow without re-entering
+ * credentials. The failed test-status is persisted so the UI surfaces why the
+ * org is back on platform.
  */
 export async function revertDatabaseSwitch(client: Prisma.TransactionClient, orgId: string): Promise<void> {
   await client.organizationSettings.update({
@@ -330,6 +351,7 @@ export async function revertDatabaseSwitch(client: Prisma.TransactionClient, org
     },
   });
   await invalidateOrgDbCache(orgId);
+  await broadcastCacheInvalidation(orgId, 'db');
 }
 
 /**
@@ -377,6 +399,7 @@ export async function applyStorageSwitch(
           },
   });
   invalidateOrgStorageCache(orgId);
+  await broadcastCacheInvalidation(orgId, 'storage');
 }
 
 /**
@@ -396,6 +419,7 @@ export async function revertStorageSwitch(client: Prisma.TransactionClient, orgI
     },
   });
   invalidateOrgStorageCache(orgId);
+  await broadcastCacheInvalidation(orgId, 'storage');
 }
 
 /** Masked view of a secret for logs (never the plaintext). */

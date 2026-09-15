@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
 import { getPrismaForOrg, getSessionOrg, authenticateRequest } from '@/lib/api';
 import { hasRolePermission } from '@/lib/auth';
 import { CONSENT_TYPES, applyConsentTransition } from '@/lib/consent';

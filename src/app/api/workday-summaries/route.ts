@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import type { Prisma } from '@prisma/client';
 import { db } from '@/lib/db';
-import { authError, requireManagerOrg } from '@/lib/api';
+import { authError, requireManagerOrg, getPrismaForOrg } from '@/lib/api';
 import { log, requestContext } from '@/lib/logger';
 import { safeTimezone, localDayKey, addDaysToKey } from '@/lib/timezone';
 
@@ -69,8 +69,13 @@ export async function GET(req: NextRequest) {
     }
 
     const where: Prisma.WorkDaySummaryWhereInput = { organizationId: orgId, workDate: { gte: fromKey, lte: toKey } };
+
+    // ORG DATA BOUNDARY: WorkDaySummary/Employee are org-owned (copied to the
+    // org DB at cutover) — rollups resolve through the org client.
+    const orgData = (await getPrismaForOrg(orgId)).client;
+
     if (rawEmployeeId) {
-      const employee = await db.employee.findFirst({
+      const employee = await orgData.employee.findFirst({
         where: { id: rawEmployeeId, organizationId: orgId },
         select: { id: true },
       });
@@ -82,7 +87,7 @@ export async function GET(req: NextRequest) {
 
     const takeRaw = Number(req.nextUrl.searchParams.get('take') ?? '200');
     const take = Number.isFinite(takeRaw) && takeRaw > 0 ? Math.min(takeRaw, MAX_TAKE) : 200;
-    const summaries = await db.workDaySummary.findMany({
+    const summaries = await orgData.workDaySummary.findMany({
       where,
       orderBy: [{ workDate: 'desc' }, { employeeId: 'asc' }],
       take: Number.isFinite(take) && take > 0 ? take : 200,

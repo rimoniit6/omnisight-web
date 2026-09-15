@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { callAIProvider } from '@/lib/ai-provider-helper';
 import { meterAiCall } from '@/lib/ai-metering';
-import { authError, getSessionOrg, requireManagerOrg, parseJsonBody, BodyParseError, isValidDate } from '@/lib/api';
+import { authError, getSessionOrg, requireManagerOrg, parseJsonBody, BodyParseError, isValidDate, getPrismaForOrg } from '@/lib/api';
 import { log, requestContext } from '@/lib/logger';
 import { excludeInternalAgentActivities } from '@/lib/agent-process';
 import { localDayKey } from '@/lib/timezone';
@@ -134,11 +134,17 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'No organization found' }, { status: 404 });
     }
 
-    const activeEmployees = await db.employee.count({
+    // ORG DATA BOUNDARY: Employee/Activity/Alert/Screenshot/Device are
+    // org-owned (copied to the org DB at cutover) — all authoritative metrics
+    // resolve through the org client so the AI summary reflects the same
+    // dataset the Agent writes to.
+    const orgData = (await getPrismaForOrg(org.id)).client;
+
+    const activeEmployees = await orgData.employee.count({
       where: { status: 'active', organizationId: org.id },
     });
 
-    const activities = excludeInternalAgentActivities(await db.activity.findMany({
+    const activities = excludeInternalAgentActivities(await orgData.activity.findMany({
       where: { timestamp: { gte: targetDate, lt: nextDay }, employee: { organizationId: org.id } },
     }));
 
@@ -163,17 +169,17 @@ export async function POST(req: NextRequest) {
       const productivePct = totalMin > 0 ? Math.round((productiveSec / totalDurationSec) * 100) : 0;
 
       // Get alerts (org-scoped)
-      const alertsCount = await db.alert.count({
+      const alertsCount = await orgData.alert.count({
         where: { createdAt: { gte: targetDate, lt: nextDay }, organizationId: org.id },
       });
 
       // Get screenshots (org-scoped)
-      const screenshotsCount = await db.screenshot.count({
+      const screenshotsCount = await orgData.screenshot.count({
         where: { capturedAt: { gte: targetDate, lt: nextDay }, organizationId: org.id },
       });
 
       // Get online devices (heartbeat freshness, never the sticky column)
-      const orgDevices = await db.device.findMany({
+      const orgDevices = await orgData.device.findMany({
         where: { organizationId: org.id },
         select: { status: true, lastHeartbeat: true },
       });
@@ -182,7 +188,7 @@ export async function POST(req: NextRequest) {
       ).length;
 
       // Get flagged screenshots (org-scoped)
-      const flaggedScreenshots = await db.screenshot.count({
+      const flaggedScreenshots = await orgData.screenshot.count({
         where: {
           capturedAt: { gte: targetDate, lt: nextDay },
           flagged: true,

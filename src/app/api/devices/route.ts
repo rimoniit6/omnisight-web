@@ -36,8 +36,12 @@ export async function GET(req: NextRequest) {
     if (status) where.status = status;
     if (employeeId) where.employeeId = employeeId;
 
+    // ORG DATA BOUNDARY: Device/Employee are org-owned (copied to the org DB
+    // at cutover) — the listing resolves through the org client.
+    const orgData = (await getPrismaForOrg(scope.organizationId as string)).client;
+
     const [devices, total] = await Promise.all([
-      db.device.findMany({
+      orgData.device.findMany({
         where,
         include: {
           employee: { select: { id: true, firstName: true, lastName: true } },
@@ -46,7 +50,7 @@ export async function GET(req: NextRequest) {
         skip: (page - 1) * pageSize,
         take: pageSize,
       }),
-      db.device.count({ where }),
+      orgData.device.count({ where }),
     ]);
 
     // Lazy stale-offline: a device whose lastHeartbeat is older than the

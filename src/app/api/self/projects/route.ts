@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
 import { getScopedEmployee } from '@/lib/self-guard';
+import { getPrismaForOrg } from '@/lib/api';
 import { log, requestContext } from '@/lib/logger';
 
 // GET /api/self/projects?employeeId=xxx
@@ -26,8 +26,12 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: scopeError || 'Employee not found' }, { status: 404 });
     }
 
+    // ORG DATA BOUNDARY: ProjectMember/TimeEntry/SentimentRecord are org-owned —
+    // resolve the org client for the whole read.
+    const orgData = (await getPrismaForOrg(scoped.organizationId)).client;
+
     // Active memberships only — projects the employee is currently assigned to.
-    const memberships = await db.projectMember.findMany({
+    const memberships = await orgData.projectMember.findMany({
       where: { employeeId: scoped.id, leftAt: null },
       include: {
         project: {
@@ -53,7 +57,7 @@ export async function GET(req: NextRequest) {
     const projectIds = memberships.map((m) => m.projectId);
 
     // Total hours per project (TimeEntry is the project-scoped source).
-    const hoursByProject = await db.timeEntry.groupBy({
+    const hoursByProject = await orgData.timeEntry.groupBy({
       by: ['projectId'],
       where: { projectId: { in: projectIds }, employeeId: scoped.id },
       _sum: { hours: true },
@@ -61,7 +65,7 @@ export async function GET(req: NextRequest) {
     const hoursMap = new Map(hoursByProject.map((h) => [h.projectId, h._sum.hours || 0]));
 
     // Latest project-scoped sentiment per (project, employee).
-    const sentimentRows = await db.sentimentRecord.findMany({
+    const sentimentRows = await orgData.sentimentRecord.findMany({
       where: { projectId: { in: projectIds }, employeeId: scoped.id },
       orderBy: { createdAt: 'desc' },
       select: {

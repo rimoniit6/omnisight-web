@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { authError, requireManagerOrg, parseJsonBody, BodyParseError } from '@/lib/api';
+import { authError, requireManagerOrg, parseJsonBody, BodyParseError, getPrismaForOrg } from '@/lib/api';
 import { getScopedEmployee } from '@/lib/self-guard';
 import { startBreak, endBreak, getCurrentBreak } from '@/lib/breaks/service';
 import { getClientIpFromHeaders, UNKNOWN_CLIENT_IP } from '@/lib/client-ip';
@@ -23,7 +23,10 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: scopeError || 'Employee not found' }, { status: 404 });
     }
 
-    const current = await getCurrentBreak(employee.id);
+    // ORG DATA BOUNDARY: BreakSession is org-owned — read through the org
+    // client so the self portal sees the same break state as the Agent.
+    const orgData = (await getPrismaForOrg(employee.organizationId)).client;
+    const current = await getCurrentBreak(employee.id, orgData);
     return NextResponse.json({
       data: {
         employeeId: employee.id,
@@ -85,7 +88,10 @@ export async function POST(req: NextRequest) {
     // audit logs) — never the attacker-controlled left-most XFF entry.
     const clientIp = getClientIpFromHeaders(req.headers);
     const ipAddress = clientIp === UNKNOWN_CLIENT_IP ? null : clientIp;
-    const current = await getCurrentBreak(employee.id);
+    // ORG DATA BOUNDARY: the break lifecycle writes (BreakSession + Activity
+    // mirror + AuditLog) are org-owned — run on the org client.
+    const orgData = (await getPrismaForOrg(employee.organizationId)).client;
+    const current = await getCurrentBreak(employee.id, orgData);
 
     let session: { id: string; startedAt: Date; endedAt: Date | null } | null;
     let action: string;
@@ -96,7 +102,7 @@ export async function POST(req: NextRequest) {
         source: 'self_service',
         actor: scope.userId,
         ipAddress,
-      });
+      }, orgData);
       session = started.session;
       action = started.action;
     } else if (current) {
@@ -105,7 +111,7 @@ export async function POST(req: NextRequest) {
         source: 'self_service',
         actor: scope.userId,
         ipAddress,
-      });
+      }, orgData);
       session = ended.session;
       action = 'ended';
     } else {

@@ -1,7 +1,7 @@
 'use server';
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
-import { authError, requireAdminOrg } from '@/lib/api';
+import { authError, requireAdminOrg, getPrismaForOrg } from '@/lib/api';
 import { checkRateLimit, RATE_LIMITS, getClientIpFromHeaders } from '@/lib/rate-limit';
 import { log, requestContext } from '@/lib/logger';
 
@@ -33,7 +33,12 @@ export async function POST(
     const body = await req.json();
     const { reason } = body as { reason?: unknown };
 
-    const claim = await db.deviceClaim.findFirst({
+    // ORG DATA BOUNDARY: DeviceClaim/Device/AuditLog are org-owned (copied to
+    // the org DB at cutover) — resolve through the org client. The
+    // Organization.activeDeviceCount counter is control-plane and stays on `db`.
+    const orgData = (await getPrismaForOrg(admin.organizationId)).client;
+
+    const claim = await orgData.deviceClaim.findFirst({
       where: { id, organizationId: admin.organizationId },
       include: { device: true },
     });
@@ -47,7 +52,7 @@ export async function POST(
       );
     }
 
-    const result = await db.$transaction(async (tx) => {
+    const result = await orgData.$transaction(async (tx) => {
       await tx.deviceClaim.update({
         where: { id: claim.id },
         data: {
@@ -68,9 +73,10 @@ export async function POST(
       });
 
       // Decrement activeDeviceCount if the device was active before revocation.
+      // Control-plane counter — deliberately updated on the platform client.
       const { effectiveDeviceStatus } = await import('@/lib/device-status');
       if (deviceBefore && effectiveDeviceStatus(deviceBefore.status, deviceBefore.lastHeartbeat) === 'online') {
-        await tx.organization.updateMany({
+        await db.organization.updateMany({
           where: { id: admin.organizationId },
           data: { activeDeviceCount: { decrement: 1 } },
         });

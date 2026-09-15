@@ -16,7 +16,10 @@ export async function GET(
     if (!scope.ok) return authError(scope);
 
     const { id } = await params;
-    const device = await db.device.findFirst({
+    // ORG DATA BOUNDARY: Device/Activity are org-owned (copied to the org DB
+    // at cutover) — the detail view resolves through the org client.
+    const orgData = (await getPrismaForOrg(scope.organizationId as string)).client;
+    const device = await orgData.device.findFirst({
       where: { id, ...(scope.organizationId ? { organizationId: scope.organizationId } : {}) },
       include: {
         employee: { select: { id: true, firstName: true, lastName: true } },

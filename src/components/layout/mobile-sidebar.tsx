@@ -26,7 +26,8 @@ export function MobileSidebarContent({ onNavigate }: MobileSidebarContentProps) 
   const branding = useEffectiveBranding();
 
   // S-2: role-aware navigation (mirrors the desktop sidebar).
-  // Platform rule: an org-less super_admin sees ONLY the Control Center.
+  // Workspace rule: a super_admin sees ONLY the Control Center — with or
+  // without an organization context (AUTHORIZATION ≠ NAVIGATION).
   const role = displayUser?.role ?? null;
   const visibleGroups = visibleGroupsFor(role, Boolean(organization));
 

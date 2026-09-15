@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { generateActivityReport } from '@/lib/pdf-generator';
 import { format, startOfMonth, endOfMonth } from 'date-fns';
-import { getSessionOrg, authError, requireManagerOrg, isValidDate, parseJsonBody, BodyParseError } from '@/lib/api';
+import { getSessionOrg, authError, requireManagerOrg, isValidDate, parseJsonBody, BodyParseError, getPrismaForOrg } from '@/lib/api';
 import { excludeInternalAgentActivities } from '@/lib/agent-process';
 import { log, requestContext } from '@/lib/logger';
 import { getEffectiveBranding } from '@/lib/branding';
@@ -13,6 +13,10 @@ export async function POST(request: NextRequest) {
     const scope = await requireManagerOrg(request);
     if (!scope.ok) return authError(scope);
     const orgId = scope.organizationId;
+
+    // ORG DATA BOUNDARY: Department/Employee/Activity are org-owned (copied to
+    // the org DB at cutover) — the PDF data resolves through the org client.
+    const orgData = (await getPrismaForOrg(orgId)).client;
 
     let body: Record<string, unknown>;
     try {
@@ -66,11 +70,11 @@ export async function POST(request: NextRequest) {
     // department (cross-org department names resolve to nothing — they can
     // never enumerate foreign employees).
     if (department) {
-      const dept = await db.department.findFirst({
+      const dept = await orgData.department.findFirst({
         where: { organizationId: orgId, name: { equals: department, mode: 'insensitive' } },
       });
       if (dept) {
-        const deptEmployees = await db.employee.findMany({
+        const deptEmployees = await orgData.employee.findMany({
           where: { departmentId: dept.id },
           select: { id: true },
         });
@@ -91,7 +95,7 @@ export async function POST(request: NextRequest) {
 
     // Fetch activities (limit to 200 for PDF). Internal agent processes are
     // excluded at the data layer (lib/agent-process.ts).
-    const activities = excludeInternalAgentActivities(await db.activity.findMany({
+    const activities = excludeInternalAgentActivities(await orgData.activity.findMany({
       where,
       include: {
         employee: { include: { department: true } },
@@ -142,7 +146,7 @@ export async function POST(request: NextRequest) {
     // employeeId is concealed (404) rather than echoed into the PDF.
     let employeeName: string | undefined;
     if (employeeId) {
-      const emp = await db.employee.findFirst({
+      const emp = await orgData.employee.findFirst({
         where: { id: employeeId, organizationId: orgId },
         select: { firstName: true, lastName: true },
       });

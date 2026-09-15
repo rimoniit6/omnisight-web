@@ -15,7 +15,11 @@ export async function GET(req: NextRequest) {
     const where: Record<string, unknown> = {};
     if (scope.organizationId) where.organizationId = scope.organizationId;
 
-    const departments = await db.department.findMany({
+    // ORG DATA BOUNDARY: Department is org-owned (copied to the org DB at
+    // cutover) — the listing resolves through the org client.
+    const orgData = (await getPrismaForOrg(scope.organizationId)).client;
+
+    const departments = await orgData.department.findMany({
       where,
       include: {
         _count: { select: { employees: true } },

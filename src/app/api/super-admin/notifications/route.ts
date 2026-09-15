@@ -1,7 +1,44 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
-import { requireSuperAdmin, apiError, apiSuccess, validatePagination } from '@/lib/api';
+import { requireSuperAdmin, apiError, apiSuccess, validatePagination, getPrismaForOrg } from '@/lib/api';
 import { log, requestContext } from '@/lib/logger';
+import type { PrismaClient } from '@prisma/client';
+
+/**
+ * ORG DATA BOUNDARY: Notification is an ORG-OWNED table (copied to the org DB
+ * at cutover), so for an activated organization the customer DB holds the
+ * authoritative copy; platform rows for those orgs are stale. Reads merge
+ * both sources (deduped by id — cutover preserves ids, so an id present in
+ * both resolves to the org copy) and updates are routed to the org client
+ * whenever the row's organization belongs to an activated org.
+ * The org enumeration is bounded (same 25-org cap as findDeviceAcrossActivated
+ * OrgDbs) and every org client is resolved through getPrismaForOrg's cache.
+ */
+const MAX_ACTIVATED_ORGS = 25;
+const MERGE_SCAN_CAP = 200;
+
+interface OrgClientEntry {
+  organizationId: string;
+  // Resolved org client (platform `db` when the org never cut over).
+  client: PrismaClient;
+}
+
+async function listActivatedOrgClients(): Promise<OrgClientEntry[]> {
+  const activated = await db.organizationSettings.findMany({
+    where: { useOwnDb: true },
+    select: { organizationId: true },
+    take: MAX_ACTIVATED_ORGS,
+  });
+  const entries: OrgClientEntry[] = [];
+  for (const s of activated) {
+    try {
+      entries.push({ organizationId: s.organizationId, client: (await getPrismaForOrg(s.organizationId)).client });
+    } catch {
+      continue; // misconfigured org — skip; its own tenants' views fail closed
+    }
+  }
+  return entries;
+}
 
 // Unified item shape returned to the frontend — both Notification rows and
 // Lead submissions are projected into this shape so the UI can render them
@@ -43,25 +80,69 @@ export async function GET(req: NextRequest) {
   const status = searchParams.get('status');
   const includeLeads = searchParams.get('includeLeads') !== 'false';
 
-  // Fetch notifications (organization-scoped)
+  // Fetch notifications (organization-scoped). Notification is org-owned —
+  // merge platform rows with the authoritative copies from activated org DBs
+  // (deduped by id, capped on both sides; see listActivatedOrgClients note).
   const notificationsWhere: Record<string, unknown> = {};
   if (type && type !== 'lead_submission') notificationsWhere.type = type;
   if (status) notificationsWhere.status = status;
 
-  const [notifications, notificationsTotal] = await Promise.all([
+  const baseSelect = { orderBy: { createdAt: 'desc' as const }, take: MERGE_SCAN_CAP };
+  const activatedClients = await listActivatedOrgClients();
+  const [platformRows, ...orgRowsByClient] = await Promise.all([
     db.notification.findMany({
       where: notificationsWhere,
-      orderBy: { createdAt: 'desc' },
-      skip,
-      take: pageSize,
-      include: {
-        organization: {
-          select: { id: true, name: true, slug: true },
-        },
-      },
+      ...baseSelect,
+      include: { organization: { select: { id: true, name: true, slug: true } } },
     }),
-    db.notification.count({ where: notificationsWhere }),
+    ...activatedClients.map((e) =>
+      e.client.notification.findMany({ where: notificationsWhere, ...baseSelect }).catch(() => [] as Awaited<ReturnType<typeof db.notification.findMany>>)
+    ),
   ]);
+
+  // Dedup by id (org copy wins), then re-apply ordering + merge-level cap.
+  // Org rows lack the `organization` relation include (cross-DB), so the org
+  // name is re-attached from the activated-org map below.
+  type NotifRow = Awaited<ReturnType<typeof db.notification.findMany>>[number];
+  const orgNameById = new Map(activatedClients.map((e) => [e.organizationId, e.client]));
+  const byId = new Map<string, NotifRow>();
+  for (const row of platformRows) byId.set(row.id, row);
+  for (const rows of orgRowsByClient) {
+    for (const row of rows as NotifRow[]) {
+      byId.set(row.id, row); // org copy is authoritative
+    }
+  }
+  const merged = Array.from(byId.values())
+    .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
+    .slice(0, MERGE_SCAN_CAP);
+
+  // Re-attach the control-plane organization label for org-DB rows (they are
+  // merged without the relation include; the platform Organization row is the
+  // authoritative label source). Lookup is bounded to the page.
+  type OrgLabel = { id: string; name: string; slug: string } | null;
+  type NotifWithOrg = NotifRow & { organization: OrgLabel };
+  const orgLabelCache = new Map<string, OrgLabel>();
+  const pageRows = merged.slice(skip, skip + pageSize);
+  const notifications: NotifWithOrg[] = [];
+  for (const row of pageRows) {
+    const withMaybeOrg = row as NotifRow & { organization?: OrgLabel };
+    if (withMaybeOrg.organization !== undefined) {
+      notifications.push(withMaybeOrg as NotifWithOrg);
+      continue;
+    }
+    const orgId = row.organizationId;
+    let label = orgLabelCache.get(orgId);
+    if (label === undefined) {
+      const orgRow = await db.organization.findUnique({
+        where: { id: orgId },
+        select: { id: true, name: true, slug: true },
+      });
+      label = orgRow ?? null;
+      orgLabelCache.set(orgId, label);
+    }
+    notifications.push(Object.assign({}, row, { organization: label }));
+  }
+  const notificationsTotal = merged.length;
 
   // Fetch lead submissions (platform-level business requests)
   let leads: UnifiedItem[] = [];
@@ -202,7 +283,9 @@ export async function PUT(req: NextRequest) {
     });
   }
 
-  // It's a notification — update status
+  // It's a notification — update status. Notification is org-owned: route the
+  // update to the authoritative org client when the row's org has activated
+  // its own DB; otherwise (and as a fallback) update the platform copy.
   const notification = await db.notification.findUnique({ where: { id } });
   if (!notification) return apiError('Not found', 404);
 
@@ -214,10 +297,22 @@ export async function PUT(req: NextRequest) {
   const updateData: Record<string, unknown> = { status };
   if (status === 'read') updateData.readAt = new Date();
 
-  const updated = await db.notification.update({
-    where: { id },
-    data: updateData,
-  });
+  let updated;
+  let routedToOrg = false;
+  if (notification.organizationId) {
+    try {
+      const orgData = (await getPrismaForOrg(notification.organizationId)).client;
+      if (orgData !== db) {
+        updated = await orgData.notification.update({ where: { id }, data: updateData });
+        routedToOrg = true;
+      }
+    } catch (e) {
+      log.warn('api.super-admin.notifications.org_update_failed', { err: e, notificationId: id });
+    }
+  }
+  if (!routedToOrg) {
+    updated = await db.notification.update({ where: { id }, data: updateData });
+  }
 
   return apiSuccess({ data: updated, type: 'notification' });
 }

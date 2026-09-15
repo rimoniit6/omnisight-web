@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { getSessionOrg, authenticateRequest } from '@/lib/api';
+
+import { getSessionOrg, authenticateRequest, getPrismaForOrg } from '@/lib/api';
 import { hasRolePermission } from '@/lib/auth';
 import { CONSENT_TYPES } from '@/lib/consent';
 import { log, requestContext } from '@/lib/logger';
@@ -59,16 +59,20 @@ export async function GET(req: NextRequest) {
     };
 
     // Three parallel org-scoped queries — no N+1 regardless of employee count.
+    // Consent/Employee/ConsentPolicy are org-owned (copied at cutover) — read
+    // through the org client so compliance reporting reflects the same state
+    // the Agent enforces against after a CUSTOMER_DB activation.
+    const orgData = (await getPrismaForOrg(org.id)).client;
     const [allConsents, activeEmployees, publishedPolicies] = await Promise.all([
-      db.consent.findMany({
+      orgData.consent.findMany({
         where: { organizationId: org.id },
         include: { employee: { select: EMPLOYEE_SELECT } },
       }),
-      db.employee.findMany({
+      orgData.employee.findMany({
         where: { organizationId: org.id, status: 'active' },
         select: EMPLOYEE_SELECT,
       }),
-      db.consentPolicy.findMany({
+      orgData.consentPolicy.findMany({
         where: { organizationId: org.id, status: 'published' },
         select: { consentType: true, version: true, id: true },
       }),

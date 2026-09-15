@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
 import { getScopedEmployee } from '@/lib/self-guard';
+import { getPrismaForOrg } from '@/lib/api';
 import { hasActiveConsent } from '@/lib/consent';
 import { resolveOrgMonitoring } from '@/lib/jobs/settings';
 import { excludeInternalAgentActivities } from '@/lib/agent-process';
@@ -36,13 +36,19 @@ export async function GET(req: NextRequest) {
 
     const orgId = scoped.organizationId;
 
+    // ORG DATA BOUNDARY: Consent/Activity/KeyboardActivity/LocationEvent/
+    // WebcamSession are org-owned (copied to the org DB at cutover) — the
+    // whole summary resolves through the org client so gates reflect the same
+    // consent state the Agent enforcement path reads.
+    const orgData = (await getPrismaForOrg(orgId)).client;
+
     // Consent + config gates — evaluated once, applied to every metric below.
     const [consent, monitoring] = await Promise.all([
       Promise.all([
-        hasActiveConsent(employeeId, 'activity_tracking'),
-        hasActiveConsent(employeeId, 'keystroke'),
-        hasActiveConsent(employeeId, 'location'),
-        hasActiveConsent(employeeId, 'webcam_access'),
+        hasActiveConsent(employeeId, 'activity_tracking', orgData),
+        hasActiveConsent(employeeId, 'keystroke', orgData),
+        hasActiveConsent(employeeId, 'location', orgData),
+        hasActiveConsent(employeeId, 'webcam_access', orgData),
       ]),
       resolveOrgMonitoring(orgId),
     ]);
@@ -54,7 +60,7 @@ export async function GET(req: NextRequest) {
     let topDomains: Array<{ domain: string; visits: number; totalSeconds: number; lastSeen: string }> = [];
     if (activityConsent && monitoring.website_tracking) {
       const rows = excludeInternalAgentActivities(
-        await db.activity.findMany({
+        await orgData.activity.findMany({
           where: { employeeId, type: 'website', timestamp: { gte: cutoff } },
           select: { url: true, duration: true, timestamp: true },
           orderBy: { timestamp: 'desc' },
@@ -80,7 +86,7 @@ export async function GET(req: NextRequest) {
     // ── Keyboard (aggregate only — never raw key data) ──
     let keyboard = { intervals: 0, totalKeystrokes: 0, totalActiveTypingSeconds: 0 };
     if (keystrokeConsent && monitoring.keystroke_logging_enabled) {
-      const agg = await db.keyboardActivity.aggregate({
+      const agg = await orgData.keyboardActivity.aggregate({
         where: { employeeId, intervalStart: { gte: cutoff } },
         _count: { id: true },
         _sum: { keystrokeCount: true, activeTypingSeconds: true },
@@ -95,7 +101,7 @@ export async function GET(req: NextRequest) {
     // ── Location (latest fix only — no history, no reverse geocoding) ──
     let latestLocation: { latitude: number; longitude: number; accuracy: number | null; recordedAt: string; source: string } | null = null;
     if (locationConsent && monitoring.location_tracking) {
-      const latest = await db.locationEvent.findFirst({
+      const latest = await orgData.locationEvent.findFirst({
         where: { employeeId },
         orderBy: { recordedAt: 'desc' },
         select: { latitude: true, longitude: true, accuracy: true, recordedAt: true, source: true },
@@ -106,7 +112,7 @@ export async function GET(req: NextRequest) {
     // ── Webcam (session state only — never frames) ──
     let webcamSession: { id: string; status: string; startedAt: string | null } | null = null;
     if (webcamConsent && monitoring.webcam_capture_enabled) {
-      const session = await db.webcamSession.findFirst({
+      const session = await orgData.webcamSession.findFirst({
         where: { employeeId, status: 'active' },
         orderBy: { startedAt: 'desc' },
         select: { id: true, status: true, startedAt: true },

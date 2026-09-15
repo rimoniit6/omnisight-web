@@ -36,7 +36,11 @@ export async function GET(
       return NextResponse.json({ error: 'Invalid dateTo' }, { status: 422 });
     }
 
-    const project = await db.project.findFirst({
+    // ORG DATA BOUNDARY: Project/TimeEntry are org-owned (copied to the org DB
+    // at cutover) — resolve through the org client.
+    const orgData = (await getPrismaForOrg(scope.organizationId as string)).client;
+
+    const project = await orgData.project.findFirst({
       where: { id, ...(scope.organizationId ? { organizationId: scope.organizationId } : {}) },
     });
     if (!project) {
@@ -57,7 +61,7 @@ export async function GET(
     }
 
     const [timeEntries, total, totalHoursAgg, billableHoursAgg, byCategory, byDate, bySource] = await Promise.all([
-      db.timeEntry.findMany({
+      orgData.timeEntry.findMany({
         where,
         include: {
           employee: { select: { id: true, firstName: true, lastName: true, avatar: true } },
@@ -68,16 +72,16 @@ export async function GET(
       }),
       // Filter-aware total: the count MUST apply the exact same filters as
       // the data query so pagination math stays consistent.
-      db.timeEntry.count({ where }),
-      db.timeEntry.aggregate({
+      orgData.timeEntry.count({ where }),
+      orgData.timeEntry.aggregate({
         where: { projectId: id },
         _sum: { hours: true },
       }),
-      db.timeEntry.aggregate({
+      orgData.timeEntry.aggregate({
         where: { projectId: id, billable: true },
         _sum: { hours: true },
       }),
-      db.timeEntry.groupBy({
+      orgData.timeEntry.groupBy({
         by: ['category'],
         where: { projectId: id },
         _sum: { hours: true },
@@ -87,14 +91,14 @@ export async function GET(
         const thirtyDaysAgo = new Date();
         thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
         thirtyDaysAgo.setHours(0, 0, 0, 0);
-        return db.timeEntry.groupBy({
+        return orgData.timeEntry.groupBy({
           by: ['date'],
           where: { projectId: id, date: { gte: thirtyDaysAgo } },
           _sum: { hours: true },
           orderBy: { date: 'asc' },
         });
       })(),
-      db.timeEntry.groupBy({
+      orgData.timeEntry.groupBy({
         by: ['source'],
         where: { projectId: id },
         _sum: { hours: true },
@@ -162,7 +166,10 @@ export async function POST(
       );
     }
 
-    const project = await db.project.findFirst({
+    // ORG DATA BOUNDARY (POST): validate the project on the org client too.
+    const orgData = (await getPrismaForOrg(admin.organizationId)).client;
+
+    const project = await orgData.project.findFirst({
       where: { id, organizationId: admin.organizationId },
     });
     if (!project) {
@@ -170,7 +177,6 @@ export async function POST(
     }
 
     // Validate employee is an active project member AND belongs to the same org.
-    const orgData = (await getPrismaForOrg(admin.organizationId)).client;
     const membership = await orgData.projectMember.findFirst({
       where: { projectId: id, employeeId, leftAt: null, organizationId: admin.organizationId },
     });

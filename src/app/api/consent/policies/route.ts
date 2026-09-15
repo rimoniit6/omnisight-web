@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { authenticateRequest, getSessionOrg } from '@/lib/api';
+
+import { authenticateRequest, getSessionOrg, getPrismaForOrg } from '@/lib/api';
 import { hasRolePermission } from '@/lib/auth';
 import { log, requestContext } from '@/lib/logger';
 import {
@@ -26,7 +26,11 @@ export async function GET(req: NextRequest) {
     const org = await getSessionOrg(req);
     if (!org) return NextResponse.json({ error: 'No organization found' }, { status: 404 });
 
-    const policies = await db.consentPolicy.findMany({
+    // ConsentPolicy is org-owned (copied at cutover) — read through the org
+    // client so grants bind the policy version the Agent enforces against.
+    const orgData = (await getPrismaForOrg(org.id)).client;
+
+    const policies = await orgData.consentPolicy.findMany({
       where: { organizationId: org.id },
       orderBy: [{ consentType: 'asc' }, { version: 'asc' }],
     });
@@ -76,12 +80,16 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Policy content is required (min 20 characters)' }, { status: 400 });
     }
 
-    const existingVersions = await db.consentPolicy.findMany({
+    // Policy create + the org data it governs are org-owned — the whole
+    // mutation runs on the org client (single authoritative store).
+    const orgData = (await getPrismaForOrg(org.id)).client;
+
+    const existingVersions = await orgData.consentPolicy.findMany({
       where: { organizationId: org.id, consentType },
       select: { version: true },
     });
 
-    const policy = await db.$transaction(async (tx) => {
+    const policy = await orgData.$transaction(async (tx) => {
       const created = await tx.consentPolicy.create({
         data: {
           organizationId: org.id,

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
 import { getScopedEmployee } from '@/lib/self-guard';
+import { getPrismaForOrg } from '@/lib/api';
 import { log, requestContext } from '@/lib/logger';
 
 // GET /api/self/devices?employeeId=xxx
@@ -20,8 +20,12 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: scopeError || 'Employee not found' }, { status: 404 });
     }
 
+    // ORG DATA BOUNDARY: Device/Activity are org-owned — resolve the org
+    // client so the self portal reads the authoritative post-cutover data.
+    const orgData = (await getPrismaForOrg(scoped.organizationId)).client;
+
     // Fetch all devices for this employee
-    const devices = await db.device.findMany({
+    const devices = await orgData.device.findMany({
       where: { employeeId: scoped.id },
       select: {
         id: true,
@@ -42,7 +46,7 @@ export async function GET(req: NextRequest) {
     // (was N+1: one findFirst per device).
     const deviceIds = devices.map((d) => d.id);
     const latestByDevice = deviceIds.length > 0
-      ? await db.activity.groupBy({
+      ? await orgData.activity.groupBy({
           by: ['deviceId'],
           where: { deviceId: { in: deviceIds } },
           _max: { timestamp: true },

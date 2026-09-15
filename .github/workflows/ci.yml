@@ -24,6 +24,18 @@ env:
 # .gitignore). All jobs install with bun and run the repo's own npm-compatible
 # scripts via `bun run`.
 jobs:
+  secrets:
+    name: Secret scan (tracked files)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Zero-dependency scanner (see scripts/secret-scan.mjs): fails when a
+      # tracked file commits a real-looking secret or an env template drops a
+      # CHANGE_ME_* placeholder. Local gitleaks checks stay available offline.
+      - name: Scan committed files for secrets
+        run: node scripts/secret-scan.mjs
+
   lint:
     name: Lint
     runs-on: ubuntu-latest
@@ -140,3 +152,98 @@ jobs:
 
       - name: Next.js production build (with generated-types clean)
         run: bun run build
+
+  docker:
+    name: Docker build & push
+    runs-on: ubuntu-latest
+    # Gate on all validation jobs. Docker build only runs when the full
+    # validation suite passes, preventing wasted CI time on broken code.
+    needs: [secrets, lint, typecheck, test, build]
+    # PRs: build + scan only (no push). Main pushes: build + scan + push.
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # ── Build tooling (installed once, shared by both images) ────────────
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@b5ca514318bd6ebac0fb2aedd5d36ec1b5c232a2 # v3.10.0
+
+      - name: Log in to GitHub Container Registry
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: docker/login-action@74a5d142397b4f367a81961eba4e8cd7edddf772 # v3.4.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # ── Web image ───────────────────────────────────────────────────────
+      - name: Compute web image tags
+        id: web-tags
+        uses: docker/metadata-action@902fa8ec7d6ecbf8d84d538b9b233a880e428804 # v5.8.0
+        with:
+          images: ghcr.io/${{ github.repository }}
+          tags: |
+            type=raw,value=${{ github.sha }}
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Build web image
+        uses: docker/build-push-action@14487ce63c7a62a4a324b0bfb37086795e31c6c1 # v6.18.0
+        with:
+          context: .
+          file: Dockerfile
+          # PRs: --load makes the image available locally for Trivy scanning.
+          # Main: --push sends it to GHCR. These are mutually exclusive.
+          load: ${{ !(github.event_name == 'push' && github.ref == 'refs/heads/main') }}
+          push: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+          tags: ${{ steps.web-tags.outputs.tags }}
+          labels: ${{ steps.web-tags.outputs.labels }}
+          cache-from: type=gha,scope=web
+          cache-to: type=gha,mode=max,scope=web
+
+      # ── Live-Updates image ──────────────────────────────────────────────
+      - name: Compute live-updates image tags
+        id: lu-tags
+        uses: docker/metadata-action@902fa8ec7d6ecbf8d84d538b9b233a880e428804 # v5.8.0
+        with:
+          images: ghcr.io/${{ github.repository }}-live-updates
+          tags: |
+            type=raw,value=${{ github.sha }}
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Build live-updates image
+        uses: docker/build-push-action@14487ce63c7a62a4a324b0bfb37086795e31c6c1 # v6.18.0
+        with:
+          context: .
+          file: mini-services/live-updates/Dockerfile
+          load: ${{ !(github.event_name == 'push' && github.ref == 'refs/heads/main') }}
+          push: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+          tags: ${{ steps.lu-tags.outputs.tags }}
+          labels: ${{ steps.lu-tags.outputs.labels }}
+          cache-from: type=gha,scope=live-updates
+          cache-to: type=gha,mode=max,scope=live-updates
+
+      # ── Vulnerability scan ──────────────────────────────────────────────
+      # Trivy scans the built images by SHA tag. On PRs the image is loaded
+      # locally (--load); on main it was pushed to GHCR. Either way the
+      # SHA-tagged image is resolvable. CRITICAL findings fail CI; HIGH
+      # findings are reported but do not block the pipeline.
+      - name: Scan web image (Trivy)
+        uses: aquasecurity/trivy-action@48b0e872a0319987352f3fac9393d2456b798236 # v0.30.0
+        with:
+          image-ref: ghcr.io/${{ github.repository }}:${{ github.sha }}
+          format: table
+          exit-code: 1
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+
+      - name: Scan live-updates image (Trivy)
+        uses: aquasecurity/trivy-action@48b0e872a0319987352f3fac9393d2456b798236 # v0.30.0
+        with:
+          image-ref: ghcr.io/${{ github.repository }}-live-updates:${{ github.sha }}
+          format: table
+          exit-code: 1
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true

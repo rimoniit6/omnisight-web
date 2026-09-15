@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
-import { authError, requireSessionOrg } from '@/lib/api';
+import { authError, requireSessionOrg, getPrismaForOrg } from '@/lib/api';
 import { EMPLOYEE_ONLINE_THRESHOLD_MS } from '@/lib/presence';
 import { orgDayWindow, safeTimezone } from '@/lib/timezone';
 import { sessionDurationSeconds } from '@/lib/breaks/service';
@@ -37,12 +37,18 @@ export async function GET(req: NextRequest) {
       select: { timezone: true },
     });
     const timezone = safeTimezone(org?.timezone);
+
+    // ORG DATA BOUNDARY: Employee/BreakSession/Device/Activity are org-owned —
+    // resolve the org client so summary stats reflect the authoritative
+    // post-cutover data.
+    const orgData = (await getPrismaForOrg(orgId)).client;
+
     const { dayStart, dayEnd } = orgDayWindow(timezone);
     const now = new Date();
     const activeWindow = new Date(now.getTime() - EMPLOYEE_ONLINE_THRESHOLD_MS);
 
     // All active employees (bounded by org employee count).
-    const allEmployees = await db.employee.findMany({
+    const allEmployees = await orgData.employee.findMany({
       where: { status: 'active', organizationId: orgId },
       select: { id: true, departmentId: true, department: { select: { id: true, name: true } } },
     });
@@ -50,7 +56,7 @@ export async function GET(req: NextRequest) {
     const totalEmployees = allEmployees.length;
 
     // Open breaks (canonical state).
-    const openSessions = await db.breakSession.findMany({
+    const openSessions = await orgData.breakSession.findMany({
       where: { organizationId: orgId, endedAt: null, employeeId: { in: empIds } },
       select: { employeeId: true, startedAt: true, endedAt: true },
     });
@@ -58,7 +64,7 @@ export async function GET(req: NextRequest) {
     const currentlyOnBreak = openSessions.length;
 
     // Today's sessions (org-local day) for duration + count.
-    const todaySessions = await db.breakSession.findMany({
+    const todaySessions = await orgData.breakSession.findMany({
       where: {
         organizationId: orgId,
         employeeId: { in: empIds },
@@ -78,7 +84,7 @@ export async function GET(req: NextRequest) {
     const totalBreakTimeToday = Math.round(totalBreakSeconds / 60);
 
     // Activity today (org-local day) — DB groupBy, deterministic.
-    const activityTodayRows = await db.activity.groupBy({
+    const activityTodayRows = await orgData.activity.groupBy({
       by: ['employeeId'],
       where: {
         employeeId: { in: empIds },
@@ -89,7 +95,7 @@ export async function GET(req: NextRequest) {
     const activityToday = new Set(activityTodayRows.map((r) => r.employeeId));
 
     // Recent activity (presence window) for "active now".
-    const recentRows = await db.activity.groupBy({
+    const recentRows = await orgData.activity.groupBy({
       by: ['employeeId'],
       where: {
         employeeId: { in: empIds },
@@ -99,7 +105,7 @@ export async function GET(req: NextRequest) {
     });
     const recentlyActive = new Set(recentRows.map((r) => r.employeeId));
 
-    const freshDevices = await db.device.findMany({
+    const freshDevices = await orgData.device.findMany({
       where: {
         organizationId: orgId,
         employeeId: { in: empIds },

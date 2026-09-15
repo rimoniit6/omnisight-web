@@ -104,6 +104,10 @@ before(async () => {
 });
 
 after(async () => {
+  // Close cache invalidation LISTEN connection so it doesn't hold the test DB open
+  const { resetCacheInvalidationState } = await import('../src/lib/cache-invalidation').catch(() => ({ resetCacheInvalidationState: async () => {} }));
+  await resetCacheInvalidationState();
+
   await db.$disconnect();
   try {
     execSync(`node scripts/pg-test-db.mjs drop ${TEST_DB_NAME}`, {

@@ -63,7 +63,10 @@ export async function GET(
     if (!scoped.ok) return scoped.response;
 
     const { id } = await params;
-    const insight = await db.aiInsight.findFirst({ where: { id, organizationId: scoped.organizationId } });
+    // ORG DATA BOUNDARY: AiInsight is org-owned (copied to the org DB at
+    // cutover) — resolve through the org client (PUT already does).
+    const orgData = (await getPrismaForOrg(scoped.organizationId)).client;
+    const insight = await orgData.aiInsight.findFirst({ where: { id, organizationId: scoped.organizationId } });
     if (!insight) {
       return NextResponse.json({ error: 'Insight not found' }, { status: 404 });
     }

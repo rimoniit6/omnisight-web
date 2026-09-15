@@ -1,7 +1,7 @@
 'use server';
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
-import { authError, requireSessionOrg } from '@/lib/api';
+import { authError, requireSessionOrg, getPrismaForOrg } from '@/lib/api';
 import { log, requestContext } from '@/lib/logger';
 
 /**
@@ -64,10 +64,14 @@ export async function GET(req: NextRequest) {
 
     const orgFilter = scope.organizationId ? { organizationId: scope.organizationId } : {};
 
+    // ORG DATA BOUNDARY: Project rows are org-owned (copied to the org DB at
+    // cutover) — the selector resolves through the org client.
+    const orgData = (await getPrismaForOrg(scope.organizationId as string)).client;
+
     // ids mode: return exactly the requested projects (hydration for selected
     // values that aren't in the current result set).
     if (ids.length > 0) {
-      const projects = await db.project.findMany({
+      const projects = await orgData.project.findMany({
         where: { id: { in: ids }, ...orgFilter },
         select: {
           id: true, name: true, status: true, priority: true, color: true,
@@ -103,7 +107,7 @@ export async function GET(req: NextRequest) {
     }
 
     const [projects, total] = await Promise.all([
-      db.project.findMany({
+      orgData.project.findMany({
         where,
         select: {
           id: true, name: true, status: true, priority: true, color: true,
@@ -114,7 +118,7 @@ export async function GET(req: NextRequest) {
         skip: offset,
         take: limit,
       }),
-      db.project.count({ where }),
+      orgData.project.count({ where }),
     ]);
 
     return NextResponse.json({

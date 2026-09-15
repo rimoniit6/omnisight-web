@@ -83,12 +83,15 @@ export async function GET(req: NextRequest) {
       },
     });
 
-    const devices = await db.device.findMany({
+    // ORG DATA BOUNDARY: Device/Activity are org-owned (copied to the org DB
+    // at cutover) — analysis inputs resolve through the org client (Employee/
+    // Department above already do).
+    const devices = await orgData.device.findMany({
       where: { organizationId: org.id },
       select: { status: true, operatingSystem: true, name: true, lastHeartbeat: true },
     });
 
-    const recentActivities = excludeInternalAgentActivities(await db.activity.findMany({
+    const recentActivities = excludeInternalAgentActivities(await orgData.activity.findMany({
       where: {
         employee: { organizationId: org.id },
         timestamp: { gte: f.periodStart, lte: f.periodEnd },

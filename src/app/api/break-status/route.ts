@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
-import { authError, requireSessionOrg, validatePagination } from '@/lib/api';
+import { authError, requireSessionOrg, validatePagination, getPrismaForOrg } from '@/lib/api';
 import { EMPLOYEE_ONLINE_THRESHOLD_MS, LIFECYCLE_PINNED_STATUSES } from '@/lib/presence';
 import { orgDayWindow, safeTimezone } from '@/lib/timezone';
 import { log, requestContext } from '@/lib/logger';
@@ -46,6 +46,13 @@ export async function GET(req: NextRequest) {
       select: { timezone: true },
     });
     const timezone = safeTimezone(org?.timezone);
+
+    // ORG DATA BOUNDARY: Employee/BreakSession/Device/Activity are org-owned
+    // (copied to the org DB at cutover) — every org-owned read below resolves
+    // through the org client so admins see the same break state the Agent's
+    // heartbeat reports (no platform stale copy).
+    const orgData = (await getPrismaForOrg(orgId)).client;
+
     const { dayStart, dayEnd } = orgDayWindow(timezone);
     const now = new Date();
     const activeWindow = new Date(now.getTime() - EMPLOYEE_ONLINE_THRESHOLD_MS);
@@ -67,7 +74,7 @@ export async function GET(req: NextRequest) {
     // Light id pass for correct filter-then-paginate semantics. Bounded by the
     // organization's employee count (NOT by telemetry volume — activity and
     // break lookups below are index-bounded).
-    const matchingEmployees = await db.employee.findMany({
+    const matchingEmployees = await orgData.employee.findMany({
       where: employeeWhere,
       select: { id: true, firstName: true, lastName: true, employeeId: true },
       orderBy: { firstName: 'asc' },
@@ -75,14 +82,14 @@ export async function GET(req: NextRequest) {
     const matchingIds = matchingEmployees.map((e) => e.id);
 
     // Canonical break state — one query, org-wide.
-    const openSessions = await db.breakSession.findMany({
+    const openSessions = await orgData.breakSession.findMany({
       where: { organizationId: orgId, endedAt: null },
       select: { employeeId: true, startedAt: true },
     });
     const openByEmployee = new Map(openSessions.map((s) => [s.employeeId, s.startedAt]));
 
     // Today's break sessions (org-local day) for duration math.
-    const todaySessions = await db.breakSession.findMany({
+    const todaySessions = await orgData.breakSession.findMany({
       where: {
         organizationId: orgId,
         startedAt: { lt: new Date(dayEnd.getTime() + 1) },
@@ -98,7 +105,7 @@ export async function GET(req: NextRequest) {
     }
 
     // Fresh-heartbeat presence (devices) — org-wide, bounded by org device count.
-    const freshDevices = await db.device.findMany({
+    const freshDevices = await orgData.device.findMany({
       where: {
         organizationId: orgId,
         employeeId: { in: matchingIds },
@@ -112,7 +119,7 @@ export async function GET(req: NextRequest) {
 
     // Last activity per employee — DB groupBy (deterministic, index-assisted).
     // Bounded to the last 90 days; anything older reads as "no recent activity".
-    const lastActivityRows = await db.activity.groupBy({
+    const lastActivityRows = await orgData.activity.groupBy({
       by: ['employeeId'],
       where: {
         employeeId: { in: matchingIds },
@@ -152,7 +159,7 @@ export async function GET(req: NextRequest) {
     const pageIds = pageRows.map((e) => e.id);
 
     // Full page rows (department + live device).
-    const employees = await db.employee.findMany({
+    const employees = await orgData.employee.findMany({
       where: { id: { in: pageIds } },
       include: {
         department: { select: { id: true, name: true } },

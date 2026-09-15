@@ -6,10 +6,8 @@
  * module only declares WHAT the navigation contains. The two shells must never
  * drift apart, so tests import navGroups directly to prove structure:
  *   • exactly one Organizations entry for the platform (super admin)
- *   • the Super Admin surface is Organizations-centric: Overview,
- *     Organizations, Packages (reusable catalog), Landing Page — while
- *     Subscriptions / Manual Payments / Licenses live INSIDE each
- *     Organization (org detail), not as standalone menus.
+ *   • the Super Admin workspace is the Control Center — the ONLY group a
+ *     super_admin sees (with or without an organization context)
  */
 import type { LucideIcon } from 'lucide-react';
 import {
@@ -102,18 +100,23 @@ export function canAccessShellItem(role: string | null | undefined, page: PageTy
 /**
  * Groups visible to `role` in the shells (shared by desktop + mobile).
  *
- * Platform rule: the Super Admin manages customers through the Control
- * Center. An org-less super_admin sees ONLY the Control Center group
- * (Overview / Organizations / Packages / Landing Page) — tenant operational
- * groups require an active organization context and appear once the SA has
- * switched into one (e.g. a MANAGED org), where MANAGED operational access is
- * authorized. Tenant supersession ('organization' hidden from super_admin)
- * still applies inside those groups.
+ * Workspace rule (AUTHORIZATION ≠ NAVIGATION): the sidebar reflects the
+ * user's WORKSPACE, not the sum of their permissions. A super_admin's
+ * workspace is the Control Center — always, regardless of any active
+ * organization context (membership-driven or the MANAGED-org switch flow).
+ * SA operational access to tenant data is an authorization capability
+ * exercised through control-plane surfaces (organization detail, metadata
+ * APIs) and intentional tenant switch flows; it must NOT convert the
+ * platform shell into the Organization Admin workspace. Org-bound roles
+ * (org_admin/manager/viewer) get the tenant groups filtered by
+ * canAccessShellItem, and can never see Control Center entries (pinned
+ * super_admin in navigation.ts).
  */
 export function visibleGroupsFor(
   role: string | null | undefined,
   hasOrganizationContext: boolean,
 ): NavGroup[] {
+  void hasOrganizationContext; // retained for call-site compatibility
   return navGroups
     .map((group) => ({
       ...group,
@@ -121,7 +124,8 @@ export function visibleGroupsFor(
     }))
     .filter((group) => {
       if (group.items.length === 0) return false;
-      if (role === 'super_admin' && !hasOrganizationContext && group.id !== 'control-center') return false;
+      // super_admin → Control Center only, with or without an org context.
+      if (role === 'super_admin') return group.id === 'control-center';
       return true;
     });
 }
@@ -194,11 +198,9 @@ export const navGroups: NavGroup[] = [
       { page: 'data-infrastructure', label: 'Data Infrastructure', icon: ServerCog },
     ],
   },
-  // The Super Admin surface is intentionally Organizations-centric. Overview
-  // + Organizations drive the manual sales flow; Packages & Pricing unifies
-  // the plan catalog, V1 pricing, and promotional offers; Landing Page
-  // manages public content. Subscriptions / manual payments / licenses are
-  // managed from each Organization (org detail) — no standalone menus.
+  // The Super Admin workspace is the Control Center (see visibleGroupsFor).
+  // Subscriptions / manual payments / licenses are managed from each
+  // Organization (org detail) — no standalone menus.
   {
     id: 'control-center',
     section: 'Control Center',

@@ -1,7 +1,8 @@
 'use server';
+import { Prisma, PrismaClient } from '@prisma/client';
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
-import { authError, requireManagerOrg, isValidDate, parseJsonBody, BodyParseError } from '@/lib/api';
+import { authError, requireManagerOrg, isValidDate, parseJsonBody, BodyParseError, getPrismaForOrg } from '@/lib/api';
 import { parseBoundedRange } from '@/lib/export';
 import { excludeInternalAgentActivities } from '@/lib/agent-process';
 import { effectiveLiveStatus } from '@/lib/presence';
@@ -22,6 +23,11 @@ export async function POST(req: NextRequest) {
     const scope = await requireManagerOrg(req);
     if (!scope.ok) return authError(scope);
     const orgId = scope.organizationId;
+
+    // ORG DATA BOUNDARY: Employee/Activity/Department/Device/Report are all
+    // org-owned (copied to the org DB at cutover) — every report computation
+    // and the persisted Report row resolve through the org client.
+    const orgData = (await getPrismaForOrg(orgId)).client;
 
     let body: Record<string, unknown>;
     try {
@@ -72,19 +78,19 @@ export async function POST(req: NextRequest) {
 
     switch (type) {
       case 'productivity': {
-        const result = await computeProductivityReport(orgId, startDate, endDate);
+        const result = await computeProductivityReport(orgId, startDate, endDate, orgData);
         reportData = result;
         title = `Productivity Report — ${formatDateRange(startDate, endDate)}`;
         break;
       }
       case 'attendance': {
-        const result = await computeAttendanceReport(orgId, startDate, endDate);
+        const result = await computeAttendanceReport(orgId, startDate, endDate, orgData);
         reportData = result;
         title = `Attendance Report — ${formatDateRange(startDate, endDate)}`;
         break;
       }
       case 'activity': {
-        const result = await computeActivityReport(orgId, startDate, endDate);
+        const result = await computeActivityReport(orgId, startDate, endDate, orgData);
         reportData = result;
         title = `Activity Report — ${formatDateRange(startDate, endDate)}`;
         break;
@@ -93,17 +99,17 @@ export async function POST(req: NextRequest) {
         if (!departmentId) {
           return NextResponse.json({ error: 'Department ID is required for department reports' }, { status: 400 });
         }
-        const dept = await db.department.findUnique({ where: { id: departmentId, organizationId: orgId }, select: { name: true } });
+        const dept = await orgData.department.findUnique({ where: { id: departmentId, organizationId: orgId }, select: { name: true } });
         if (!dept) {
           return NextResponse.json({ error: 'Department not found in your organization' }, { status: 404 });
         }
-        const result = await computeDepartmentReport(orgId, departmentId, startDate, endDate);
+        const result = await computeDepartmentReport(orgId, departmentId, startDate, endDate, orgData);
         reportData = result;
         title = `${dept?.name || 'Department'} Report — ${formatDateRange(startDate, endDate)}`;
         break;
       }
       case 'device': {
-        const result = await computeDeviceReport(orgId, startDate, endDate);
+        const result = await computeDeviceReport(orgId, startDate, endDate, orgData);
         reportData = result;
         title = `Device Usage Report — ${formatDateRange(startDate, endDate)}`;
         break;
@@ -115,14 +121,14 @@ export async function POST(req: NextRequest) {
         // Tenant isolation: the employee must belong to the caller's org — a
         // foreign employeeId is concealed with 404 and creates NOTHING (no
         // report, no title with a foreign employee's name).
-        const emp = await db.employee.findFirst({
+        const emp = await orgData.employee.findFirst({
           where: { id: employeeId, organizationId: orgId },
           select: { firstName: true, lastName: true },
         });
         if (!emp) {
           return NextResponse.json({ error: 'Employee not found in your organization' }, { status: 404 });
         }
-        const result = await computeEmployeeReport(orgId, employeeId, startDate, endDate);
+        const result = await computeEmployeeReport(orgId, employeeId, startDate, endDate, orgData);
         reportData = result;
         title = `${emp.firstName} ${emp.lastName} Performance Report — ${formatDateRange(startDate, endDate)}`;
         break;
@@ -133,7 +139,7 @@ export async function POST(req: NextRequest) {
 
     // Persist the report and audit the generation in ONE transaction: actor =
     // verified session user, org = verified session org.
-    const { report } = await db.$transaction(async (tx) => {
+    const { report } = await orgData.$transaction(async (tx) => {
       const created = await tx.report.create({
         data: {
           title,
@@ -173,12 +179,12 @@ function formatDateRange(start: Date, end: Date): string {
 }
 
 // ==================== Productivity Report ====================
-async function computeProductivityReport(orgId: string, startDate: Date, endDate: Date) {
+async function computeProductivityReport(orgId: string, startDate: Date, endDate: Date, orgData: PrismaClient) {
   // Internal agent processes are excluded at the data layer (lib/agent-process.ts)
   // so the monitoring agent never counts as employee application usage.    // WM-02: cap the materialized window to the most recent REPORT_SCAN_CAP
     // rows (the response carries a `truncated` flag). A range wider than the
     // cap never loads the whole table.
-    const activities = excludeInternalAgentActivities(await db.activity.findMany({
+    const activities = excludeInternalAgentActivities(await orgData.activity.findMany({
     where: { employee: { organizationId: orgId }, timestamp: { gte: startDate, lte: endDate } },
     include: { employee: { select: { id: true, firstName: true, lastName: true, departmentId: true } } },
     orderBy: { timestamp: 'desc' },
@@ -196,7 +202,7 @@ async function computeProductivityReport(orgId: string, startDate: Date, endDate
   // (the previous per-activity findUnique was N+1).
   const deptIds = Array.from(new Set(activities.map((a) => a.employee.departmentId).filter(Boolean) as string[]));
   const deptRows = deptIds.length > 0
-    ? await db.department.findMany({ where: { id: { in: deptIds } }, select: { id: true, name: true } })
+    ? await orgData.department.findMany({ where: { id: { in: deptIds } }, select: { id: true, name: true } })
     : [];
   const deptNameMap = new Map(deptRows.map((d) => [d.id, d.name]));
   const deptMap = new Map<string, { name: string; duration: number; productive: number; count: number }>();
@@ -254,8 +260,8 @@ async function computeProductivityReport(orgId: string, startDate: Date, endDate
 }
 
 // ==================== Attendance Report ====================
-async function computeAttendanceReport(orgId: string, startDate: Date, endDate: Date) {
-  const employees = await db.employee.findMany({
+async function computeAttendanceReport(orgId: string, startDate: Date, endDate: Date, orgData: PrismaClient) {
+  const employees = await orgData.employee.findMany({
     where: { organizationId: orgId, status: { not: 'archived' } },
     include: {
       department: { select: { name: true } },
@@ -310,8 +316,8 @@ async function computeAttendanceReport(orgId: string, startDate: Date, endDate: 
 }
 
 // ==================== Activity Report ====================
-async function computeActivityReport(orgId: string, startDate: Date, endDate: Date) {
-  const activities = excludeInternalAgentActivities(await db.activity.findMany({
+async function computeActivityReport(orgId: string, startDate: Date, endDate: Date, orgData: PrismaClient) {
+  const activities = excludeInternalAgentActivities(await orgData.activity.findMany({
     where: { employee: { organizationId: orgId }, timestamp: { gte: startDate, lte: endDate } },
     orderBy: { timestamp: 'desc' },
     take: REPORT_SCAN_CAP,
@@ -388,8 +394,8 @@ async function computeActivityReport(orgId: string, startDate: Date, endDate: Da
 }
 
 // ==================== Department Report ====================
-async function computeDepartmentReport(orgId: string, departmentId: string, startDate: Date, endDate: Date) {
-  const dept = await db.department.findUnique({
+async function computeDepartmentReport(orgId: string, departmentId: string, startDate: Date, endDate: Date, orgData: PrismaClient) {
+  const dept = await orgData.department.findUnique({
     where: { id: departmentId, organizationId: orgId },
     include: {
       employees: {
@@ -447,8 +453,8 @@ async function computeDepartmentReport(orgId: string, departmentId: string, star
 }
 
 // ==================== Device Report ====================
-async function computeDeviceReport(orgId: string, _startDate: Date, _endDate: Date) {
-  const devices = await db.device.findMany({
+async function computeDeviceReport(orgId: string, _startDate: Date, _endDate: Date, orgData: PrismaClient) {
+  const devices = await orgData.device.findMany({
     where: { organizationId: orgId },
     include: {
       employee: { select: { firstName: true, lastName: true, employeeId: true } },
@@ -498,8 +504,8 @@ async function computeDeviceReport(orgId: string, _startDate: Date, _endDate: Da
 }
 
 // ==================== Employee Report ====================
-async function computeEmployeeReport(orgId: string, employeeId: string, startDate: Date, endDate: Date) {
-  const employee = await db.employee.findUnique({
+async function computeEmployeeReport(orgId: string, employeeId: string, startDate: Date, endDate: Date, orgData: PrismaClient) {
+  const employee = await orgData.employee.findUnique({
     where: { id: employeeId, organizationId: orgId },
     include: {
       department: { select: { name: true } },

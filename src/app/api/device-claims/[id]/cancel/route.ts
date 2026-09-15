@@ -1,6 +1,7 @@
 'use server';
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
+import { getPrismaForOrg, findDeviceAcrossActivatedOrgDbs } from '@/lib/org-db';
 import { verifyClaimSecret } from '@/lib/agent/auth';
 import { checkRateLimit, RATE_LIMITS, getClientIpFromHeaders } from '@/lib/rate-limit';
 import { log, requestContext } from '@/lib/logger';
@@ -22,6 +23,22 @@ import { log, requestContext } from '@/lib/logger';
 //
 // After cancellation the agent automatically issues a NEW discovery, which
 // creates a FRESH pending claim (see /api/agent/discover).
+
+/** Read a pending-or-later claim + its device from ONE client, verifying the
+ *  deviceKey binding. Returns null when the id/device pair doesn't match. */
+async function resolveClaim(
+  claimId: string,
+  deviceKey: string,
+  dbClient: Pick<typeof db, 'deviceClaim' | 'device' | '$transaction'>
+) {
+  const found = await dbClient.deviceClaim.findUnique({
+    where: { id: claimId },
+    include: { device: true },
+  });
+  if (!found || found.device.agentKey !== deviceKey) return null;
+  return { ...found, dbClient };
+}
+
 export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -51,13 +68,33 @@ export async function POST(
       );
     }
 
-    const claim = await db.deviceClaim.findUnique({
-      where: { id },
-      include: { device: true },
+    // ORG DATA BOUNDARY: DeviceClaim/Device are org-owned (copied to the org
+    // DB at cutover). The claim id alone doesn't reveal the org, so resolve it
+    // from the platform device registry first (control-plane index) and read
+    // the claim from the org DB; fall back to the bounded cross-org scan for
+    // devices first seen after a cutover.
+    const knownDevice = await db.device.findFirst({
+      where: { agentKey: deviceKey },
+      select: { organizationId: true },
     });
+    let claim: Awaited<ReturnType<typeof resolveClaim>> | null = null;
+    if (knownDevice) {
+      claim = await resolveClaim(id, deviceKey, (await getPrismaForOrg(knownDevice.organizationId)).client);
+    }
+    if (!claim) {
+      // Bounded fallback scan over activated org DBs (same policy as discover).
+      const platformDevice = await findDeviceAcrossActivatedOrgDbs(deviceKey);
+      if (platformDevice) {
+        claim = await resolveClaim(id, deviceKey, (await getPrismaForOrg(platformDevice.organizationId)).client);
+      }
+    }
+    if (!claim) {
+      // Last resort: platform rows for orgs that never cut over.
+      claim = await resolveClaim(id, deviceKey, db);
+    }
     // Claim id + deviceKey are both required — a wrong id is indistinguishable
     // from a missing one (404 concealment, same policy as approve/reject).
-    if (!claim || claim.device.agentKey !== deviceKey) {
+    if (!claim) {
       return NextResponse.json({ error: 'Device claim not found' }, { status: 404 });
     }
 
@@ -87,7 +124,9 @@ export async function POST(
       );
     }
 
-    const result = await db.$transaction(async (tx) => {
+    // Mutate in the SAME database the claim was read from (org DB after a
+    // cutover, platform DB otherwise) — never a mixed write.
+    const result = await claim.dbClient.$transaction(async (tx) => {
       // Guarded transition: if a concurrent approve/reject landed between the
       // pre-check and now, do NOT overwrite the newer state.
       const cancelled = await tx.deviceClaim.updateMany({

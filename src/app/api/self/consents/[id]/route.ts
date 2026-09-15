@@ -48,15 +48,17 @@ export async function PUT(
       return NextResponse.json({ error: scopeError || 'Employee not found' }, { status: 404 });
     }
 
-    // Full employee record (name for the audit trail)
-    const employee = await db.employee.findUnique({
+    // Full employee record (name for the audit trail) — Employee/Consent are
+    // org-owned (copied to the org DB at cutover), so the read happens on the
+    // org client too (orgData falls back to the platform client pre-cutover).
+    const orgData = (await getPrismaForOrg(scoped.organizationId)).client;
+    const employee = await orgData.employee.findUnique({
       where: { id: scoped.id },
       select: { id: true, firstName: true, lastName: true, organizationId: true },
     });
     if (!employee) {
       return NextResponse.json({ error: 'Employee not found' }, { status: 404 });
     }
-    const orgData = (await getPrismaForOrg(employee.organizationId)).client;
 
     // AUDIT ATTRIBUTION: the authenticated actor is the principal. A manager
     // acting on Employee A is recorded as the manager; the employee is the

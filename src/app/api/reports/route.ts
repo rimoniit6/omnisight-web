@@ -1,7 +1,7 @@
 'use server';
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
-import { authError, getSessionOrg, requireManagerOrg, validatePagination, parseJsonBody, BodyParseError, isValidDate } from '@/lib/api';
+import { authError, getSessionOrg, requireManagerOrg, validatePagination, parseJsonBody, BodyParseError, isValidDate, getPrismaForOrg } from '@/lib/api';
 import { parseBoundedRange } from '@/lib/export';
 import { log, requestContext } from '@/lib/logger';
 
@@ -27,8 +27,12 @@ export async function GET(req: NextRequest) {
     const where: Record<string, unknown> = { organizationId: org.id };
     if (typeFilter) where.type = typeFilter;
 
+    // ORG DATA BOUNDARY: Report rows are org-owned (copied to the org DB at
+    // cutover) — list/count resolve through the org client.
+    const orgData = (await getPrismaForOrg(org.id)).client;
+
     const [rows, total] = await Promise.all([
-      db.report.findMany({
+      orgData.report.findMany({
         where,
         orderBy: { createdAt: 'desc' },
         skip: pagination.skip,
@@ -52,7 +56,7 @@ export async function GET(req: NextRequest) {
           filePath: true,
         },
       }),
-      db.report.count({ where }),
+      orgData.report.count({ where }),
     ]);
 
     // S-4: expose hasData instead of the raw payload / filesystem path.
@@ -127,10 +131,16 @@ export async function POST(req: NextRequest) {
     const org = await getSessionOrg(req);
     if (!org) return NextResponse.json({ error: 'No organization found' }, { status: 400 });
 
-    // Create + audit in one transaction (actor = verified session user).
+    // ORG DATA BOUNDARY (POST): Report + AuditLog are org-owned — resolve the
+    // org client here (GET resolves its own client above).
+    const orgData = (await getPrismaForOrg(org.id)).client;
+
+    // Create + audit in one transaction on the ORG client (Report and AuditLog
+    // are both org-owned — copied to the org DB at cutover), so a generated
+    // report is never stranded on the platform DB.
     // Intentional non-idempotency: each POST is an explicit "generate" action
     // and creates a new report row (same as the daily-report flow).
-    const { report } = await db.$transaction(async (tx) => {
+    const { report } = await orgData.$transaction(async (tx) => {
       const created = await tx.report.create({
         data: {
           title,

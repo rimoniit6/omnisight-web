@@ -8,36 +8,147 @@ services:
       POSTGRES_PASSWORD: omnisight_password
       POSTGRES_DB: omnisight_db
     ports:
-      - "5433:5432"
+      # Host access to PostgreSQL is LOOPBACK-ONLY. Container-to-container
+      # access (web -> db) uses the compose network at db:5433 and is
+      # unaffected by this binding. To reach the DB from another machine use
+      # the Caddy gateway or a tunnel - never widen this binding.
+      - "127.0.0.1:5433:5433"
     volumes:
       - pgdata:/var/lib/postgresql/data
     networks:
       - omnisight_network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U omnisight_user -d omnisight_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # One-shot migration service. Runs `prisma migrate deploy` against the
+  # database and exits. Must complete successfully before the web service
+  # starts. Usage:
+  #   docker compose run --rm web-migrate
+  # Or as part of the normal startup sequence (web depends on this service).
+  web-migrate:
+    build: .
+    container_name: omnisight_migrate
+    env_file:
+      - .env
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgresql://omnisight_user:omnisight_password@db:5432/omnisight_db
+      DIRECT_URL: postgresql://omnisight_user:omnisight_password@db:5432/omnisight_db
+    command: ["npx", "prisma", "migrate", "deploy"]
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - omnisight_network
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /app/node_modules/@prisma/engines
+    # One-shot: must NOT restart on success or failure.
+    restart: "no"
 
   web:
     build: .
     container_name: omnisight_web
     restart: always
+    # The Next.js container is NOT published to the LAN. The host Caddyfile
+    # (see docs/DEPLOYMENT.md) is the intended public gateway and reverse
+    # proxies to localhost:3000, so loopback binding keeps both that routing
+    # and local development working while removing direct LAN exposure.
+    # If local development on another machine truly needs it, change this to
+    # "3000:3000" deliberately - Caddy remains the production entry point.
     ports:
-      - "3000:3000"
+      - "127.0.0.1:3000:3000"
+    # Runtime environment injection. Compose interpolation variables are NOT
+    # automatically injected into containers - so the service explicitly loads
+    # the repository's .env file (the documented `cp .env.production.example
+    # .env` workflow). .env is gitignored and MUST never be committed.
+    env_file:
+      - .env
     environment:
       NODE_ENV: production
-      # Local storage root inside the container. The Dockerfile sets WORKDIR=/app,
-      # so the default local path resolves to /app/uploads.
+      # Local storage root must live on the writable uploads volume.
       STORAGE_DRIVER: local
       STORAGE_LOCAL_PATH: /app/uploads
-      # Required runtime secrets — set these in production via .env or secrets:
-      # DATABASE_URL, DIRECT_URL, JWT_SECRET, ENCRYPTION_KEY,
-      # SUPER_ADMIN_EMAIL, SUPER_ADMIN_PASSWORD, NEXT_PUBLIC_APP_URL
+      # The .env DATABASE_URL/DIRECT_URL point at the host loopback
+      # (127.0.0.1:5432) for HOST runs; inside the container they must reach
+      # the db service over the compose network instead. These override the
+      # env_file values and reuse the bootstrap credentials the db service
+      # declares above - keep them consistent with that block.
+      DATABASE_URL: postgresql://omnisight_user:omnisight_password@db:5432/omnisight_db
+      DIRECT_URL: postgresql://omnisight_user:omnisight_password@db:5432/omnisight_db
     volumes:
       # Persist local screenshot/avatar files across container restarts.
       # Mounted at /app/uploads so LocalStorageDriver writes screenshots to
       # /app/uploads/screenshots/ and avatars to /app/uploads/public/uploads/avatars/.
       - uploads:/app/uploads
     depends_on:
-      - db
+      db:
+        condition: service_healthy
+      web-migrate:
+        condition: service_completed_successfully
     networks:
       - omnisight_network
+    # Container hardening: drop every Linux capability, forbid privilege
+    # escalation, and make the root filesystem read-only. Runtime writes are
+    # limited to the uploads volume and the two transient tmpfs mounts below.
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /app/.next/cache
+
+  # ── Live Updates WebSocket service (Bun) ────────────────────────────────
+  # Realtime push service. Serves Socket.IO on port 3010 and must be reachable
+  # from the host via NEXT_PUBLIC_LIVE_UPDATES_URL (default ws://localhost:3010).
+  # Never runs migrations — web-migrate owns that responsibility.
+  live-updates:
+    build:
+      context: .
+      dockerfile: mini-services/live-updates/Dockerfile
+    container_name: omnisight_live_updates
+    restart: always
+    ports:
+      - "127.0.0.1:3010:3010"
+    env_file:
+      - .env
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgresql://omnisight_user:omnisight_password@db:5432/omnisight_db
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY}
+      JWT_SECRET: ${JWT_SECRET}
+      ALLOWED_ORIGIN: ${ALLOWED_ORIGIN:-http://localhost:3000}
+      LIVE_UPDATES_PORT: "3010"
+    depends_on:
+      db:
+        condition: service_healthy
+      web-migrate:
+        condition: service_completed_successfully
+    networks:
+      - omnisight_network
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:3010/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
 
 volumes:
   pgdata:

@@ -116,11 +116,18 @@ test('CLEANUP-3: org-less SA sidebar is exactly the Control Center entries', () 
     standalone,
     'org-less super_admin sidebar contains exactly the four Control Center entries in order',
   );
-  // Once the SA has an active organization context (e.g. switched into a
-  // MANAGED org), tenant operational groups reappear alongside Control Center.
+  // AUTHORIZATION ≠ NAVIGATION: even with an active organization context
+  // (membership-driven or the MANAGED-org switch flow), the SA workspace is
+  // the Control Center. Tenant operational groups NEVER appear in the SA
+  // sidebar; SA tenant access is an authorization capability exercised
+  // through control-plane surfaces, not a navigation change.
   const saWithOrg = visibleGroupsFor('super_admin', true).flatMap((g) => g.items);
-  assert.ok(saWithOrg.length > standalone.length, 'SA with an org context gains tenant operational groups');
-  assert.ok(saWithOrg.some((i) => i.page === 'employees'), 'SA with org context sees tenant operational pages');
+  assert.deepEqual(
+    saWithOrg.map((i) => i.page),
+    standalone,
+    'super_admin sidebar is the Control Center with or without an org context',
+  );
+  assert.ok(!saWithOrg.some((i) => i.page === 'employees'), 'SA never gets tenant operational pages');
   assert.ok(saWithOrg.some((i) => i.page === 'super-admin-organizations'), 'Control Center stays visible with org context');
   assert.ok(!saWithOrg.some((i) => i.page === 'organization'), 'tenant Organization settings stays superseded for SA');
   for (const p of standalone as PageType[]) {

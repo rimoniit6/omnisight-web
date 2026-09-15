@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
-import { authError, getSessionOrg, requireManagerOrg, parseJsonBody, BodyParseError, isValidDate } from '@/lib/api';
+import { authError, getSessionOrg, requireManagerOrg, parseJsonBody, BodyParseError, isValidDate, getPrismaForOrg } from '@/lib/api';
 import { excludeInternalAgentActivities } from '@/lib/agent-process';
 import { localDayKey, zonedDayStart, zonedDayEnd, safeTimezone } from '@/lib/timezone';
 import { effectiveLiveStatus } from '@/lib/presence';
@@ -35,6 +35,12 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'No organization found' }, { status: 404 });
     }
 
+    // ORG DATA BOUNDARY: Employee/Activity/BreakSession/Alert/Screenshot/Device/
+    // Report are all org-owned (copied to the org DB at cutover) — the whole
+    // daily report resolves through the org client so the generated report
+    // reflects (and lands in) the same database the Agent writes to.
+    const orgData = (await getPrismaForOrg(org.id)).client;
+
     // Org-local calendar day (S-6 / F-06): the report's window uses the
     // ORGANIZATION timezone — never server-local midnight. A specified date
     // is interpreted as a YYYY-MM-DD local day key; absent → today (local).
@@ -53,13 +59,13 @@ export async function POST(req: NextRequest) {
     const nextDay = new Date(zonedDayEnd(dayKey, timezone).getTime() + 1);
 
     // Get active employee count
-    const activeEmployees = await db.employee.count({
+    const activeEmployees = await orgData.employee.count({
       where: { status: 'active', organizationId: org.id },
     });
 
     // Get all activities for the day — ALWAYS scoped to the caller's org via
     // the employee relation (Activity has no organizationId column).
-    const activities = excludeInternalAgentActivities(await db.activity.findMany({
+    const activities = excludeInternalAgentActivities(await orgData.activity.findMany({
       where: {
         timestamp: { gte: targetDate, lt: nextDay },
         employee: { organizationId: org.id },
@@ -162,7 +168,7 @@ export async function POST(req: NextRequest) {
     // count is sessions STARTED within the day. This is the same semantics
     // Break Monitor uses (previously the report only counted legacy activity
     // events and never reported break minutes).
-    const breakSessions = await db.breakSession.findMany({
+    const breakSessions = await orgData.breakSession.findMany({
       where: {
         organizationId: org.id,
         startedAt: { gte: targetDate, lt: nextDay },
@@ -183,7 +189,7 @@ export async function POST(req: NextRequest) {
     }));
 
     // Get alerts for the day (org-scoped)
-    const alertsCount = await db.alert.count({
+    const alertsCount = await orgData.alert.count({
       where: {
         createdAt: { gte: targetDate, lt: nextDay },
         organizationId: org.id,
@@ -191,7 +197,7 @@ export async function POST(req: NextRequest) {
     });
 
     // Get screenshots count for the day (org-scoped)
-    const screenshotsCount = await db.screenshot.count({
+    const screenshotsCount = await orgData.screenshot.count({
       where: {
         capturedAt: { gte: targetDate, lt: nextDay },
         organizationId: org.id,
@@ -201,7 +207,7 @@ export async function POST(req: NextRequest) {
     // Get online devices — counted by heartbeat freshness, never the sticky
     // status column (an agent that stopped heartbeating is NOT online even if
     // Device.status still reads 'online').
-    const orgDevices = await db.device.findMany({
+    const orgDevices = await orgData.device.findMany({
       where: { organizationId: org.id },
       select: { status: true, lastHeartbeat: true },
     });
@@ -240,7 +246,7 @@ export async function POST(req: NextRequest) {
     // Save as report + audit the generation (actor = verified session user;
     // organization = verified session org). Transactional so a failed audit
     // never leaves an orphan report and a failed save never audits success.
-    const { report } = await db.$transaction(async (tx) => {
+    const { report } = await orgData.$transaction(async (tx) => {
       const created = await tx.report.create({
         data: {
           title: `Daily Report — ${formatDate(targetDate)}`,

@@ -25,6 +25,12 @@ export async function GET(req: NextRequest) {
     const orgId = authResult.employee!.organizationId;
     const employeeId = authResult.employee!.id;
 
+    // ORG DATA BOUNDARY: BreakSession/AppListEntry/Employee/ProjectMember are
+    // org-owned (copied to the org DB at cutover) — every org-owned read below
+    // resolves through the org client so the agent's config is always sourced
+    // from the authoritative post-cutover data (never a stale platform copy).
+    const orgData = authResult.orgData ?? db;
+
     // Organization timezone — authoritative for the agent's working-hours
     // window. Falls back to UTC only when the org row is missing (never the
     // global SystemSetting).
@@ -68,8 +74,9 @@ export async function GET(req: NextRequest) {
         ? (org?.screenshotInterval ?? 5)
         : 0;
 
-    // Canonical break state for THIS employee (server-authoritative).
-    const openBreak = await db.breakSession.findFirst({
+    // Canonical break state for THIS employee (server-authoritative). Read
+    // from the org DB — the same store the heartbeat reads (no split-brain).
+    const openBreak = await orgData.breakSession.findFirst({
       where: { employeeId, endedAt: null },
       orderBy: { startedAt: 'desc' },
       select: { startedAt: true },
@@ -141,7 +148,7 @@ export async function GET(req: NextRequest) {
     // schema are included. The version lets the agent detect unchanged/new/
     // stale policy without comparing full lists.
     const [policyRows, policyVersionRow] = await Promise.all([
-      db.appListEntry.findMany({
+      orgData.appListEntry.findMany({
         where: { organizationId: orgId, isActive: true },
         orderBy: { createdAt: 'asc' },
         take: MAX_POLICY_PAYLOAD_ENTRIES,
@@ -180,7 +187,7 @@ export async function GET(req: NextRequest) {
     // relationships on every sync — the agent never stores a second conflicting
     // copy, so admin changes (e.g. reassign a department or remove a project)
     // are reflected on the agent's next config refresh.
-    const employee = await db.employee.findUnique({
+    const employee = await orgData.employee.findUnique({
       where: { id: authResult.employee!.id },
       select: {
         employeeId: true,

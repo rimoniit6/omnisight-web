@@ -22,7 +22,10 @@ export async function GET(
     if (!id || id.length > 64) {
       return NextResponse.json({ error: 'Invalid sentiment record id' }, { status: 400 });
     }
-    const record = await db.sentimentRecord.findFirst({
+    // ORG DATA BOUNDARY: SentimentRecord is org-owned (copied to the org DB at
+    // cutover) — resolve through the org client (DELETE below already does).
+    const orgData = (await getPrismaForOrg(orgId)).client;
+    const record = await orgData.sentimentRecord.findFirst({
       where: { id, employee: { organizationId: orgId } },
       include: {
         employee: {

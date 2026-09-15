@@ -1,7 +1,7 @@
 'use server';
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
-import { authError, requireManagerOrg } from '@/lib/api';
+import { authError, requireManagerOrg, getPrismaForOrg } from '@/lib/api';
 import { excludeInternalAgentActivities } from '@/lib/agent-process';
 import { log, requestContext } from '@/lib/logger';
 
@@ -17,7 +17,10 @@ export async function GET(
     const { id } = await params;
     const org = { id: scope.organizationId };
     if (!org) return NextResponse.json({ error: 'No organization found' }, { status: 400 });
-    const report = await db.report.findUnique({ where: { id, organizationId: org.id } });
+    // ORG DATA BOUNDARY: Report/Activity/Employee/Device are org-owned (copied
+    // to the org DB at cutover) — the export resolves through the org client.
+    const orgData = (await getPrismaForOrg(org.id)).client;
+    const report = await orgData.report.findUnique({ where: { id, organizationId: org.id } });
     if (!report) {
       return NextResponse.json({ error: 'Report not found' }, { status: 404 });
     }
@@ -32,7 +35,7 @@ export async function GET(
 
     switch (report.type) {
       case 'productivity': {
-        const activities = excludeInternalAgentActivities(await db.activity.findMany({
+        const activities = excludeInternalAgentActivities(await orgData.activity.findMany({
           where: {
             employee: { organizationId: org.id },
             timestamp: { gte: startDate, lte: endDate },
@@ -59,7 +62,7 @@ export async function GET(
         break;
       }
       case 'attendance': {
-        const employees = await db.employee.findMany({
+        const employees = await orgData.employee.findMany({
           where: { organizationId: org.id },
           include: {
             department: { select: { name: true } },
@@ -88,7 +91,7 @@ export async function GET(
         break;
       }
       case 'activity': {
-        const activities = excludeInternalAgentActivities(await db.activity.findMany({
+        const activities = excludeInternalAgentActivities(await orgData.activity.findMany({
           where: {
             employee: { organizationId: org.id },
             timestamp: { gte: startDate, lte: endDate },
@@ -113,7 +116,7 @@ export async function GET(
         break;
       }
       case 'device': {
-        const devices = await db.device.findMany({
+        const devices = await orgData.device.findMany({
           where: { organizationId: org.id },
           include: {
             employee: { select: { firstName: true, lastName: true, employeeId: true } },

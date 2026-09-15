@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
+import { getPrismaForOrg } from '@/lib/org-db';
 import { log } from '@/lib/logger';
 import { revokeAgentSession } from '@/lib/agent/session';
 import { getClientIpFromHeaders } from '@/lib/rate-limit';
@@ -62,12 +63,23 @@ export async function POST(req: NextRequest) {
 
     if (employeeId) {
       try {
-        const employee = await db.employee.findUnique({
+        // ORG DATA BOUNDARY: Employee/AuditLog are org-owned (copied to the
+        // org DB at cutover) — read the employee and write the audit row on
+        // the org client (AgentToken deletion above is credential control
+        // plane and stays platform-side).
+        const platformEmployee = await db.employee.findUnique({
+          where: { id: employeeId },
+          select: { organizationId: true },
+        });
+        const orgData = platformEmployee?.organizationId
+          ? (await getPrismaForOrg(platformEmployee.organizationId)).client
+          : db;
+        const employee = await orgData.employee.findUnique({
           where: { id: employeeId },
           select: { id: true, firstName: true, lastName: true, organizationId: true },
         });
         // Audit the logout (safe fields only — never the token value).
-        await db.auditLog.create({
+        await orgData.auditLog.create({
           data: {
             action: 'logout',
             resource: 'agent_account',

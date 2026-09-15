@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { getSessionOrg, authenticateRequest, validatePagination } from '@/lib/api';
+
+import { getSessionOrg, authenticateRequest, validatePagination, getPrismaForOrg } from '@/lib/api';
 import { hasRolePermission } from '@/lib/auth';
 import { isValidConsentType, CONSENT_TYPES, MAX_CONSENT_NOTES_LENGTH, applyConsentTransition } from '@/lib/consent';
 import type { ConsentStatus } from '@/lib/consent';
@@ -37,6 +37,11 @@ export async function GET(req: NextRequest) {
     }
     const { page, pageSize, skip } = pagination;
 
+    // Consent/Employee are org-owned (copied to the org DB at cutover) — read
+    // through the org client so a CUSTOMER_DB org's admin always sees the
+    // authoritative consent state the Agent enforces against.
+    const orgData = (await getPrismaForOrg(org.id)).client;
+
     const where: Record<string, unknown> = { organizationId: org.id };
     if (consentType) where.consentType = consentType;
     if (status) where.status = status;
@@ -50,7 +55,7 @@ export async function GET(req: NextRequest) {
     }
 
     const [consents, total] = await Promise.all([
-      db.consent.findMany({
+      orgData.consent.findMany({
         where,
         include: {
           employee: { select: { id: true, firstName: true, lastName: true, employeeId: true, avatar: true, designation: true, department: { select: { name: true } } } },
@@ -59,11 +64,11 @@ export async function GET(req: NextRequest) {
         skip,
         take: pageSize,
       }),
-      db.consent.count({ where }),
+      orgData.consent.count({ where }),
     ]);
 
     // Stats
-    const allConsents = await db.consent.findMany({
+    const allConsents = await orgData.consent.findMany({
       where: { organizationId: org.id },
       select: { status: true, consentType: true, employeeId: true },
     });
@@ -124,7 +129,11 @@ export async function POST(req: NextRequest) {
     }
 
     // Tenant isolation: the employee must belong to the caller's organization.
-    const employee = await db.employee.findFirst({
+    // Employee/Consent/ConsentPolicy are org-owned — the whole mutation runs
+    // on the org client so a post-cutover grant is visible to Agent
+    // enforcement (no split-brain).
+    const orgData = (await getPrismaForOrg(org.id)).client;
+    const employee = await orgData.employee.findFirst({
       where: { id: employeeId, organizationId: org.id },
       select: { id: true },
     });
@@ -133,7 +142,7 @@ export async function POST(req: NextRequest) {
     }
 
     // Check existing consent for same type (org-scoped via the verified employee)
-    const existing = await db.consent.findFirst({
+    const existing = await orgData.consent.findFirst({
       where: { employeeId: employee.id, consentType },
     });
     if (existing && existing.status === 'granted') {
@@ -152,7 +161,7 @@ export async function POST(req: NextRequest) {
     }
 
     try {
-      const consent = await db.$transaction(async (tx) => {
+      const consent = await orgData.$transaction(async (tx) => {
         if (existing) {
           return applyConsentTransition(
             tx,

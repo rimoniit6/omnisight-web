@@ -28,31 +28,62 @@ export interface JWTPayload {
 
 // ─── Config from env ────────────────────────────────────────────────────────
 
-/** Patterns that match known placeholder / default secret values. */
+/**
+ * Patterns that match known placeholder / default secret values.
+ * Kept deliberately small — a pattern prefix plus a handful of exact weak
+ * literals — and used alongside length/entropy checks so legitimate random
+ * secrets are never rejected.
+ */
 const PLACEHOLDER_PATTERNS = [
-  /^replace_with/i,
+  /^replace[ _-]/,
   /^change_me/i,
-  /^your_secret/i,
-  /^your_/i,
+  /^changeme/i,
+  /^your/i,
   /^example/i,
   /^default/i,
-  /^secret$/i,
-  /^changeme/i,
-  /^password$/i,
+  /^secret/i,
+  /^password/i,
   /^admin/i,
+  /^superadmin/i,
   /^test$/i,
   /^dev$/i,
   /^localhost/i,
   /^placeholder/i,
   /^todo/i,
   /^fixme/i,
+  /^dummy/i,
   /^xxx/i,
 ];
 
 /**
- * Assert that a secret is not a known placeholder value.
- * Throws a descriptive error if the secret matches a placeholder pattern.
- * Never logs or exposes the actual secret value.
+ * Exact weak/default literals (normalized to lowercase). Largest share are
+ * development-default passwords — blocking the full-value matches is enough;
+ * longer strong passphrases that merely contain these words stay valid.
+ */
+const WEAK_LITERALS = new Set([
+  'secret',
+  'password',
+  'changeme',
+  'letmein',
+  'superadmin',
+  'admin123',
+  'password123',
+  'test123',
+  'qwerty123',
+  'rimon0000000',
+]);
+
+/** A secret consisting of a single repeated character (e.g. all-zeros). */
+const REPEATED_CHAR_RE = /^(.)\1+$/;
+
+/** Placeholder / weak Super Admin email local-parts. */
+const WEAK_EMAIL_RE = /^(change_me|changeme|your|your_|example)/i;
+const WEAK_EMAIL_LITERALS = new Set(['admin@example.com', 'user@example.com']);
+
+/**
+ * Assert that a secret is not a known placeholder or weak default value.
+ * Throws a descriptive error if the secret is missing, too short, or matches
+ * a known placeholder/weak pattern. Never logs or exposes the actual value.
  */
 export function assertProductionSecret(
   value: string,
@@ -65,13 +96,52 @@ export function assertProductionSecret(
   if (value.length < minLength) {
     throw new Error(`${name} must be at least ${minLength} characters`);
   }
+  const normalized = value.toLowerCase();
   for (const pattern of PLACEHOLDER_PATTERNS) {
-    if (pattern.test(value)) {
+    if (pattern.test(normalized)) {
       throw new Error(
         `${name} contains a known placeholder value. ` +
         'Generate a cryptographically random secret and set it in your environment.'
       );
     }
+  }
+  if (WEAK_LITERALS.has(normalized)) {
+    throw new Error(
+      `${name} is a known weak/default value. ` +
+      'Generate a cryptographically random secret and set it in your environment.'
+    );
+  }
+  if (REPEATED_CHAR_RE.test(value)) {
+    throw new Error(
+      `${name} is a low-entropy value (a single repeated character). ` +
+      'Generate a cryptographically random secret and set it in your environment.'
+    );
+  }
+  if (new Set(normalized).size < 3) {
+    throw new Error(
+      `${name} is a low-entropy value (too few distinct characters). ` +
+      'Generate a cryptographically random secret and set it in your environment.'
+    );
+  }
+  if (/^\d+$/.test(value)) {
+    throw new Error(
+      `${name} is a low-entropy value (numeric-only). ` +
+      'Generate a cryptographically random secret and set it in your environment.'
+    );
+  }
+}
+
+/**
+ * Assert that a Super Admin bootstrap email is not a placeholder value.
+ * Throws a descriptive error on known placeholder emails.
+ */
+export function assertAdminEmailNotPlaceholder(email: string): void {
+  const normalized = email.toLowerCase();
+  if (WEAK_EMAIL_RE.test(normalized) || WEAK_EMAIL_LITERALS.has(normalized)) {
+    throw new Error(
+      'SUPER_ADMIN_EMAIL contains a known placeholder value. ' +
+      'Use a real operator email address.'
+    );
   }
 }
 

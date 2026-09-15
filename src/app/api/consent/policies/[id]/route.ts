@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { authenticateRequest, getSessionOrg } from '@/lib/api';
+
+import { authenticateRequest, getSessionOrg, getPrismaForOrg } from '@/lib/api';
 import { hasRolePermission } from '@/lib/auth';
 import { log, requestContext } from '@/lib/logger';
 
@@ -31,12 +31,16 @@ export async function PATCH(
     }
 
     // Tenant isolation: policy must belong to the caller's organization.
-    const policy = await db.consentPolicy.findUnique({ where: { id } });
+    // ConsentPolicy + its audit trail are org-owned (copied at cutover) —
+    // lifecycle mutations run on the org client so the published version the
+    // Agent's enforcement binds to is always the authoritative one.
+    const orgData = (await getPrismaForOrg(org.id)).client;
+    const policy = await orgData.consentPolicy.findUnique({ where: { id } });
     if (!policy || policy.organizationId !== org.id) {
       return NextResponse.json({ error: 'Policy not found' }, { status: 404 });
     }
 
-    const updated = await db.$transaction(async (tx) => {
+    const updated = await orgData.$transaction(async (tx) => {
       let next = policy;
 
       if (action === 'publish') {
@@ -118,7 +122,8 @@ export async function DELETE(
     if (!org) return NextResponse.json({ error: 'No organization found' }, { status: 404 });
 
     const { id } = await params;
-    const policy = await db.consentPolicy.findUnique({ where: { id } });
+    const orgData = (await getPrismaForOrg(org.id)).client;
+    const policy = await orgData.consentPolicy.findUnique({ where: { id } });
     if (!policy || policy.organizationId !== org.id) {
       return NextResponse.json({ error: 'Policy not found' }, { status: 404 });
     }
@@ -126,7 +131,7 @@ export async function DELETE(
       return NextResponse.json({ error: 'Only draft policies can be deleted' }, { status: 400 });
     }
 
-    await db.$transaction(async (tx) => {
+    await orgData.$transaction(async (tx) => {
       await tx.auditLog.create({
         data: {
           action: 'delete',

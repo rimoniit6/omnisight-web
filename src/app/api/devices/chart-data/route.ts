@@ -1,7 +1,7 @@
 'use server';
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
-import { authError, requireSessionOrg } from '@/lib/api';
+import { authError, requireSessionOrg, getPrismaForOrg } from '@/lib/api';
 import { effectiveLiveStatus } from '@/lib/presence';
 import { log, requestContext } from '@/lib/logger';
 
@@ -10,7 +10,11 @@ export async function GET(req: NextRequest) {
     const scope = await requireSessionOrg(req, { allowGlobal: true });
     if (!scope.ok) return authError(scope);
 
-    const devices = await db.device.findMany({
+    // ORG DATA BOUNDARY: Device is org-owned (copied to the org DB at
+    // cutover) — chart data resolves through the org client.
+    const orgData = (await getPrismaForOrg(scope.organizationId as string)).client;
+
+    const devices = await orgData.device.findMany({
       where: scope.organizationId ? { organizationId: scope.organizationId } : {},
       select: { status: true, operatingSystem: true, name: true, lastHeartbeat: true, registeredAt: true },
     });

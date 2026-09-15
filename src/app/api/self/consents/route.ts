@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
 import { getScopedEmployee } from '@/lib/self-guard';
+import { getPrismaForOrg } from '@/lib/api';
 import { CONSENT_TYPES } from '@/lib/consent';
 import { log, requestContext } from '@/lib/logger';
 
@@ -23,15 +23,21 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: scopeError || 'Employee not found' }, { status: 404 });
     }
 
+    // ORG DATA BOUNDARY: ConsentPolicy/Consent/ConsentLog are org-owned
+    // (copied to the org DB at cutover) — the self-service view resolves
+    // through the org client so the employee sees the same consent state the
+    // Agent enforcement path reads.
+    const orgData = (await getPrismaForOrg(scoped.organizationId)).client;
+
     // Published policies per type for the employee's org
-    const publishedPolicies = await db.consentPolicy.findMany({
+    const publishedPolicies = await orgData.consentPolicy.findMany({
       where: { organizationId: scoped.organizationId, status: 'published' },
       select: { id: true, consentType: true, title: true, version: true, content: true },
     });
     const policyByType = new Map(publishedPolicies.map((p) => [p.consentType, p]));
 
     // Fetch existing consents with their logs
-    const existingConsents = await db.consent.findMany({
+    const existingConsents = await orgData.consent.findMany({
       where: { employeeId: scoped.id },
       include: {
         consentLogs: {

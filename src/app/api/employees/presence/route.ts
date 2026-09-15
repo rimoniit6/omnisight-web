@@ -1,7 +1,7 @@
 'use server';
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
-import { authError, requireSessionOrg } from '@/lib/api';
+import { authError, requireSessionOrg, getPrismaForOrg } from '@/lib/api';
 import { deriveEmployeePresence } from '@/lib/presence';
 import { log, requestContext } from '@/lib/logger';
 
@@ -42,15 +42,20 @@ export async function GET(req: NextRequest) {
   try {
     const cutoff = new Date(Date.now());
 
+    // ORG DATA BOUNDARY: Employee/Device are org-owned (copied to the org DB
+    // at cutover) — presence resolves through the org client so the snapshot
+    // matches what the Agent heartbeat writes.
+    const orgData = (await getPrismaForOrg(organizationId)).client;
+
     // All visible employees of the session organization.
-    const employees = await db.employee.findMany({
+    const employees = await orgData.employee.findMany({
       where: { organizationId, status: { not: 'archived' } },
       select: { id: true },
     });
 
     // Fresh devices are rare relative to the employee set; fetch devices with
     // a heartbeat at all and let the pure helper apply the threshold.
-    const devices = await db.device.findMany({
+    const devices = await orgData.device.findMany({
       where: { organizationId, employeeId: { not: null }, lastHeartbeat: { not: null } },
       select: { employeeId: true, lastHeartbeat: true },
     });

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { getSessionOrg, authenticateRequest, validatePagination } from '@/lib/api';
+
+import { getSessionOrg, authenticateRequest, validatePagination, getPrismaForOrg } from '@/lib/api';
 import { hasRolePermission } from '@/lib/auth';
 import { log, requestContext } from '@/lib/logger';
 
@@ -30,10 +30,14 @@ export async function GET(req: NextRequest) {
     }
     const { page, pageSize, skip } = pagination;
 
+    // ConsentLog/Consent are org-owned (copied at cutover) — read through the
+    // org client so the audit trail matches the authoritative consent state.
+    const orgData = (await getPrismaForOrg(org.id)).client;
+
     const where: Record<string, unknown> = { organizationId: org.id };
     if (consentId) {
       // Tenant isolation: the referenced consent must belong to the caller's org.
-      const consent = await db.consent.findUnique({
+      const consent = await orgData.consent.findUnique({
         where: { id: consentId, organizationId: org.id },
         select: { id: true },
       });
@@ -45,13 +49,13 @@ export async function GET(req: NextRequest) {
     if (action) where.action = action;
 
     const [logs, total] = await Promise.all([
-      db.consentLog.findMany({
+      orgData.consentLog.findMany({
         where,
         orderBy: { createdAt: 'desc' },
         skip,
         take: pageSize,
       }),
-      db.consentLog.count({ where }),
+      orgData.consentLog.count({ where }),
     ]);
 
     return NextResponse.json({ data: logs, total, page, pageSize, totalPages: Math.ceil(total / pageSize) });

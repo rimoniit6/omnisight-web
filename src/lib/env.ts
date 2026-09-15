@@ -10,6 +10,7 @@
 // startup step (see src/instrumentation.ts register()) plus a standalone CLI:
 
 import { z } from 'zod';
+import { assertProductionSecret } from '@/lib/auth';
 
 // ─── Schemas ───────────────────────────────────────────────────────────────
 
@@ -52,11 +53,16 @@ export function validateEnv(): EnvValidationResult {
     errors.push(...always.error.issues.map((i) => i.message));
   }
 
+  // Reject known placeholder / weak-default secrets at startup (fail-fast),
+  // not just lazily on first sign/encrypt call.
+  assertSecretError(env.JWT_SECRET, 'JWT_SECRET', 16, errors);
+
   const isProduction = env.NODE_ENV === 'production';
 
   if (isProduction) {
     const prod = productionRequired.safeParse({ ENCRYPTION_KEY: env.ENCRYPTION_KEY });
     if (!prod.success) errors.push(...prod.error.issues.map((i) => i.message));
+    assertSecretError(env.ENCRYPTION_KEY, 'ENCRYPTION_KEY', 16, errors);
   }
 
   const result: EnvValidationResult = { ok: errors.length === 0, errors };
@@ -67,6 +73,20 @@ export function validateEnv(): EnvValidationResult {
     );
   }
   return result;
+}
+
+/** Push a precise placeholder/weak-secret error for a secret env var if invalid. */
+function assertSecretError(
+  raw: string | undefined,
+  name: string,
+  minLength: number,
+  errors: string[],
+): void {
+  try {
+    assertProductionSecret(raw || '', name, minLength);
+  } catch (err) {
+    errors.push(String((err as Error).message));
+  }
 }
 
 /**
