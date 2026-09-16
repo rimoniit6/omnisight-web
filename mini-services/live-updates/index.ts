@@ -14,8 +14,7 @@
 
 import { createServer } from 'http';
 import { Server } from 'socket.io';
-import { createHmac, timingSafeEqual, createHash, createDecipheriv } from 'crypto';
-import { existsSync } from 'fs';
+import { createHmac, timingSafeEqual } from 'crypto';
 import path from 'path';
 import { PrismaClient } from '@prisma/client';
 import { Client } from 'pg';
@@ -25,33 +24,11 @@ import { nextPollCursor } from './poll-cursor';
 import { loadPersistedCursor, persistCursor } from './cursor-store';
 import { NOTIFY_CHANNEL, ensureNotifyTriggers } from './notify-triggers';
 
-// ─── Minimal AES-256-GCM decryption (mirrors src/lib/crypto.ts) ────────────
-// The live-updates service is a standalone Bun process and cannot import
-// the main app's crypto module. This implements the same AES-256-GCM
-// envelope decryption using the same ENCRYPTION_KEY derivation.
-const ENCRYPTION_KEY = process.env.ENCRYPTION_KEY || process.env.JWT_SECRET || '';
-
-function deriveAesKey(secret: string): Buffer {
-  return createHash('sha256').update(secret).digest();
-}
-
-function decryptSecret(encrypted: string): string {
-  if (!encrypted) return '';
-  try {
-    const raw = Buffer.from(encrypted, 'base64');
-    if (raw.length < 29) return ''; // IV(12) + tag(16) + at least 1 byte
-    const iv = raw.subarray(0, 12);
-    const tag = raw.subarray(12, 28);
-    const ciphertext = raw.subarray(28);
-    const key = deriveAesKey(ENCRYPTION_KEY);
-    const decipher = createDecipheriv('aes-256-gcm', key, iv);
-    decipher.setAuthTag(tag);
-    const decrypted = Buffer.concat([decipher.update(ciphertext), decipher.final()]);
-    return decrypted.toString('utf-8');
-  } catch {
-    return '';
-  }
-}
+// ─── Crypto (mirrors src/lib/crypto.ts) ─────────────────────────────────────
+// The live-updates service is a standalone Bun process and cannot import the
+// main app's crypto module, so decryption is provided by a faithful local
+// mirror (./crypto). resolveProjectRoot is shared with the db-URL resolver.
+import { decryptSecret, resolveProjectRoot as findProjectRoot } from './crypto';
 
 // ─── CUSTOMER_DB per-org database resolution (Phase 6) ─────────────────────
 // For CUSTOMER_DB organizations (useOwnDb=true), org-owned realtime data
@@ -185,20 +162,6 @@ const SESSION_COOKIE_NAME = process.env.SESSION_COOKIE_NAME || 'worklens_token';
 if (!JWT_SECRET || JWT_SECRET.length < 16) {
   console.error('[live-updates] JWT_SECRET must be set and at least 16 characters.');
   process.exit(1);
-}
-
-// Resolve the SQLite database relative to the project root (the directory
-// containing prisma/schema.prisma), so `file:./db/custom.db` in .env works
-// regardless of the process working directory.
-function findProjectRoot(): string {
-  let dir = process.cwd();
-  for (let i = 0; i < 8; i++) {
-    if (existsSync(path.join(dir, 'prisma', 'schema.prisma'))) return dir;
-    const parent = path.dirname(dir);
-    if (parent === dir) break;
-    dir = parent;
-  }
-  return process.cwd();
 }
 
 function resolveDbUrl(): string {
