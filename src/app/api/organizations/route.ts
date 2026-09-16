@@ -12,7 +12,7 @@ import { log, requestContext } from '@/lib/logger';
 // Lightweight organization list for filter dropdowns (e.g. the Employees
 // page). Org-bound sessions only ever see their own organization; org-less
 // global super_admins see MANAGED organizations only (Phase 1 Step 8 —
-// CUSTOMER_DB / PRIVATE orgs are excluded server-side, matching the
+// CUSTOMER_DB orgs are excluded server-side, matching the
 // switcher gating in /api/me/organizations).
 export async function GET(req: NextRequest) {
   try {

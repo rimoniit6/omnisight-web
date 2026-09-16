@@ -1,6 +1,6 @@
 // OmniSight — Authoritative deployment-mode resolver (Phase 1, Step 2).
 //
-// `Organization.deploymentMode` (MANAGED | CUSTOMER_DB | PRIVATE) is the ONLY
+// `Organization.deploymentMode` (MANAGED | CUSTOMER_DB) is the ONLY
 // authority for mode-aware behavior. Legacy indicators below remain for
 // backward compatibility and backfill diagnostics ONLY and MUST NOT be used
 // for request-time routing decisions:
@@ -11,29 +11,17 @@
 //
 // All future mode-aware behavior (switcher gating, super-admin scoping,
 // tenant database resolution) MUST go through getOrganizationDeploymentMode().
+//
+// NOTE: the legacy `PRIVATE` value was REMOVED (migration
+// 20260916000000_remove_private_deployment_mode). MANAGED and CUSTOMER_DB are
+// the only deployment modes.
 
 import { db } from '@/lib/db';
 
-export type DeploymentMode = 'MANAGED' | 'CUSTOMER_DB' | 'PRIVATE';
+export type DeploymentMode = 'MANAGED' | 'CUSTOMER_DB';
 
-/**
- * All deployment modes recognized by the schema (including deprecated ones).
- * Use V1_ACTIVE_MODES for customer-facing logic.
- */
+/** All deployment modes recognized by the schema. */
 export const DEPLOYMENT_MODES: readonly DeploymentMode[] = [
-  'MANAGED',
-  'CUSTOMER_DB',
-  'PRIVATE',
-] as const;
-
-/**
- * V1 active customer-facing deployment modes. These are the ONLY customer-facing
- * service models. PRIVATE is NOT a V1 service model — it remains in the Prisma
- * enum purely as legacy compatibility for pre-existing organization rows, and
- * MUST NOT be selectable in any workflow, UI, or Agent Builder, and MUST NOT be
- * a valid transition target (see validateDeploymentModeChange).
- */
-export const V1_ACTIVE_MODES: readonly DeploymentMode[] = [
   'MANAGED',
   'CUSTOMER_DB',
 ] as const;
@@ -42,17 +30,6 @@ export function isDeploymentMode(value: unknown): value is DeploymentMode {
   return (
     typeof value === 'string' &&
     (DEPLOYMENT_MODES as readonly string[]).includes(value)
-  );
-}
-
-/**
- * True when the mode is an active V1 customer-facing mode.
- * PRIVATE returns false — it is deprecated for V1.
- */
-export function isV1ActiveMode(value: unknown): value is DeploymentMode {
-  return (
-    typeof value === 'string' &&
-    (V1_ACTIVE_MODES as readonly string[]).includes(value)
   );
 }
 
@@ -116,7 +93,7 @@ export async function getDeploymentModes(
 
 // --- Control-plane / data-plane classification (Phase 1, Step 4) ---
 
-/** Super Admin may access ONLY these fields for CUSTOMER_DB (and legacy PRIVATE) orgs. */
+/** Super Admin may access ONLY these fields for CUSTOMER_DB orgs. */
 export const CONTROL_PLANE_ORG_FIELDS = [
   'id',
   'name',
@@ -130,7 +107,7 @@ export const CONTROL_PLANE_ORG_FIELDS = [
   'updatedAt',
 ] as const;
 
-/** Super Admin may NEVER access these via platform routes for CUSTOMER_DB / PRIVATE orgs. */
+/** Super Admin may NEVER access these via platform routes for CUSTOMER_DB orgs. */
 export const DATA_PLANE_MODELS = [
   'employee',
   'device',
@@ -159,18 +136,16 @@ export function allowsSuperAdminTenantAccess(mode: DeploymentMode): boolean {
 //   - * -> CUSTOMER_DB     -> REJECTED: no primary-database datasource
 //     mechanism exists in Phase 2 (control-plane shows "Configuration:
 //     Pending"). Never change first and hope the system recovers later.
-//   - * -> PRIVATE         -> REJECTED: PRIVATE is not a V1 service model
-//     (no self-hosted activation path exists any more).
-//   - CUSTOMER_DB/PRIVATE -> MANAGED -> ok ONLY with explicit
-//     confirmDataResidency (human acknowledges existing customer data stays
-//     where it is — Phase 2 performs NO automatic DB-to-DB migration).
+//   - CUSTOMER_DB -> MANAGED -> ok ONLY with explicit confirmDataResidency
+//     (human acknowledges existing customer data stays where it is — Phase 2
+//     performs NO automatic DB-to-DB migration).
 // A successful change clears deploymentModeUnresolved (a human resolved it).
 
 export type ModeChangeValidation =
   | { ok: true }
   | {
       ok: false;
-      code: 'CUSTOMER_DB_NOT_CONFIGURED' | 'CONFIRMATION_REQUIRED' | 'PRIVATE_NOT_AVAILABLE';
+      code: 'CUSTOMER_DB_NOT_CONFIGURED' | 'CONFIRMATION_REQUIRED';
       message: string;
     };
 
@@ -180,17 +155,6 @@ export function validateDeploymentModeChange(
   opts: { confirmDataResidency?: boolean } = {},
 ): ModeChangeValidation {
   if (from === to) return { ok: true };
-  // PRIVATE is NOT a V1 service model. It is never a valid transition target —
-  // not even for metadata-only moves (that gap let an org drift into a
-  // self-hosted state that no longer has any activation path).
-  if (to === 'PRIVATE') {
-    return {
-      ok: false,
-      code: 'PRIVATE_NOT_AVAILABLE',
-      message:
-        'PRIVATE is not a V1 service model. Choose MANAGED or CUSTOMER_DB. Mode not changed.',
-    };
-  }
   if (to === 'CUSTOMER_DB') {
     return {
       ok: false,
@@ -199,7 +163,7 @@ export function validateDeploymentModeChange(
         'CUSTOMER_DB requires a configured customer primary database (Configuration: Pending). Mode not changed.',
     };
   }
-  if ((from === 'CUSTOMER_DB' || from === 'PRIVATE') && to === 'MANAGED') {
+  if (from === 'CUSTOMER_DB' && to === 'MANAGED') {
     if (!opts.confirmDataResidency) {
       return {
         ok: false,

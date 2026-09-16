@@ -105,7 +105,7 @@ interface OrganizationDetail {
   name: string;
   slug: string;
   status: string;
-  deploymentMode: 'MANAGED' | 'CUSTOMER_DB' | 'PRIVATE';
+  deploymentMode: 'MANAGED' | 'CUSTOMER_DB';
   deploymentModeUnresolved: boolean;
   screenshotInterval: number;
   trialEndsAt: string | null;
@@ -755,7 +755,7 @@ export function SuperAdminOrganizationDetailPage() {
             {orgData && orgData.deploymentMode !== 'MANAGED' && (
               <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2.5 text-xs text-amber-800 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-300">
                 <p className="font-semibold">
-                  {orgData.deploymentMode === 'CUSTOMER_DB' ? 'Customer-Owned Environment' : 'Private Deployment'}
+                  {orgData.deploymentMode === 'CUSTOMER_DB' ? 'Customer-Owned Environment' : 'Managed Deployment'}
                 </p>
                 <p className="mt-0.5">
                   {orgData.deploymentMode === 'CUSTOMER_DB'
@@ -800,7 +800,7 @@ export function SuperAdminOrganizationDetailPage() {
               <div>
                 <p className="text-xs text-muted-foreground">Service Type</p>
                 <p className="font-medium mt-0.5">
-                  {orgData.deploymentMode === 'MANAGED' ? 'Managed' : orgData.deploymentMode === 'CUSTOMER_DB' ? 'Customer DB' : 'Private'}
+                  {orgData.deploymentMode === 'MANAGED' ? 'Managed' : 'Customer DB'}
                   {orgData.deploymentModeUnresolved && <span className="text-amber-600"> · needs review</span>}
                 </p>
               </div>

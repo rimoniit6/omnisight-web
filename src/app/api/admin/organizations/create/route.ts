@@ -37,10 +37,9 @@ import { log, requestContext } from '@/lib/logger';
  *   password?: string (optional; if omitted a random temp password is generated
  *                     and returned ONCE in the response),
  *   planName?: string ("Free" | "Pro" | "Business" | ...),
- *   timezone?: string (default "Asia/Dhaka"),
- *   deploymentMode?: 'MANAGED' | 'CUSTOMER_DB' | 'PRIVATE' (default MANAGED
- *                     when omitted — the explicitly defined legacy default;
- *                     any other value is rejected, never silently remapped),
+ *   timezone?: string (default "Asia/Dhaka"),  *   deploymentMode?: 'MANAGED' | 'CUSTOMER_DB' (default MANAGED
+  *                     when omitted — the explicitly defined legacy default;
+  *                     any other value is rejected, never silently remapped),
  *   status?: 'active' | 'pending' (default active; pending keeps the org
  *            locked out via requireActiveSessionOrg until SA activates it)
  * }
@@ -71,9 +70,9 @@ export async function POST(req: NextRequest) {
   const adminName = typeof body.adminName === 'string' ? body.adminName.trim().slice(0, 120) : null;
   const timezone = typeof body.timezone === 'string' && body.timezone.trim() ? body.timezone.trim() : 'Asia/Dhaka';
 
-  // V1 active: MANAGED, CUSTOMER_DB. PRIVATE is deprecated and rejected.
+  // V1 active: MANAGED, CUSTOMER_DB. Anything else is rejected.
   const deploymentMode = body.deploymentMode === undefined ? 'MANAGED' : body.deploymentMode;
-  if (!isDeploymentMode(deploymentMode) || deploymentMode === 'PRIVATE') {
+  if (!isDeploymentMode(deploymentMode)) {
     return apiError(
       'Invalid deploymentMode. Must be one of: MANAGED, CUSTOMER_DB',
       422,

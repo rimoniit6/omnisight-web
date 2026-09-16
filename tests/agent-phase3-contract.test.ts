@@ -1,8 +1,8 @@
 /**
  * Phase 3 — Agent ↔ Web DEPLOYMENT-MODE CONTRACT tests.
  *
- * These tests verify the actual endpoint contract for the three deployment
- * modes (MANAGED / CUSTOMER_DB / PRIVATE), NOT TypeScript interfaces:
+ * These tests verify the actual endpoint contract for the deployment modes
+ * (MANAGED / CUSTOMER_DB), NOT TypeScript interfaces:
  *
  *   P3C-01  GET /api/agent/compat advertises serverVersion, minAgentVersion and
  *           exactly the supported deployment modes (V1: MANAGED, CUSTOMER_DB).
@@ -13,7 +13,7 @@
  *   P3C-04  Screenshot policy is server-authoritative: org setting + plan +
  *           org.screenshotInterval decide the config payload; a client query
  *           can never re-enable screenshots or change the frequency.
- *   P3C-05  Heartbeat succeeds for MANAGED / CUSTOMER_DB / PRIVATE and only
+ *   P3C-05  Heartbeat succeeds for MANAGED / CUSTOMER_DB and only
  *           touches the authenticated device.
  *   P3C-06  Activity upload belongs to the AUTHENTICATED organization/device —
  *           body-level organizationId/deviceId spoofing is ignored.
@@ -65,17 +65,17 @@ type Dev = { id: string };
 
 let orgManaged: Org;
 let orgCustomer: Org; // CUSTOMER_DB
-let orgPrivate: Org; // PRIVATE
+let orgPolicy: Org; // CUSTOMER_DB with org policy disabling screenshot/location
 let orgShotOff: Org; // CUSTOMER_DB, screenshots plan, org toggle OFF
 let empManaged: Emp;
 let empCustomer: Emp;
-let empPrivate: Emp;
+let empPolicy: Emp;
 let devManaged: Dev;
 let devCustomer: Dev;
-let devPrivate: Dev;
+let devPolicy: Dev;
 let tokManaged: string;
 let tokCustomer: string;
-let tokPrivate: string;
+let tokPolicy: string;
 let tokShotOff: string;
 
 /** Grant consent the same way the real flows do: published policy + granted row. */
@@ -108,7 +108,7 @@ async function grantConsent(orgId: string, empId: string, consentType: string) {
 async function seedOrg(opts: {
   name: string;
   slug: string;
-  mode: 'MANAGED' | 'CUSTOMER_DB' | 'PRIVATE';
+  mode: 'MANAGED' | 'CUSTOMER_DB';
   screenshotInterval: number;
   empCode: string;
   devKey: string;
@@ -215,31 +215,31 @@ before(async () => {
     },
   });
 
-  // PRIVATE org: org-level screenshot_enabled=false → server policy disables capture.
-  const seededPrivate = await seedOrg({
-    name: 'Private Org',
-    slug: 'p3c-private',
-    mode: 'PRIVATE',
+  // Policy org: org-level screenshot_enabled=false → server policy disables capture.
+  const seededPolicy = await seedOrg({
+    name: 'Policy Org',
+    slug: 'p3c-policy',
+    mode: 'CUSTOMER_DB',
     screenshotInterval: 10,
-    empCode: 'P3C-PRIVATE',
-    devKey: 'p3c-device-private-0001',
+    empCode: 'P3C-POLICY',
+    devKey: 'p3c-device-policy-0001',
   });
-  orgPrivate = seededPrivate.org;
-  empPrivate = seededPrivate.emp;
-  devPrivate = seededPrivate.dev;
-  tokPrivate = seededPrivate.token;
+  orgPolicy = seededPolicy.org;
+  empPolicy = seededPolicy.emp;
+  devPolicy = seededPolicy.dev;
+  tokPolicy = seededPolicy.token;
 
-  // PRIVATE is deprecated in V1 but the org must still pass AUTH: give it an
-  // ACTIVE subscription WITHOUT the screenshots feature, so "plan has no
-  // screenshots" (P3C-04) keeps holding while validateAgentToken stops
-  // rejecting the token with subscription_denied.
-  const planPrivate = await db.plan.create({
-    data: { name: 'P3C-Private', maxDevices: 5, features: [] },
+  // The policy org must still pass AUTH: give it an ACTIVE subscription
+  // WITHOUT the screenshots feature, so "plan has no screenshots" (P3C-04)
+  // keeps holding while validateAgentToken stops rejecting the token with
+  // subscription_denied.
+  const planPolicy = await db.plan.create({
+    data: { name: 'P3C-Policy', maxDevices: 5, features: [] },
   });
   await db.subscription.create({
     data: {
-      organizationId: orgPrivate.id,
-      planId: planPrivate.id,
+      organizationId: orgPolicy.id,
+      planId: planPolicy.id,
       status: 'ACTIVE',
       startDate: new Date(),
       endDate: null,
@@ -277,10 +277,10 @@ before(async () => {
   // Org-scoped monitoring overrides (server-authoritative policy).
   await db.organizationSetting.createMany({
     data: [
-      { organizationId: orgPrivate.id, key: 'screenshot_enabled', value: 'false', category: 'monitoring' },
+      { organizationId: orgPolicy.id, key: 'screenshot_enabled', value: 'false', category: 'monitoring' },
       { organizationId: orgShotOff.id, key: 'screenshot_enabled', value: 'false', category: 'monitoring' },
       { organizationId: orgCustomer.id, key: 'location_tracking', value: 'true', category: 'monitoring' },
-      { organizationId: orgPrivate.id, key: 'location_tracking', value: 'false', category: 'monitoring' },
+      { organizationId: orgPolicy.id, key: 'location_tracking', value: 'false', category: 'monitoring' },
     ],
   });
 
@@ -288,10 +288,10 @@ before(async () => {
   await grantConsent(orgManaged.id, empManaged.id, 'activity_tracking');
   await grantConsent(orgCustomer.id, empCustomer.id, 'screenshot');
   await grantConsent(orgCustomer.id, empCustomer.id, 'location');
-  // empPrivate holds screenshot + location consent, but its org DISABLES both
+  // empPolicy holds screenshot + location consent, but its org DISABLES both
   // screenshot_enabled and location_tracking — server policy must still win.
-  await grantConsent(orgPrivate.id, empPrivate.id, 'screenshot');
-  await grantConsent(orgPrivate.id, empPrivate.id, 'location');
+  await grantConsent(orgPolicy.id, empPolicy.id, 'screenshot');
+  await grantConsent(orgPolicy.id, empPolicy.id, 'location');
 });
 
 after(async () => {
@@ -334,7 +334,7 @@ test('P3C-01: /api/agent/compat advertises the full Phase 3 contract', async () 
   assert.deepEqual(
     [...payload.supportedDeploymentModes].sort(),
     ['CUSTOMER_DB', 'MANAGED'],
-    'V1 active modes only — PRIVATE is deprecated and must not be advertised'
+    'the only deployment modes — nothing else may be advertised'
   );
 });
 
@@ -345,7 +345,7 @@ test('P3C-02: config deployment block is derived from the server organization fo
   const cases = [
     { token: tokManaged, expectMode: 'MANAGED', expectOrg: 'Managed Org' },
     { token: tokCustomer, expectMode: 'CUSTOMER_DB', expectOrg: 'Customer Org' },
-    { token: tokPrivate, expectMode: 'PRIVATE', expectOrg: 'Private Org' },
+    { token: tokPolicy, expectMode: 'CUSTOMER_DB', expectOrg: 'Policy Org' },
   ];
   for (const c of cases) {
     const res = await api.GET(agentReq(c.token));
@@ -362,11 +362,11 @@ test('P3C-02: config deployment block is derived from the server organization fo
 
 test('P3C-03: agent-supplied deploymentMode query cannot override the org mode', async () => {
   const api = await import('../src/app/api/agent/config/route');
-  // PRIVATE org tries to claim MANAGED via the query string.
-  const res = await api.GET(agentReq(tokPrivate, { url: 'http://localhost:3000/api/agent/config?deploymentMode=MANAGED' }));
+  // Policy org (CUSTOMER_DB) tries to claim MANAGED via the query string.
+  const res = await api.GET(agentReq(tokPolicy, { url: 'http://localhost:3000/api/agent/config?deploymentMode=MANAGED' }));
   assert.equal(res.status, 200);
   const payload = await body(res);
-  assert.equal(payload.deployment.mode, 'PRIVATE', 'server keeps treating tenant as PRIVATE');
+  assert.equal(payload.deployment.mode, 'CUSTOMER_DB', 'server keeps treating tenant as CUSTOMER_DB');
   // MANAGED org tries to claim CUSTOMER_DB.
   const res2 = await api.GET(agentReq(tokManaged, { url: 'http://localhost:3000/api/agent/config?deploymentMode=CUSTOMER_DB' }));
   const payload2 = await body(res2);
@@ -378,9 +378,9 @@ test('P3C-03: agent-supplied deploymentMode query cannot override the org mode',
 test('P3C-04: screenshot policy/frequency come from the server, never the client', async () => {
   const api = await import('../src/app/api/agent/config/route');
 
-  // PRIVATE org: org screenshot_enabled=false must surface as disabled and a
+  // Policy org: org screenshot_enabled=false must surface as disabled and a
   // client query claiming enabled=1s must not re-enable or change frequency.
-  const res = await api.GET(agentReq(tokPrivate, {
+  const res = await api.GET(agentReq(tokPolicy, {
     url: 'http://localhost:3000/api/agent/config?screenshotEnabled=true&screenshotFrequency=1',
   }));
   const payload = await body(res);
@@ -425,17 +425,17 @@ test('P3C-10: org screenshot_enabled=false forces frequency 0 despite a screensh
 
 // ─── P3C-05: heartbeat across all three modes ───────────────────────────
 
-test('P3C-05: heartbeat works for MANAGED / CUSTOMER_DB / PRIVATE and touches only the own device', async () => {
+test('P3C-05: heartbeat works for MANAGED / CUSTOMER_DB and touches only the own device', async () => {
   const api = await import('../src/app/api/agent/heartbeat/route');
 
   // Rewind each device's heartbeat to a known-past value so advancement is
   // deterministic (no same-millisecond flake).
   const past = new Date(Date.now() - 60_000);
-  for (const devId of [devManaged.id, devCustomer.id, devPrivate.id]) {
+  for (const devId of [devManaged.id, devCustomer.id, devPolicy.id]) {
     await db.device.update({ where: { id: devId }, data: { lastHeartbeat: past } });
   }
 
-  for (const token of [tokManaged, tokCustomer, tokPrivate]) {
+  for (const token of [tokManaged, tokCustomer, tokPolicy]) {
     const res = await api.POST(agentReq(token, { method: 'POST', body: { timestamp: new Date().toISOString() } }));
     assert.equal(res.status, 200, 'heartbeat accepted in every mode');
     const payload = await body(res);
@@ -446,7 +446,7 @@ test('P3C-05: heartbeat works for MANAGED / CUSTOMER_DB / PRIVATE and touches on
   const afterBeat = {
     managed: (await db.device.findUnique({ where: { id: devManaged.id }, select: { lastHeartbeat: true } }))!.lastHeartbeat!,
     customer: (await db.device.findUnique({ where: { id: devCustomer.id }, select: { lastHeartbeat: true } }))!.lastHeartbeat!,
-    private: (await db.device.findUnique({ where: { id: devPrivate.id }, select: { lastHeartbeat: true } }))!.lastHeartbeat!,
+    private: (await db.device.findUnique({ where: { id: devPolicy.id }, select: { lastHeartbeat: true } }))!.lastHeartbeat!,
   };
   for (const key of ['managed', 'customer', 'private'] as const) {
     assert.ok(afterBeat[key].getTime() > past.getTime(), `${key} device lastHeartbeat advanced`);
@@ -461,8 +461,8 @@ test('P3C-06: activity rows are tenant/device scoped; body org/device spoofing i
     method: 'POST',
     body: {
       // Attempted tenant/device escape: the server must ignore both.
-      organizationId: orgPrivate.id,
-      deviceId: devPrivate.id,
+      organizationId: orgPolicy.id,
+      deviceId: devPolicy.id,
       activities: [{
         type: 'application',
         applicationName: 'Code Editor',
@@ -470,8 +470,8 @@ test('P3C-06: activity rows are tenant/device scoped; body org/device spoofing i
         duration: 42,
         timestamp: new Date().toISOString(),
         // item-level spoof too
-        organizationId: orgPrivate.id,
-        deviceId: devPrivate.id,
+        organizationId: orgPolicy.id,
+        deviceId: devPolicy.id,
       }],
     },
   }));
@@ -484,7 +484,7 @@ test('P3C-06: activity rows are tenant/device scoped; body org/device spoofing i
   assert.equal(created.organizationId, orgManaged.id, 'activity belongs to the AUTHENTICATED org');
   assert.equal(created.deviceId, devManaged.id, 'activity belongs to the AUTHENTICATED device');
   // Nothing was created under the spoofed tenant.
-  const foreign = await db.activity.count({ where: { organizationId: orgPrivate.id } });
+  const foreign = await db.activity.count({ where: { organizationId: orgPolicy.id } });
   assert.equal(foreign, 0, 'no rows under the spoofed organization');
 });
 
@@ -493,9 +493,9 @@ test('P3C-06: activity rows are tenant/device scoped; body org/device spoofing i
 test('P3C-07: screenshot upload is consent-gated AND org-policy-gated server-side', async () => {
   const api = await import('../src/app/api/agent/screenshot/route');
 
-  // empPrivate HAS screenshot consent, but the org disables screenshot_enabled
+  // empPolicy HAS screenshot consent, but the org disables screenshot_enabled
   // → server policy wins: 403 before any file processing (Phase 3 §31).
-  const denied = await api.POST(agentReq(tokPrivate, {
+  const denied = await api.POST(agentReq(tokPolicy, {
     method: 'POST',
     body: new FormData(),
   }));
@@ -536,8 +536,8 @@ test('P3C-08: location is tenant scoped, org-gated, and schema-closed', async ()
   assert.equal(event.organizationId, orgCustomer.id, 'event under authenticated org');
   assert.equal(event.deviceId, devCustomer.id, 'event under authenticated device');
 
-  // PRIVATE org with location_tracking=false → 403 even WITH consent.
-  const denied = await api.POST(agentReq(tokPrivate, {
+  // Policy org with location_tracking=false → 403 even WITH consent.
+  const denied = await api.POST(agentReq(tokPolicy, {
     method: 'POST',
     body: { latitude: 23.8103, longitude: 90.4125, accuracy: null, timestamp: new Date().toISOString() },
   }));
@@ -553,7 +553,7 @@ test('P3C-08: location is tenant scoped, org-gated, and schema-closed', async ()
       longitude: 91.0,
       accuracy: null,
       timestamp: new Date().toISOString(),
-      organizationId: orgPrivate.id,
+      organizationId: orgPolicy.id,
     },
   }));
   assert.equal(spoof.status, 422, 'organizationId is not a legal location payload field');

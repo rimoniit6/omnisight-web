@@ -253,7 +253,7 @@ test('CLEANUP-11: orphan legacy admin pages are removed (APIs preserved)', async
   }
   // Underlying APIs stay: packages CRUD feeds the canonical Control Center UI.
   // NOTE: `src/app/api/admin/licenses/route.ts` was REMOVED with the LicenseKey /
-  // self-hosted architecture (Self-Hosted / PRIVATE is not a V1 service model).
+  // self-hosted architecture (Self-Hosted is not a V1 service model).
   for (const rel of [
     'src/app/api/super-admin/packages/route.ts',
     'src/app/api/super-admin/packages/[id]/route.ts',

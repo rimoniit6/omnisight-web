@@ -45,9 +45,7 @@ export function SecuritySection() {
   );
 }
 
-// ─── DeploymentModes — V1 active modes: MANAGED / CUSTOMER_DB ──────────────
-// PRIVATE is not a V1 customer-facing option. Future enterprise/self-hosted
-// architecture may be introduced in a later version.
+// ─── DeploymentModes — the only modes: MANAGED / CUSTOMER_DB ──────────────
 const MODES = [
   {
     name: 'OmniSight Managed',

@@ -30,7 +30,7 @@ export async function GET(req: NextRequest) {
 
   if (auth.role === 'super_admin') {
     // Phase 1 Step 8: Super Admin lists MANAGED organizations ONLY.
-    // CUSTOMER_DB / PRIVATE orgs are invisible here (control-plane metadata
+    // CUSTOMER_DB orgs are invisible here (control-plane metadata
     // for those modes lives in the super-admin metadata APIs, not the
     // switcher). Enforced server-side — never UI filtering.
     // The role shown is the Super Admin's global role, not a membership role.

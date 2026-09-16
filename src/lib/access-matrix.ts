@@ -38,7 +38,7 @@ export const ACCESS_MATRIX: Record<Capability, Record<Role, 'YES' | 'NO' | 'SCOP
 
 /**
  * Super Admin operational-data access for one organization in the given
- * deployment mode. CUSTOMER_DB / PRIVATE (and any unresolvable mode) deny.
+ * deployment mode. CUSTOMER_DB (and any unresolvable mode) denies.
  */
 export function canSuperAdminAccessTenantData(mode: DeploymentMode): boolean {
   return allowsSuperAdminTenantAccess(mode);
@@ -51,8 +51,5 @@ export function tenantAccessPolicyLine(mode: DeploymentMode): string {
       return 'OmniSight-managed environment — Super Admin operational access permitted.';
     case 'CUSTOMER_DB':
       return 'Customer-owned database — Super Admin access is limited to control-plane management.';
-    case 'PRIVATE':
-      // PRIVATE is deprecated in V1; this policy line remains for backward compatibility.
-      return 'Private deployment (deprecated in V1) — operational data is not accessible from the central console.';
   }
 }

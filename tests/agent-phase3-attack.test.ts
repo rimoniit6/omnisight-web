@@ -57,7 +57,7 @@ const PASSWORD = 'Phase3Attack!123';
 const AGENT_ID = 'P3A-EMP';
 
 let orgA: { id: string };
-let orgB: { id: string }; // PRIVATE tenant — Org A must never reach into it
+let orgB: { id: string }; // CUSTOMER_DB tenant — Org A must never reach into it
 let empA: { id: string; employeeId: string };
 let empB: { id: string };
 let devA: { id: string };
@@ -72,7 +72,7 @@ before(async () => {
 
   orgA = await db.organization.create({ data: { name: 'Attack Tenant A', slug: 'p3a-orga' } });
   orgB = await db.organization.create({
-    data: { name: 'Attack Tenant B', slug: 'p3a-orgb', deploymentMode: 'PRIVATE' },
+    data: { name: 'Attack Tenant B', slug: 'p3a-orgb', deploymentMode: 'CUSTOMER_DB' },
   });
 
   empA = await db.employee.create({
@@ -130,6 +130,18 @@ before(async () => {
       status: 'approved',
       employeeId: empB.id,
       expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
+    },
+  });
+
+  // Org A needs an ACTIVE subscription: validateAgentToken enforces the
+  // subscription entitlement (PRD §46) — without one, agent operations are
+  // rejected with 'No subscription found' regardless of deployment mode.
+  await db.subscription.create({
+    data: {
+      organizationId: orgA.id,
+      planId: (await db.plan.create({ data: { name: 'P3A-Plan', maxDevices: 5, features: [] } })).id,
+      status: 'ACTIVE',
+      startDate: new Date(),
     },
   });
 
@@ -216,7 +228,7 @@ test('P3A-01: Org A session cannot discover Org B device (concealing 404, zero s
       agentVersion: '1.1.0',
       // Spoof attempt: pretend to be Org B's tenant too.
       organizationId: orgB.id,
-      deploymentMode: 'PRIVATE',
+      deploymentMode: 'CUSTOMER_DB',
     },
   }));
 
@@ -244,7 +256,7 @@ test('P3A-02: discover ignores body organizationId/deploymentMode — device joi
       os: 'Windows',
       agentVersion: '1.1.0',
       organizationId: orgB.id, // spoofed tenant
-      deploymentMode: 'PRIVATE', // spoofed mode
+      deploymentMode: 'CUSTOMER_DB', // spoofed mode
     },
   }));
   assert.equal(res.status, 201, 'legitimate enrollment succeeds');
@@ -293,7 +305,7 @@ test('P3A-04: expired token → 401; PATH A re-auth resumes operations', async (
       osVersion: '11',
       agentVersion: '1.1.0',
       organizationId: orgB.id, // spoof — must be ignored
-      deploymentMode: 'PRIVATE', // spoof — must be ignored
+      deploymentMode: 'CUSTOMER_DB', // spoof — must be ignored
     },
   }));
   assert.equal(first.status, 200, 'device credential auth succeeds');

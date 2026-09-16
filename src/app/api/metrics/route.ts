@@ -62,8 +62,8 @@ export async function GET(req: NextRequest) {
     for (const row of invoices) {
       lines.push(`omnisight_invoices_by_status_total{status="${esc(row.status)}"} ${row._count._all}`);
     }
-    // NOTE: license-key metrics were removed with the LicenseKey model
-    // (self-hosted / PRIVATE is not a V1 service model).
+  // NOTE: license-key metrics were removed with the LicenseKey model
+  // (self-hosted is not a V1 service model).
   } catch (err) {
     log.error('api.metrics.db', { error: String(err) });
     lines.push('# HELP omnisight_database_up Database availability');

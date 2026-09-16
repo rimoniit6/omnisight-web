@@ -59,7 +59,7 @@ export async function requireControlPlaneAccess(
 /**
  * requireManagedTenantAccess — Super Admin operational-dashboard access to ONE
  * organization. Allowed ONLY when that org's authoritative deployment mode is
- * MANAGED. CUSTOMER_DB / PRIVATE orgs are rejected with 403 even for a valid
+ * MANAGED. CUSTOMER_DB orgs are rejected with 403 even for a valid
  * super_admin (control-plane metadata remains available via
  * requireControlPlaneAccess).
  */

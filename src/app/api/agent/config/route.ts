@@ -214,8 +214,10 @@ export async function GET(req: NextRequest) {
 
     // Phase 3: deployment context block. Operational only (renderer display,
     // mode-appropriate expectations); authorization never reads this.
+    // deploymentMode is MANAGED | CUSTOMER_DB only — the legacy PRIVATE value
+    // no longer exists in the schema or the agent contract.
     const deployment = {
-      mode: (org?.deploymentMode ?? 'MANAGED') as 'MANAGED' | 'CUSTOMER_DB' | 'PRIVATE',
+      mode: (org?.deploymentMode ?? 'MANAGED') as 'MANAGED' | 'CUSTOMER_DB',
       modeUnresolved: org?.deploymentModeUnresolved ?? false,
       organizationName: org?.name ?? null,
     };

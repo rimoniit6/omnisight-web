@@ -50,8 +50,8 @@ export async function POST(
 
     // V1 commercial device entitlement — server-authoritative enforcement.
     // MANAGED: rejected when the active-device count has reached the
-    // subscription/plan entitlement. CUSTOMER_DB (and legacy PRIVATE) are
-    // ALWAYS unlimited — this check can never cap them.
+    // subscription/plan entitlement. CUSTOMER_DB is
+    // ALWAYS unlimited — this check can never cap it.
     const entitlement = await checkDeviceEntitlement(admin.organizationId);
     if (!entitlement.allowed) {
       return NextResponse.json(

@@ -133,9 +133,8 @@ export async function GET(
  *
  * Control-plane mutations. Super Admin only (DB-verified).
  * Body: {
- *   status?: 'pending' | 'active' | 'paused' | 'archived',
- *   deploymentMode?: 'MANAGED' | 'CUSTOMER_DB' | 'PRIVATE',
- *   confirmDataResidency?: boolean  // required for CUSTOMER_DB/PRIVATE -> MANAGED
+ *   status?: 'pending' | 'active' | 'paused' | 'archived',  *   deploymentMode?: 'MANAGED' | 'CUSTOMER_DB',
+  *   confirmDataResidency?: boolean  // required for CUSTOMER_DB -> MANAGED
  * }
  *
  * Deployment-mode changes are validated server-side
@@ -169,7 +168,7 @@ export async function PATCH(
   if (status !== undefined && !['pending', 'active', 'paused', 'archived'].includes(status)) {
     return apiError('Invalid status. Must be: pending, active, paused, or archived', 422);
   }
-  if (deploymentMode !== undefined && (!isDeploymentMode(deploymentMode) || deploymentMode === 'PRIVATE')) {
+  if (deploymentMode !== undefined && !isDeploymentMode(deploymentMode)) {
     return apiError('Invalid deploymentMode. Must be: MANAGED or CUSTOMER_DB', 422);
   }
   if (status === undefined && deploymentMode === undefined) {

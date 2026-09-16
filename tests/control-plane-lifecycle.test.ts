@@ -4,18 +4,18 @@
  * Proves:
  *  LC-01  Package create → 201 + audited
  *  LC-02  Package update + deactivate → 200
- *  LC-03  Package delete while referenced → 409 (archival, not destruction)
- *  LC-04  Manual sales: create org (PRIVATE+pending) → subscription → invoice
- *          → Super Admin activates the PENDING subscription → ACTIVE/active +
- *          audited (invoice stays PENDING — manual ledger, no verify action)
+ *  LC-03  Package delete while referenced → 409 (archival, not destruction)  *  LC-04  Manual sales: create org (MANAGED +
+  *          pending) → subscription → invoice → Super Admin activates the
+  *          PENDING subscription → ACTIVE/active + audited (invoice stays
+ *          PENDING — manual ledger, no verify action)
  *  LC-05  Subscription cancel → CANCELLED + pointer cleared + audited
  *  LC-06  License issue → revoke lifecycle + audited, key never in audit
  *  LC-07  Invalid subscription transitions are guarded (no verify/reject
  *          workflow): CANCELLED → ACTIVE rejected, double-activate rejected
  *  LC-08  Pending org locked out of tenant APIs; activation restores access
- *  LC-09  SA metrics endpoint returns control-plane aggregates only
- *  LC-10  Service Type at creation: MANAGED / CUSTOMER_DB / PRIVATE each
- *          persist verbatim to Organization.deploymentMode (no silent fallback)
+ *  LC-09  SA metrics endpoint returns control-plane aggregates only  *  LC-10  Service Type at creation: MANAGED / CUSTOMER_DB persist verbatim to
+  *          Organization.deploymentMode (no silent fallback); an unknown mode is
+  *          rejected with 422
  *  LC-11  Invalid deploymentMode is rejected; omitted uses the MANAGED default
  *
  * Run: npx tsx --test tests/control-plane-lifecycle.test.ts
@@ -82,7 +82,7 @@ before(async () => {
   });
   saId = sa.id;
   // NOTE: no self-hosted plan is created — the LicenseKey / self-hosted
-  // architecture was removed (Self-Hosted / PRIVATE is not a V1 service model).
+  // architecture was removed (Self-Hosted is not a V1 service model).
   // A normal V1 plan is created for the subscription life-cycle tests below.
   await db.plan.create({
     data: { name: 'Lifecycle', priceMonthly: 5000, maxDevices: 50, retentionDays: 365, features: [] },
@@ -152,13 +152,18 @@ test('LC-03: referenced package cannot be deleted', async () => {
 test('LC-04: manual sales end-to-end (org → sub → invoice → SA activates)', async () => {
   const token = await saToken();
   const create = await import('../src/app/api/admin/organizations/create/route');
+
+  // (Invalid deploymentMode rejection at this surface is covered by LC-11;
+  // the retired PRIVATE mode no longer exists as a creatable service model.)
+
+  // The manual-sales flow proceeds with a V1 service model (MANAGED).
   const cRes = await create.POST(
     req('http://localhost:3000/api/admin/organizations/create', token, 'POST', {
       name: 'LC Customer',
       slug: 'lc-customer',
       adminEmail: 'admin@lc-customer.local',
       planName: 'LC-Pro',
-      deploymentMode: 'PRIVATE',
+      deploymentMode: 'MANAGED',
       status: 'pending',
     }),
   );
@@ -166,7 +171,7 @@ test('LC-04: manual sales end-to-end (org → sub → invoice → SA activates)'
   const created = await cRes.json();
   // apiSuccess returns the raw body (no envelope).
   orgId = created.organization.id;
-  assert.equal(created.organization.deploymentMode, 'PRIVATE');
+  assert.equal(created.organization.deploymentMode, 'MANAGED');
   assert.equal(created.organization.status, 'pending');
   assert.ok(created.tempPassword, 'temp password returned once');
 
@@ -223,8 +228,8 @@ test('LC-05: subscription cancel clears pointer and is audited', async () => {
 });
 
 // LC-06
-// The LicenseKey / self-hosted license architecture was REMOVED (Self-Hosted /
-// PRIVATE is not a V1 service model; activation is subscription-based). This
+// The LicenseKey / self-hosted license architecture was REMOVED (Self-Hosted
+// is not a V1 service model; activation is subscription-based). This
 // test is the regression guard that no active license API came back.
 test('LC-06: obsolete LicenseKey / self-hosted license API is gone', async () => {
   const missing = /Cannot find module|ERR_MODULE_NOT_FOUND|Failed to resolve/i;
@@ -318,15 +323,14 @@ test('LC-09: SA metrics are control-plane aggregates only', async () => {
   assert.ok(!serialized.includes('secret-app'), 'no operational content in metrics');
 });
 
-// LC-10: Service Type selection at creation — all three modes persist verbatim.
-test('LC-10: service type persists verbatim (MANAGED / CUSTOMER_DB / PRIVATE, no silent fallback)', async () => {
+// LC-10: Service Type at creation — V1 modes persist verbatim; unknown modes rejected.
+test('LC-10: service type persists verbatim (MANAGED / CUSTOMER_DB); unknown mode is rejected with 422', async () => {
   const create = await import('../src/app/api/admin/organizations/create/route');
   const token = await saToken();
 
   const cases = [
     { slug: 'lc-st-managed', mode: 'MANAGED' },
     { slug: 'lc-st-customer', mode: 'CUSTOMER_DB' },
-    { slug: 'lc-st-private', mode: 'PRIVATE' },
   ] as const;
 
   for (const c of cases) {
@@ -347,6 +351,25 @@ test('LC-10: service type persists verbatim (MANAGED / CUSTOMER_DB / PRIVATE, no
     });
     assert.equal(row?.deploymentMode, c.mode, `DB row for ${c.mode} must match`);
   }
+
+  // Unknown/invalid modes must be rejected at creation — an explicit
+  // 422, never a silent fallback — with no organization row persisted.
+  const res = await create.POST(
+    req('http://localhost:3000/api/admin/organizations/create', token, 'POST', {
+      name: 'ST UNKNOWN',
+      slug: 'lc-st-unknown',
+      adminEmail: 'admin@lc-st-unknown.local',
+      deploymentMode: 'UNKNOWN_MODE',
+    }),
+  );
+  assert.equal(res.status, 422, 'unknown modes are not V1 service models — creation must be rejected');
+  const body = await res.json();
+  assert.match(body.error, /Invalid deploymentMode/, 'rejection explains the mode validation error');
+  const unknownRow = await db.organization.findUnique({
+    where: { slug: 'lc-st-unknown' },
+    select: { deploymentMode: true },
+  });
+  assert.equal(unknownRow, null, 'no organization row may be persisted for an unknown mode');
 });
 
 // LC-11: invalid deploymentMode rejected; omitted value uses the MANAGED default.

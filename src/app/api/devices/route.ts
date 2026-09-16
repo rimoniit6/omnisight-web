@@ -79,8 +79,8 @@ export async function POST(req: NextRequest) {
     const orgData = (await getPrismaForOrg(admin.organizationId)).client;
 
     // V1 commercial device entitlement — server-authoritative enforcement.
-    // MANAGED: rejected at the entitlement ceiling. CUSTOMER_DB (and legacy
-    // PRIVATE) are ALWAYS unlimited — never capped by this check.
+    // MANAGED: rejected at the entitlement ceiling. CUSTOMER_DB is
+    // ALWAYS unlimited — never capped by this check.
     const entitlement = await checkDeviceEntitlement(admin.organizationId);
     if (!entitlement.allowed) {
       return NextResponse.json(

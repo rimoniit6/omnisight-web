@@ -7,13 +7,14 @@
  *   E-3  Managed above limit → rejected
  *   E-4  Customer Database with any device count → allowed (never capped)
  *   E-5  No subscription → legacy plan fallback still enforced for MANAGED
- *   E-6  Legacy PRIVATE mode is never capped
+ *   (E-6 retired with the legacy PRIVATE mode — non-MANAGED uncapped
+ *        coverage is E-4.)
  *
  * Purchase Request public flow (§6):
  *   R-1  Public submit (no auth) → 201 with server-calculated price snapshot
  *   R-2  Client-submitted price is IGNORED (recalculated server-side)
  *   R-3  Managed requires deviceQuantity ≥ 1 → 422 otherwise
- *   R-4  PRIVATE deployment mode is rejected → 422
+ *   R-4  Unknown deployment mode is rejected → 422
  *   R-5  Inactive plan → 422
  *   R-6  Super Admin queue lifecycle: review → verify_payment → activate
  *        creates org + subscription carrying the snapshot terms (billing
@@ -46,7 +47,6 @@ let checkDeviceEntitlement: typeof import('../../src/lib/device-entitlement').ch
 let managedPlanId: string;
 let orgManaged: string;
 let orgCustomerDb: string;
-let orgPrivate: string;
 let saToken: string;
 
 before(async () => {
@@ -80,8 +80,6 @@ before(async () => {
   orgManaged = managed.id;
   const customerDb = await db.organization.create({ data: { name: 'DB Co', slug: 'db-co', status: 'active', deploymentMode: 'CUSTOMER_DB' } });
   orgCustomerDb = customerDb.id;
-  const priv = await db.organization.create({ data: { name: 'Legacy Private', slug: 'legacy-private', status: 'active', deploymentMode: 'PRIVATE' } });
-  orgPrivate = priv.id;
 });
 
 after(async () => {
@@ -168,14 +166,6 @@ test('E-8: MANAGED with subscription snapshot uses the purchased deviceQuantity'
   assert.equal(e.limit, 8);
 });
 
-test('E-6: Legacy PRIVATE mode is never capped', async () => {
-  await setActiveDevices(orgPrivate, 9999);
-  const e = await checkDeviceEntitlement(orgPrivate);
-  assert.equal(e.mode, 'PRIVATE');
-  assert.equal(e.allowed, true);
-  assert.equal(e.limit, null);
-});
-
 test('R-1: public purchase request submit → 201 with server-calculated price', async () => {
   const res = await purchaseApi.POST(
     req(null, {
@@ -225,13 +215,13 @@ test('R-3: Managed without deviceQuantity → 422', async () => {
   assert.equal(res.status, 422);
 });
 
-test('R-4: PRIVATE deployment mode → 422 (never a V1 commercial mode)', async () => {
+test('R-4: unknown deployment mode → 422 (never a V1 commercial mode)', async () => {
   const res = await purchaseApi.POST(
     req(null, {
       method: 'POST',
       body: {
-        companyName: 'Private Co', contactName: 'P', contactEmail: 'priv@acme.test',
-        planId: managedPlanId, deploymentMode: 'PRIVATE', billingPeriod: 'MONTHLY',
+        companyName: 'Unknown Co', contactName: 'U', contactEmail: 'unknown@acme.test',
+        planId: managedPlanId, deploymentMode: 'UNKNOWN_MODE', billingPeriod: 'MONTHLY',
       },
     })
   );

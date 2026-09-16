@@ -2,7 +2,6 @@
 //
 // Architecture (Agent NEVER touches PostgreSQL directly):
 //   CUSTOMER_DB: Agent -> OmniSight API -> customer database
-//   PRIVATE:     Agent -> customer OmniSight API -> customer database
 //   MANAGED:     Agent -> OmniSight API -> OmniSight managed database
 //
 // Database credentials are NEVER placed in the Agent, NEVER sent to the
@@ -12,11 +11,15 @@
 // Phase 1 scope: the abstraction, the choke points (resolveTenantDatabase,
 // getTenantDb, resolveRequestTenant) and fail-closed behavior exist and are
 // used by all NEW mode-aware code. MANAGED resolves to the shared pooled
-// Prisma client. CUSTOMER_DB / PRIVATE have no primary-database connection
-// infrastructure yet, so data-plane resolution throws TenantDatabaseError
-// instead of guessing. Migrating the 213 existing routes onto getTenantDb is
-// explicitly out of scope for Phase 1 (tracked as follow-up); the guards in
-// control-plane.ts already enforce mode-correct ACCESS on new paths.
+// Prisma client. CUSTOMER_DB has no primary-database connection infrastructure
+// yet, so data-plane resolution throws TenantDatabaseError instead of guessing.
+// Migrating the 213 existing routes onto getTenantDb is explicitly out of
+// scope for Phase 1 (tracked as follow-up); the guards in control-plane.ts
+// already enforce mode-correct ACCESS on new paths.
+//
+// NOTE: the legacy PRIVATE mode was removed (migration
+// 20260916000000_remove_private_deployment_mode); MANAGED | CUSTOMER_DB are
+// the only deployment modes.
 //
 // Connection strategy (documented, Phase 1 Step 6):
 //   - MANAGED: single shared PrismaClient (src/lib/db.ts, global singleton,
@@ -37,14 +40,10 @@ import {
 
 export type TenantDatabaseDescriptor =
   | { kind: 'managed'; organizationId: string; mode: DeploymentMode }
-  | { kind: 'customer'; organizationId: string; mode: 'CUSTOMER_DB' }
-  | { kind: 'private'; organizationId: string; mode: 'PRIVATE' };
+  | { kind: 'customer'; organizationId: string; mode: 'CUSTOMER_DB' };
 
 export class TenantDatabaseError extends Error {
-  readonly code:
-    | 'MODE_UNRESOLVABLE'
-    | 'CUSTOMER_DB_NOT_CONFIGURED'
-    | 'PRIVATE_DB_NOT_REACHABLE';
+  readonly code: 'MODE_UNRESOLVABLE' | 'CUSTOMER_DB_NOT_CONFIGURED';
   constructor(
     code: TenantDatabaseError['code'],
     organizationId: string,
@@ -60,9 +59,10 @@ export class TenantDatabaseError extends Error {
 
 /**
  * resolveTenantDatabase — conceptual API required by Phase 1 Step 5.
- * Distinguishes MANAGED -> managed DB, CUSTOMER_DB -> customer DB,
- * PRIVATE -> customer deployment DB. Pure resolution (no connections):
- * throws fail-closed when the mode cannot be resolved.
+ * Distinguishes MANAGED -> managed DB, CUSTOMER_DB -> customer DB. Pure
+ * resolution (no connections): throws fail-closed when the mode cannot be
+ * resolved. The switch is exhaustive over DeploymentMode; TypeScript rejects
+ * a new enum member without a case here.
  */
 export async function resolveTenantDatabase(
   organizationId: string,
@@ -78,8 +78,17 @@ export async function resolveTenantDatabase(
       return { kind: 'managed', organizationId, mode };
     case 'CUSTOMER_DB':
       return { kind: 'customer', organizationId, mode };
-    case 'PRIVATE':
-      return { kind: 'private', organizationId, mode };
+    default: {
+      // Exhaustive guard: unreachable while the switch covers every
+      // DeploymentMode member; any future mode must be handled explicitly
+      // above (fail-closed, never routed to the shared database).
+      const exhaustive: never = mode;
+      throw new TenantDatabaseError(
+        'MODE_UNRESOLVABLE',
+        organizationId,
+        `unhandled deployment mode: ${String(exhaustive)}`,
+      );
+    }
   }
 }
 
@@ -89,8 +98,8 @@ export type TenantDbHandle =
 
 /**
  * getTenantDb — the single choke point for data-plane Prisma access in new
- * mode-aware code. MANAGED returns the shared pooled client. CUSTOMER_DB /
- * PRIVATE throw TenantDatabaseError (fail-closed) until per-tenant pool
+ * mode-aware code. MANAGED returns the shared pooled client. CUSTOMER_DB
+ * throws TenantDatabaseError (fail-closed) until per-tenant pool
  * infrastructure lands. Callers MUST surface this as an explicit operational
  * error (503), never retry against the managed database.
  */
@@ -101,20 +110,13 @@ export async function getTenantDb(
   if (target.kind === 'managed') {
     return { kind: 'managed', prisma: db };
   }
-  if (target.kind === 'customer') {
-    // No primary-database connection infrastructure in Phase 1. The
-    // analytics-only OrganizationSettings.useOwnDb credentials MUST NOT be
-    // treated as a primary database (different schema/purpose).
-    throw new TenantDatabaseError(
-      'CUSTOMER_DB_NOT_CONFIGURED',
-      organizationId,
-      'customer primary-database pools are not implemented in Phase 1',
-    );
-  }
+  // No primary-database connection infrastructure in Phase 1. The
+  // analytics-only OrganizationSettings.useOwnDb credentials MUST NOT be
+  // treated as a primary database (different schema/purpose).
   throw new TenantDatabaseError(
-    'PRIVATE_DB_NOT_REACHABLE',
+    'CUSTOMER_DB_NOT_CONFIGURED',
     organizationId,
-    'private deployments serve their own API/database; this instance cannot route there',
+    'customer primary-database pools are not implemented in Phase 1',
   );
 }
 

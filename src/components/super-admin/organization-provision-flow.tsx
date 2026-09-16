@@ -32,9 +32,7 @@ export interface ProvisionResult {
 /**
  * V1 Service Type options — map 1:1 to Organization.deploymentMode.
  *
- * PRIVATE is removed from V1 customer-facing workflows. Only MANAGED and
- * CUSTOMER_DB are selectable. A future enterprise/self-hosted mode may be
- * introduced in a later version.
+ * MANAGED and CUSTOMER_DB are the only selectable service types.
  */
 const SERVICE_OPTIONS = [
   {
@@ -64,10 +62,9 @@ interface ProvisionOrganizationFlowProps {
  * When no explicit password is supplied the server generates a temp password
  * returned ONCE in the response (mustChangePassword = true on the account) —
  * shown here with the first-login badge and copy action.
- *
- * Service Type (Organization.deploymentMode) is selectable at provisioning:
- * MANAGED | CUSTOMER_DB — persisted verbatim by the server (no
- * silent fallback). PRIVATE is not available in V1. CUSTOMER_DB orgs are
+ *  * Service Type (Organization.deploymentMode) is selectable at provisioning:
+  * MANAGED | CUSTOMER_DB — persisted verbatim by the server (no
+  * silent fallback). CUSTOMER_DB orgs are
  * control-plane-provisioned; their data plane fails closed until the
  * customer primary database is configured by the Organization Admin.
  */

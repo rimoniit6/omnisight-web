@@ -133,7 +133,7 @@ export async function GET(req: NextRequest) {
       where.organizationId = scope.organizationId;
     } else {
       // Phase 2 privacy: org-less global super_admins may target an explicit
-      // organization ONLY when it is MANAGED. CUSTOMER_DB / PRIVATE orgs are
+      // organization ONLY when it is MANAGED. CUSTOMER_DB orgs are
       // rejected — operational data there is never reachable from the console.
       const orgParam = searchParams.get('organizationId');
       if (orgParam) {

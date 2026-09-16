@@ -60,8 +60,8 @@ test('AC-5: compat exposes the agent-version floor and supported deployment mode
   assert.equal(body.serverVersion, body.version, 'serverVersion must equal the release version');
   const modes = body.supportedDeploymentModes as string[];
   assert.ok(Array.isArray(modes), 'supportedDeploymentModes must be an array');
-  assert.deepEqual([...modes].sort(), ['CUSTOMER_DB', 'MANAGED', 'PRIVATE']);
-  for (const m of modes) assert.match(m, /^(MANAGED|CUSTOMER_DB|PRIVATE)$/);
+  assert.deepEqual([...modes].sort(), ['CUSTOMER_DB', 'MANAGED']);
+  for (const m of modes) assert.match(m, /^(MANAGED|CUSTOMER_DB)$/);
 });
 
 test('AC-6: compat remains public, DB-free and zero-state (no auth required, nothing persisted)', async () => {

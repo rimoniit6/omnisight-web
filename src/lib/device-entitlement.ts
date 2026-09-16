@@ -8,8 +8,6 @@
 //                reached the entitlement.
 //   CUSTOMER_DB: ALWAYS unlimited — this function can never reject a
 //                CUSTOMER_DB organization, regardless of device count.
-//   PRIVATE:     legacy self-hosted path — unlimited (Plan.maxDevices <= 0
-//                semantics preserved; no V1 enforcement is introduced here).
 //
 // Callers (server-side enforcement points, never UI):
 //   - POST /api/device-claims/[id]/approve   (the authoritative enrollment act)
@@ -39,7 +37,7 @@ export interface DeviceEntitlement {
 export async function checkDeviceEntitlement(organizationId: string): Promise<DeviceEntitlement> {
   const mode = await getOrganizationDeploymentMode(organizationId);
 
-  // Customer Database and legacy PRIVATE deployments are NEVER capped.
+  // Customer Database deployments are NEVER capped.
   if (mode !== 'MANAGED') {
     const org = await db.organization.findUnique({
       where: { id: organizationId },

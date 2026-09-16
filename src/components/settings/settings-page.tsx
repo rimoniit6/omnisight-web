@@ -436,7 +436,7 @@ interface ScreenshotIntervalMeta {
  * Screenshot cadence control bound to the SUPER ADMIN-owned
  * Organization.screenshotInterval column (exposed by GET /api/settings/monitoring
  * as `screenshotInterval` with a mode-derived `writable` flag). Read-only on
- * MANAGED plans (centrally managed); org-admins on CUSTOMER_DB/PRIVATE plans
+ * MANAGED plans (centrally managed); org-admins on CUSTOMER_DB plans
  * may write it via PUT with key 'screenshotInterval'.
  */
 function ScreenshotIntervalRow({ meta, onSaved }: { meta: ScreenshotIntervalMeta; onSaved: () => void }) {

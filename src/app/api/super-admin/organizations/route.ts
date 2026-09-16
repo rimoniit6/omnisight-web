@@ -11,7 +11,7 @@ import { requireSuperAdmin, requireDbVerifiedRole, apiError, apiSuccess, authErr
  * Query params:
  *   ?search=         — search by name or slug (case-insensitive)
  *   ?status=         — filter by status (active, pending, paused, archived)
- *   ?deploymentMode= — filter by mode (MANAGED, CUSTOMER_DB, PRIVATE)
+ *   ?deploymentMode= — filter by mode (MANAGED, CUSTOMER_DB)
  *   ?page=           — page number (default: 1)
  *   ?pageSize=       — results per page (default: 20, max: 200)
  *
@@ -41,7 +41,7 @@ export async function GET(req: NextRequest) {
   if (status && ['active', 'pending', 'paused', 'archived'].includes(status)) {
     where.status = status;
   }
-  if (deploymentMode && ['MANAGED', 'CUSTOMER_DB', 'PRIVATE'].includes(deploymentMode)) {
+  if (deploymentMode && ['MANAGED', 'CUSTOMER_DB'].includes(deploymentMode)) {
     where.deploymentMode = deploymentMode;
   }
 

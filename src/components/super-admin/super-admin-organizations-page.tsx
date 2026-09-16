@@ -54,10 +54,9 @@ interface Organization {
   id: string;
   name: string;
   slug: string;
-  status: string;
-  deploymentMode: 'MANAGED' | 'CUSTOMER_DB' | 'PRIVATE';
-  deploymentModeUnresolved: boolean;
-  createdAt: string;
+  status: string;   deploymentMode: 'MANAGED' | 'CUSTOMER_DB';
+   deploymentModeUnresolved: boolean;
+   createdAt: string;
   memberCount: number;
   employeeCount: number;
   deviceCount: number;
@@ -99,9 +98,7 @@ const STATUS_CONFIG: Record<string, { label: string; className: string; icon: Re
 };
 
 // Phase 2 §7: deployment-mode badge config for the control-plane list.
-// V1 service models are MANAGED and CUSTOMER_DB. PRIVATE is kept ONLY so
-// pre-existing legacy rows still render a label — it is not selectable and not
-// a V1 service model.
+// MANAGED and CUSTOMER_DB are the only deployment modes.
 const MODE_CONFIG: Record<string, { label: string; className: string }> = {
   MANAGED: {
     label: 'Managed',
@@ -110,10 +107,6 @@ const MODE_CONFIG: Record<string, { label: string; className: string }> = {
   CUSTOMER_DB: {
     label: 'Customer DB',
     className: 'bg-blue-100 text-blue-700 border-blue-200 dark:bg-blue-900/30 dark:text-blue-400',
-  },
-  PRIVATE: {
-    label: 'Private (Legacy)',
-    className: 'bg-violet-100 text-violet-700 border-violet-200 dark:bg-violet-900/30 dark:text-violet-400',
   },
 };
 
@@ -164,11 +157,11 @@ export function SuperAdminOrganizationsPage() {
     },
     placeholderData: (prev) => prev,
   });
-  // PRIVATE is legacy-only; metrics exclude it from customer-owned count.
-  // The `licenses` counter was removed with the LicenseKey architecture.
+  // Metrics cover the two deployment modes; the `licenses` counter was
+  // removed with the LicenseKey architecture.
   const metrics = metricsData as
     | {
-        organizations: { total: number; managed: number; customerDb: number; private: number; unresolvedModes: number; pendingDeployments: number };
+        organizations: { total: number; managed: number; customerDb: number; unresolvedModes: number; pendingDeployments: number };
         subscriptions: { active: number; expiringSoon: number };
         billing: { pendingInvoices: number };
       }
@@ -278,7 +271,7 @@ export function SuperAdminOrganizationsPage() {
               </div>
               <div>
                 <p className="text-2xl font-bold">
-                  {metrics ? metrics.organizations.customerDb + metrics.organizations.private : '—'}
+                  {metrics ? metrics.organizations.customerDb : '—'}
                 </p>
                 <p className="text-xs text-muted-foreground">Customer-Owned</p>
               </div>
@@ -335,7 +328,6 @@ export function SuperAdminOrganizationsPage() {
                   <SelectItem value="all">All Modes</SelectItem>
                   <SelectItem value="MANAGED">Managed</SelectItem>
                   <SelectItem value="CUSTOMER_DB">Customer DB</SelectItem>
-                  {/* PRIVATE is not a V1 service model — not selectable. */}
                 </SelectContent>
               </Select>
             </div>

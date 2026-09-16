@@ -9,10 +9,11 @@ services:
       POSTGRES_DB: omnisight_db
     ports:
       # Host access to PostgreSQL is LOOPBACK-ONLY. Container-to-container
-      # access (web -> db) uses the compose network at db:5433 and is
+      # access (web -> db) uses the compose network at db:5432 and is
       # unaffected by this binding. To reach the DB from another machine use
       # the Caddy gateway or a tunnel - never widen this binding.
-      - "127.0.0.1:5433:5433"
+      # Host mapping 5433 -> 5432: postgres listens on 5432 inside the container.
+      - "127.0.0.1:5433:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     networks:
@@ -35,6 +36,9 @@ services:
       - .env
     environment:
       NODE_ENV: production
+      # Prisma CLI caches go to $HOME; point it at the tmpfs so the read-only
+      # rootfs is never written to.
+      HOME: /tmp
       DATABASE_URL: postgresql://omnisight_user:omnisight_password@db:5432/omnisight_db
       DIRECT_URL: postgresql://omnisight_user:omnisight_password@db:5432/omnisight_db
     command: ["npx", "prisma", "migrate", "deploy"]
@@ -50,6 +54,9 @@ services:
     read_only: true
     tmpfs:
       - /tmp
+    volumes:
+      # Anonymous volume (initialized from the image) keeps @prisma/engines
+      # readable AND writable instead of hiding it behind an empty tmpfs mount.
       - /app/node_modules/@prisma/engines
     # One-shot: must NOT restart on success or failure.
     restart: "no"

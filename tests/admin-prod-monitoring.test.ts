@@ -473,11 +473,11 @@ test('MON-PROD-18: CUSTOMER_DB org admin may write screenshotInterval (0 = disab
   }
 });
 
-test('MON-PROD-19: PRIVATE org admin may write; super_admin bypasses the MANAGED read-only ban', async () => {
+test('MON-PROD-19: CUSTOMER_DB org admin may write; super_admin bypasses the MANAGED read-only ban', async () => {
   const api = await import('../src/app/api/settings/monitoring/route');
 
   const orgD = await db.organization.create({
-    data: { name: 'Org D', slug: 'org-d-mon', timezone: 'UTC', deploymentMode: 'PRIVATE' },
+    data: { name: 'Org D', slug: 'org-d-mon', timezone: 'UTC', deploymentMode: 'CUSTOMER_DB' },
   });
   const subD = await db.subscription.create({
     data: { organizationId: orgD.id, planId: testPlanId, status: 'ACTIVE', startDate: new Date(), endDate: new Date(Date.now() + 864e5) },
@@ -486,7 +486,7 @@ test('MON-PROD-19: PRIVATE org admin may write; super_admin bypasses the MANAGED
   const adminDToken = await signJWT({ userId: 'admin-d', email: 'admin@d.test', role: 'admin', organizationId: orgD.id });
 
   const put = await api.PUT(req(adminDToken, { method: 'PUT', body: { key: 'screenshotInterval', value: 12 } }));
-  assert.equal(put.status, 200, 'PRIVATE org admin may set cadence');
+  assert.equal(put.status, 200, 'CUSTOMER_DB org admin may set cadence');
 
   // Super admin scoped to a MANAGED org bypasses the read-only ban.
   const superToken = await signJWT({ userId: 'root-mon', email: 'root@mon.test', role: 'super_admin', organizationId: orgA.id });

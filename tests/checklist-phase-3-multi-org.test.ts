@@ -6,7 +6,7 @@
  *         updates the server-authoritative session row
  *   M-02  switching to an org the user is NOT a member of -> 403
  *   M-03  suspended membership / paused org -> 403 (fail closed)
- *   M-04  super admin = MANAGED orgs only; PRIVATE/CUSTOMER_DB orgs rejected
+ *   M-04  super admin = MANAGED orgs only; CUSTOMER_DB orgs rejected
  *   M-05  projects API is strictly org-scoped (tenant A never sees tenant B)
  *   M-06  org-less super admin gets an EMPTY project list (never a global dump)
  *
@@ -74,7 +74,7 @@ after(async () => {
 
 // ─── Fixtures ───────────────────────────────────────────────────────────────
 
-async function seedOrg(name: string, opts: { deploymentMode?: 'MANAGED' | 'CUSTOMER_DB' | 'PRIVATE' } = {}) {
+async function seedOrg(name: string, opts: { deploymentMode?: 'MANAGED' | 'CUSTOMER_DB' } = {}) {
   return db.organization.create({
     data: { name, slug: name.toLowerCase().replace(/[^a-z0-9]/g, '-'), ...(opts.deploymentMode ? { deploymentMode: opts.deploymentMode } : {}) },
   });
@@ -176,7 +176,6 @@ test('M-03: suspended membership and paused org are both rejected with 403', asy
 
 test('M-04: super admin switches only into MANAGED organizations', async () => {
   const managed = await seedOrg('M04 Managed'); // default deploymentMode = MANAGED
-  const privateOrg = await seedOrg('M04 Private', { deploymentMode: 'PRIVATE' });
   const customerDb = await seedOrg('M04 Customer', { deploymentMode: 'CUSTOMER_DB' });
   const superAdmin = await seedUser('m04@test.local', managed.id, 'super_admin');
 
@@ -185,11 +184,9 @@ test('M-04: super admin switches only into MANAGED organizations', async () => {
   assert.equal(ok.status, 200, JSON.stringify(ok.body));
   assert.equal(ok.body.role, 'super_admin', 'super admin keeps its global role');
 
-  for (const org of [privateOrg, customerDb]) {
-    const r = await doSwitch(token, org.id);
-    assert.equal(r.status, 403, `PRIVATE/CUSTOMER_DB switch must be rejected: ${JSON.stringify(r.body)}`);
-    assert.match(String(r.body.error), /MANAGED organizations/, 'rejection names the MANAGED-only boundary');
-  }
+  const r = await doSwitch(token, customerDb.id);
+  assert.equal(r.status, 403, `CUSTOMER_DB switch must be rejected: ${JSON.stringify(r.body)}`);
+  assert.match(String(r.body.error), /MANAGED organizations/, 'rejection names the MANAGED-only boundary');
 });
 
 // ─── M-05: strict tenant scoping of the projects API ────────────────────────

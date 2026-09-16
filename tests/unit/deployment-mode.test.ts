@@ -9,15 +9,17 @@ import {
   DEPLOYMENT_MODES,
 } from '../../src/lib/deployment-mode';
 
-test('DEPLOYMENT_MODES contains exactly MANAGED, CUSTOMER_DB, PRIVATE', () => {
-  assert.deepEqual([...DEPLOYMENT_MODES].sort(), ['CUSTOMER_DB', 'MANAGED', 'PRIVATE']);
+test('DEPLOYMENT_MODES contains exactly MANAGED and CUSTOMER_DB', () => {
+  assert.deepEqual([...DEPLOYMENT_MODES].sort(), ['CUSTOMER_DB', 'MANAGED']);
 });
 
-test('isDeploymentMode accepts only the three canonical modes', () => {
+test('isDeploymentMode accepts only the two canonical modes', () => {
   assert.equal(isDeploymentMode('MANAGED'), true);
   assert.equal(isDeploymentMode('CUSTOMER_DB'), true);
-  // PRIVATE remains a legacy-compatibility enum value (pre-existing rows only).
-  assert.equal(isDeploymentMode('PRIVATE'), true);
+  // Invalid/unknown values (incl. the retired PRIVATE and lowercase variants)
+  // are rejected — deployment modes are exactly MANAGED | CUSTOMER_DB.
+  assert.equal(isDeploymentMode('PRIVATE'), false);
+  assert.equal(isDeploymentMode('UNKNOWN_MODE'), false);
   assert.equal(isDeploymentMode('ENTERPRISE'), false);
   assert.equal(isDeploymentMode('managed'), false);
   assert.equal(isDeploymentMode(''), false);
@@ -29,7 +31,6 @@ test('isDeploymentMode accepts only the three canonical modes', () => {
 test('allowsSuperAdminTenantAccess: only MANAGED', () => {
   assert.equal(allowsSuperAdminTenantAccess('MANAGED'), true);
   assert.equal(allowsSuperAdminTenantAccess('CUSTOMER_DB'), false);
-  assert.equal(allowsSuperAdminTenantAccess('PRIVATE'), false);
 });
 
 test('CONTROL_PLANE_ORG_FIELDS excludes data-plane identifiers', () => {

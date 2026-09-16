@@ -17,6 +17,18 @@ OmniSight has 100+ test files covering unit tests, integration tests, API tests,
 npm test
 ```
 
+### Test Database
+
+The suite runs against throwaway databases (`workai_test_<suite>`) on the server
+named by `PG_TEST_BASE_URL`. The default is the Docker Postgres instance
+(`postgresql://omnisight_user:omnisight_password@127.0.0.1:5433` — the compose map
+`127.0.0.1:5433 -> db:5432`), so a plain `npm test` never touches a native
+PostgreSQL on `localhost:5432`. Override it to target another instance:
+
+```bash
+PG_TEST_BASE_URL=postgresql://user:pass@host:port npm test
+```
+
 ### Specific Test Suites
 
 ```bash

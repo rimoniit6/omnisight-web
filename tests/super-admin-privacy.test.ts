@@ -3,16 +3,20 @@
  *
  * Proves (throwaway DB):
  *  PV-01  SA → super-admin/[CUSTOMER_DB]/employees            => 403
- *  PV-02  SA → super-admin/[PRIVATE]/devices                  => 403
+ *  PV-02  SA → super-admin/[CUSTOMER_DB]/devices              => 403
  *  PV-03  SA → super-admin/[MANAGED]/employees                => 200
  *  PV-04  SA → /api/employees?organizationId=<CUSTOMER_DB>    => 403
- *  PV-05  SA → /api/employees/search?organizationId=<PRIVATE> => 403
+ *  PV-05  SA → /api/employees/search?organizationId=<CUSTOMER_DB> => 403
  *  PV-06  SA (org-less) → screenshots/analytics               => EMPTY (no leak)
- *  PV-07  SA → switch CUSTOMER_DB / PRIVATE                   => 403
+ *  PV-07  SA → switch CUSTOMER_DB                             => 403
  *  PV-08  Mode change → CUSTOMER_DB                           => rejected (422)
- *  PV-09  Mode change MANAGED → PRIVATE                       => allowed + audited
- *  PV-10  Mode change PRIVATE → MANAGED w/o confirm           => rejected (422)
- *  PV-11  Mode change PRIVATE → MANAGED with confirm          => allowed + unresolved cleared
+ *  PV-09  Invalid/retired mode values (PRIVATE, UNKNOWN_MODE)  => rejected (422)
+ *  PV-10  Mode change CUSTOMER_DB → MANAGED w/o confirm       => rejected (422)
+ *  PV-11  Mode change CUSTOMER_DB → MANAGED with confirm      => allowed + unresolved cleared
+ *
+ * (The retired PRIVATE deployment mode no longer exists as an org state —
+ * formerly PRIVATE-specific denials are covered by the CUSTOMER_DB cases; the
+ * PRIVATE *input string* is still rejected by API validation, per PV-09.)
  *  PV-12  mustChangePassword session: allowlisted /me => 200, /organizations => 401;
  *          after change-password => access restored
  *  PV-13  Org member (non-SA) unaffected: own CUSTOMER_DB tenant => 200
@@ -58,7 +62,6 @@ let signJWT: (payload: {
 let saId: string;
 let managedId: string;
 let customerId: string;
-let privateId: string;
 let memberId: string;
 
 function req(url: string, token: string, method = 'GET', body?: unknown): NextRequest {
@@ -84,7 +87,6 @@ before(async () => {
 
   managedId = (await db.organization.create({ data: { name: 'M', slug: 'pv-m', deploymentMode: 'MANAGED' } })).id;
   customerId = (await db.organization.create({ data: { name: 'C', slug: 'pv-c', deploymentMode: 'CUSTOMER_DB' } })).id;
-  privateId = (await db.organization.create({ data: { name: 'P', slug: 'pv-p', deploymentMode: 'PRIVATE' } })).id;
 
   // Customer-org operational data that must never leak to SA.
   const emp = await db.employee.create({
@@ -132,9 +134,9 @@ test('PV-01: SA employees read on CUSTOMER_DB is rejected', async () => {
 });
 
 // PV-02
-test('PV-02: SA devices read on PRIVATE is rejected', async () => {
+test('PV-02: SA devices read on CUSTOMER_DB is rejected', async () => {
   const { GET } = await import('../src/app/api/super-admin/organizations/[orgId]/devices/route');
-  const res = await GET(req(saRoute(privateId, 'devices'), await saToken()), { params: Promise.resolve({ orgId: privateId }) });
+  const res = await GET(req(saRoute(customerId, 'devices'), await saToken()), { params: Promise.resolve({ orgId: customerId }) });
   assert.equal(res.status, 403);
 });
 
@@ -155,9 +157,9 @@ test('PV-04: SA employees list with customer orgId param is rejected', async () 
 });
 
 // PV-05
-test('PV-05: SA employee search with private orgId param is rejected', async () => {
+test('PV-05: SA employee search with customer orgId param is rejected', async () => {
   const { GET } = await import('../src/app/api/employees/search/route');
-  const res = await GET(req(`http://localhost:3000/api/employees/search?q=x&organizationId=${privateId}`, await saToken()));
+  const res = await GET(req(`http://localhost:3000/api/employees/search?q=x&organizationId=${customerId}`, await saToken()));
   assert.equal(res.status, 403);
 });
 
@@ -175,13 +177,11 @@ test('PV-06: org-less SA sees EMPTY screenshots/analytics (no cross-customer lea
 });
 
 // PV-07
-test('PV-07: SA switch to CUSTOMER_DB/PRIVATE is rejected', async () => {
+test('PV-07: SA switch to CUSTOMER_DB is rejected', async () => {
   const { POST } = await import('../src/app/api/me/organization/switch/route');
   const token = await saToken();
   const cRes = await POST(req('http://localhost:3000/api/me/organization/switch', token, 'POST', { organizationId: customerId }));
   assert.equal(cRes.status, 403);
-  const pRes = await POST(req('http://localhost:3000/api/me/organization/switch', token, 'POST', { organizationId: privateId }));
-  assert.equal(pRes.status, 403);
 });
 
 // PV-08
@@ -199,45 +199,47 @@ test('PV-08: deployment-mode change to CUSTOMER_DB is rejected', async () => {
 });
 
 // PV-09
-// V1 commercial model: PRIVATE is a legacy self-hosted mode and must never be
-// (re)assigned through customer-facing/admin surfaces. The route-level guard
-// rejects PRIVATE regardless of the transition matrix in
-// validateDeploymentModeChange (which still permits it for backend
-// compatibility). Stale expectation updated to the enforced behavior.
-test('PV-09: MANAGED to PRIVATE change is rejected (PRIVATE is legacy, never assignable)', async () => {
+// PRIVATE is retired and no longer a valid deployment-mode input; any unknown
+// mode string must be rejected by API validation (422) without changing state.
+test('PV-09: invalid mode values (incl. retired PRIVATE) are rejected', async () => {
   const { PATCH } = await import('../src/app/api/super-admin/organizations/[orgId]/route');
-  const res = await PATCH(
-    req(`http://localhost:3000/api/super-admin/organizations/${managedId}`, await saToken(), 'PATCH', { deploymentMode: 'PRIVATE' }),
-    { params: Promise.resolve({ orgId: managedId }) },
-  );
-  assert.equal(res.status, 422, 'PRIVATE must not be settable via the org PATCH route in V1');
+  for (const invalidMode of ['PRIVATE', 'UNKNOWN_MODE']) {
+    const res = await PATCH(
+      req(`http://localhost:3000/api/super-admin/organizations/${managedId}`, await saToken(), 'PATCH', { deploymentMode: invalidMode }),
+      { params: Promise.resolve({ orgId: managedId }) },
+    );
+    assert.equal(res.status, 422, `${invalidMode} must not be settable via the org PATCH route`);
+  }
   const row = await db.organization.findUnique({ where: { id: managedId }, select: { deploymentMode: true } });
   assert.equal(row?.deploymentMode, 'MANAGED', 'mode must not change on rejection');
 });
 
 // PV-10
-test('PV-10: PRIVATE to MANAGED without confirmation is rejected', async () => {
+test('PV-10: CUSTOMER_DB to MANAGED without confirmation is rejected', async () => {
   const { PATCH } = await import('../src/app/api/super-admin/organizations/[orgId]/route');
   const res = await PATCH(
-    req(`http://localhost:3000/api/super-admin/organizations/${privateId}`, await saToken(), 'PATCH', { deploymentMode: 'MANAGED' }),
-    { params: Promise.resolve({ orgId: privateId }) },
+    req(`http://localhost:3000/api/super-admin/organizations/${customerId}`, await saToken(), 'PATCH', { deploymentMode: 'MANAGED' }),
+    { params: Promise.resolve({ orgId: customerId }) },
   );
   assert.equal(res.status, 422);
+  const row = await db.organization.findUnique({ where: { id: customerId }, select: { deploymentMode: true } });
+  assert.equal(row?.deploymentMode, 'CUSTOMER_DB', 'mode must not change without confirmation');
 });
 
 // PV-11
-test('PV-11: PRIVATE to MANAGED with confirmation succeeds and clears unresolved', async () => {
-  await db.organization.update({ where: { id: privateId }, data: { deploymentModeUnresolved: true } });
+test('PV-11: CUSTOMER_DB to MANAGED with confirmation succeeds and clears unresolved', async () => {
+  await db.organization.update({ where: { id: customerId }, data: { deploymentModeUnresolved: true } });
   const { PATCH } = await import('../src/app/api/super-admin/organizations/[orgId]/route');
   const res = await PATCH(
-    req(`http://localhost:3000/api/super-admin/organizations/${privateId}`, await saToken(), 'PATCH', { deploymentMode: 'MANAGED', confirmDataResidency: true }),
-    { params: Promise.resolve({ orgId: privateId }) },
+    req(`http://localhost:3000/api/super-admin/organizations/${customerId}`, await saToken(), 'PATCH', { deploymentMode: 'MANAGED', confirmDataResidency: true }),
+    { params: Promise.resolve({ orgId: customerId }) },
   );
   assert.equal(res.status, 200);
-  const row = await db.organization.findUnique({ where: { id: privateId }, select: { deploymentMode: true, deploymentModeUnresolved: true } });
+  const row = await db.organization.findUnique({ where: { id: customerId }, select: { deploymentMode: true, deploymentModeUnresolved: true } });
   assert.equal(row?.deploymentMode, 'MANAGED');
   assert.equal(row?.deploymentModeUnresolved, false);
-  await db.organization.update({ where: { id: privateId }, data: { deploymentMode: 'PRIVATE' } });
+  // Restore the fixture state for any later assertions.
+  await db.organization.update({ where: { id: customerId }, data: { deploymentMode: 'CUSTOMER_DB' } });
 });
 
 // PV-12

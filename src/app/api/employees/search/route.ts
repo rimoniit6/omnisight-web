@@ -49,7 +49,7 @@ export async function GET(req: NextRequest) {
   // Tenant isolation: org always derived from the verified session; the
   // organizationId param is honored only for org-less global super_admins
   // targeting MANAGED organizations (same convention as GET /api/employees).
-  // CUSTOMER_DB / PRIVATE targets are rejected (Phase 2 privacy).
+  // CUSTOMER_DB targets are rejected (Phase 2 privacy).
   const organizationWhere: Prisma.EmployeeWhereInput = {};
   if (scope.organizationId) {
     organizationWhere.organizationId = scope.organizationId;

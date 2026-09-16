@@ -18,9 +18,9 @@
 //
 // NOTE: the legacy license / self-hosted signals (Organization.licenseKeyId,
 // Plan.isSelfHosted) were REMOVED with the LicenseKey architecture and are no
-// longer consulted. PRIVATE is NOT a V1 service model and is never assigned by
-// this script — pre-existing PRIVATE rows must be reviewed and moved to
-// MANAGED or CUSTOMER_DB by a human.
+// longer consulted. MANAGED and CUSTOMER_DB are the only deployment modes; the
+// retired PRIVATE enum value no longer exists (migration
+// 20260916000000_remove_private_deployment_mode).
 //
 // The script never deletes or modifies anything except deploymentMode /
 // deploymentModeUnresolved on Organization rows (only with --apply). It never
@@ -80,7 +80,7 @@ async function decide(): Promise<Decision[]> {
 
 async function main() {
   const apply = process.argv.includes('--apply');
-  console.log('V1 service models: MANAGED | CUSTOMER_DB (PRIVATE is never assigned)');
+  console.log('V1 service models: MANAGED | CUSTOMER_DB (the only deployment modes)');
   console.log(`Mode: ${apply ? 'APPLY (writing)' : 'DRY-RUN (no writes)'}\n`);
 
   const decisions = await decide();

@@ -9,7 +9,7 @@
 //   node scripts/pg-test-db.mjs drop   workai_test_zerotouch
 //
 // The server connection is derived from PG_TEST_BASE_URL (default matches the
-// local dev instance used by .env): postgresql://postgres:123456@localhost:5432
+// Docker test instance used by .env): postgresql://omnisight_user:omnisight_password@127.0.0.1:5433
 // The helper connects to the maintenance database `postgres` to run CREATE /
 // DROP DATABASE (these cannot run inside a transaction).
 import { execFileSync } from 'node:child_process';
@@ -22,7 +22,7 @@ if (!['ensure', 'drop'].includes(action) || !dbName || !/^[a-z0-9_]+$/.test(dbNa
   process.exit(2);
 }
 
-const base = process.env.PG_TEST_BASE_URL || 'postgresql://postgres:123456@localhost:5432';
+const base = process.env.PG_TEST_BASE_URL || 'postgresql://omnisight_user:omnisight_password@127.0.0.1:5433';
 // Connect to the maintenance `postgres` database to run CREATE/DROP DATABASE.
 const maintenanceUrl = (() => {
   const u = new URL(base);

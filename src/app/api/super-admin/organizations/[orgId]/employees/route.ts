@@ -6,9 +6,8 @@ import { requireManagedTenantAccess } from '@/lib/control-plane';
 /**
  * GET /api/super-admin/organizations/[orgId]/employees
  *
- * List employees for a MANAGED organization. Super Admin only.
- * Phase 2 privacy: CUSTOMER_DB / PRIVATE organizations are rejected with
- * 403 (control-plane metadata remains available via the organizations
+ * List employees for a MANAGED organization. Super Admin only.  * Phase 2 privacy: CUSTOMER_DB organizations are rejected with
+  * 403 (control-plane metadata remains available via the organizations
  * metadata endpoints). No membership required for MANAGED tenants.
  */
 export async function GET(

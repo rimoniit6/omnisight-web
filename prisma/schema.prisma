@@ -47,26 +47,18 @@ enum InvoiceStatus {
 // backward compatibility/backfill diagnostics only and MUST NOT be used for
 // routing.
 //
-// V1 customer-facing service models:
+// V1 customer-facing service models (the ONLY deployment modes):
 // - MANAGED: OmniSight owns app + API + database + storage. Super Admin may
 //   access the organization's operational dashboard.
 // - CUSTOMER_DB: OmniSight owns app + API; customer owns primary database
 //   (+ optionally storage). Super Admin sees control-plane metadata only.
 //
-// LEGACY COMPATIBILITY ONLY:
-// - PRIVATE: NOT a V1 service model. Removed from all active/selectable code
-//   paths (no UI option, no valid mode transition) and no seed creates a
-//   self-hosted plan. The value is retained ONLY so pre-existing organization
-//   rows with deploymentMode='PRIVATE' still cast/read correctly; dropping the
-//   enum value would require a destructive data migration, which is
-//   deliberately out of scope. Active code treats PRIVATE exactly like
-//   CUSTOMER_DB for privacy (deny) and like an unresolvable/legacy mode.
-//   A separate, controlled data migration is required before this value can
-//   be removed.
+// The legacy `PRIVATE` value was REMOVED by migration
+// 20260916000000_remove_private_deployment_mode (fail-closed guard, no
+// conversion). Do NOT reintroduce it.
 enum DeploymentMode {
   MANAGED
   CUSTOMER_DB
-  PRIVATE
 }
 
 // ==================== Plan ====================
@@ -83,8 +75,8 @@ model Plan {
   // 0 = Unlimited, 365 = 1 year
   retentionDays Int           @default(90)
   // NOTE: `isSelfHosted` was REMOVED by migration
-  // 20260912120000_remove_license_key_self_hosted — Self-Hosted / PRIVATE is
-  // not a V1 service model (V1 service models are MANAGED and CUSTOMER_DB).
+  // 20260912120000_remove_license_key_self_hosted — Self-Hosted is not a V1
+  // service model (V1 service models are MANAGED and CUSTOMER_DB).
   // JSON array: ["screenshots", "ai_insights", "usb_monitoring", "webcam"]
   features      Json          @default("[]")
   isActive      Boolean       @default(true)
@@ -109,8 +101,7 @@ model Plan {
 // behavior; otherwise consumers fall back to the legacy plan columns.
 //
 // Scope rules:
-//   - deploymentMode is MANAGED or CUSTOMER_DB only. PRIVATE is a legacy
-//     self-hosted path and must NEVER receive PlanPricing rows.
+//   - deploymentMode is MANAGED or CUSTOMER_DB only.
 //   - includedDevices / additionalDevicePrice are MANAGED-only concepts
 //     (device quantity affects price). They are ignored for CUSTOMER_DB.
 //   - CUSTOMER_DB devices are ALWAYS unlimited — no device cap is derived
@@ -250,10 +241,10 @@ model PurchaseRequest {
 }
 
 // ==================== License Key (REMOVED) ====================
-// The legacy `LicenseKey` model (self-hosted / PRIVATE license keys) was
+// The legacy `LicenseKey` model (self-hosted license keys) was
 // REMOVED by migration 20260912120000_remove_license_key_self_hosted.
 //
-// Self-Hosted / PRIVATE is not a V1 service model; V1 organizations are
+// Self-Hosted is not a V1 service model; V1 organizations are
 // activated by a Super Admin through the subscription + manual-payment flow
 // (see Subscription / Invoice below). No license key step exists.
 //
@@ -279,8 +270,7 @@ model Subscription {
   // pre-V1 rows keep their meaning (null = legacy, resolved from the plan).
   //   billingPeriod  — MONTHLY | YEARLY (reuses the existing BillingPeriod enum)
   //   deviceQuantity — purchased device count (Managed); null for legacy
-  //   deploymentMode — mode snapshot at purchase (MANAGED | CUSTOMER_DB |
-  //                    PRIVATE for legacy self-hosted purchases)
+  //   deploymentMode — mode snapshot at purchase (MANAGED | CUSTOMER_DB)
   //   priceSnapshot  — full resolver breakdown JSON (base, devices, offer,
   //                    discount, final price, currency)
   billingPeriod   BillingPeriod?

@@ -5,12 +5,14 @@
  *  DM-01  Super Admin GET /api/me/organizations lists MANAGED only
  *  DM-02  Super Admin POST /switch to MANAGED succeeds
  *  DM-03  Super Admin POST /switch to CUSTOMER_DB is rejected (403)
- *  DM-04  Super Admin POST /switch to PRIVATE is rejected (403)
  *  DM-05  Org member can still switch into their CUSTOMER_DB org (membership path)
- *  DM-06  resolveTenantDatabase distinguishes MANAGED/CUSTOMER_DB/PRIVATE
+ *  DM-06  resolveTenantDatabase distinguishes MANAGED/CUSTOMER_DB
  *  DM-07  getTenantDb returns managed handle; throws fail-closed for CUSTOMER_DB
  *  DM-08  Activity rows carry direct organizationId; cross-org lookup denies
  *  DM-09  requireManagedTenantAccess allows MANAGED, denies CUSTOMER_DB
+ *
+ * (DM-04 — switch to a PRIVATE org — retired with the PRIVATE deployment
+ * mode; non-MANAGED switch denial is covered by DM-03.)
  *
  * Runs against a THROWAWAY PostgreSQL database.
  * Run: npx tsx --test tests/deployment-mode-switch.test.ts
@@ -57,7 +59,6 @@ let saId: string;
 let memberId: string;
 let managedOrg: { id: string };
 let customerOrg: { id: string };
-let privateOrg: { id: string };
 
 function getReq(token: string): NextRequest {
   return new NextRequest('http://localhost:3000/api/me/organizations', {
@@ -89,9 +90,6 @@ before(async () => {
   });
   customerOrg = await db.organization.create({
     data: { name: 'Customer Org', slug: 'dm-customer', deploymentMode: 'CUSTOMER_DB' },
-  });
-  privateOrg = await db.organization.create({
-    data: { name: 'Private Org', slug: 'dm-private', deploymentMode: 'PRIVATE' },
   });
 
   const member = await db.appUser.create({
@@ -130,7 +128,6 @@ test('DM-01: Super Admin organization list contains MANAGED only', async () => {
   const ids = body.organizations.map((o: { id: string }) => o.id);
   assert.ok(ids.includes(managedOrg.id), 'MANAGED org must be listed');
   assert.ok(!ids.includes(customerOrg.id), 'CUSTOMER_DB org must NOT be listed');
-  assert.ok(!ids.includes(privateOrg.id), 'PRIVATE org must NOT be listed');
 });
 
 // DM-02: SA switch to MANAGED succeeds
@@ -149,13 +146,6 @@ test('DM-03: Super Admin switch to CUSTOMER_DB is rejected', async () => {
   assert.equal(res.status, 403);
 });
 
-// DM-04: SA switch to PRIVATE rejected
-test('DM-04: Super Admin switch to PRIVATE is rejected', async () => {
-  const { POST } = await import('../src/app/api/me/organization/switch/route');
-  const res = await POST(switchReq(await saToken(), privateOrg.id));
-  assert.equal(res.status, 403);
-});
-
 // DM-05: member path unaffected
 test('DM-05: Org member can switch into their CUSTOMER_DB org', async () => {
   const { POST } = await import('../src/app/api/me/organization/switch/route');
@@ -170,15 +160,14 @@ test('DM-05: Org member can switch into their CUSTOMER_DB org', async () => {
   assert.equal(res.status, 200);
 });
 
-// DM-06: tenant database resolution distinguishes modes
-test('DM-06: resolveTenantDatabase distinguishes all three modes', async () => {
+// DM-06: tenant database resolution distinguishes the two modes
+test('DM-06: resolveTenantDatabase distinguishes MANAGED and CUSTOMER_DB', async () => {
   const { resolveTenantDatabase } = await import('../src/lib/tenant-db');
   const m = await resolveTenantDatabase(managedOrg.id);
   const c = await resolveTenantDatabase(customerOrg.id);
-  const p = await resolveTenantDatabase(privateOrg.id);
   assert.equal(m.kind, 'managed');
   assert.equal(c.kind, 'customer');
-  assert.equal(p.kind, 'private');
+  assert.equal(c.mode, 'CUSTOMER_DB');
 });
 
 // DM-07: fail-closed handles
@@ -187,7 +176,6 @@ test('DM-07: getTenantDb managed handle; CUSTOMER_DB throws fail-closed', async 
   const handle = await getTenantDb(managedOrg.id);
   assert.equal(handle.kind, 'managed');
   await assert.rejects(() => getTenantDb(customerOrg.id), TenantDatabaseError);
-  await assert.rejects(() => getTenantDb(privateOrg.id), TenantDatabaseError);
 });
 
 // DM-08: Activity direct ownership + cross-org denial

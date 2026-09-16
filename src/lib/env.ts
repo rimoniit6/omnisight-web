@@ -30,7 +30,7 @@ const productionRequired = z.object({
 
 // NOTE: the self-hosted / license requirement block (SELF_HOSTED, LICENSE_KEY,
 // SELF_HOSTED_REQUIRE_LICENSE) was REMOVED with the LicenseKey architecture.
-// Self-Hosted / PRIVATE is not a V1 service model, so there is nothing to
+// Self-Hosted is not a V1 service model, so there is nothing to
 // license-check at startup.
 
 // ─── Parsers ───────────────────────────────────────────────────────────────

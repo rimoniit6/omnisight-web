@@ -21,7 +21,7 @@ This plan implements the Organization Database & Data Transfer system, enabling 
 ### 1.2 What This Feature Does NOT Do
 
 - Does NOT change the deployment mode automatically (PRD Rule M: no silent service-model changes)
-- Does NOT give Super Admin new data-plane access to CUSTOMER_DB/PRIVATE orgs (PRD: DATA_PLANE_MODELS restriction)
+- Does NOT give Super Admin new data-plane access to CUSTOMER_DB orgs (PRD: DATA_PLANE_MODELS restriction)
 - Does NOT break existing MANAGED organizations
 - Does NOT implement the actual per-tenant database pool infrastructure (that is a separate Phase)
 
@@ -245,7 +245,7 @@ Only tenant-owned tables with `organizationId` field are eligible. The transfer 
 }
 ```
 **Validation:**
-- Org must be MANAGED (cannot transfer from CUSTOMER_DB/PRIVATE)
+- Org must be MANAGED (cannot transfer from CUSTOMER_DB)
 - No active transfer already in progress for this org
 - Target DB credentials must be provided (not placeholder)
 - Password is encrypted before storage
@@ -818,7 +818,7 @@ The employee-facing Agent UI currently exposes two infrastructure details that m
 | Detail | File | Mechanism |
 |---|---|---|
 | **Server URL** | `src/renderer/index.html:45` (`#login-server-url`) | `renderer.ts:192-198` and `renderer.ts:626-631` call `bridge.getServerUrl()` and set the element text |
-| **Deployment mode** | `src/renderer/index.html:206` (`#deployment-mode`) | `renderer.ts:351-356` maps `MANAGED`→"Managed", `CUSTOMER_DB`→"Customer DB", `PRIVATE`→"Private" |
+| **Deployment mode** | `src/renderer/index.html:206` (`#deployment-mode`) | `renderer.ts:351-356` maps `MANAGED`→"Managed", `CUSTOMER_DB`→"Customer DB" |
 
 **Already clean (no change needed):**
 - **Database type/host/name**: NEVER displayed anywhere in the Agent UI. Agent only talks to the API server via HTTP.
@@ -837,7 +837,7 @@ This is exactly the contradictory-state scenario Addendum D forbids. The fix mus
 
 ### 1.3 Addendum A/R — One common Agent (ALREADY SATISFIED)
 
-The Agent is already a single binary/UI; there are no separate MANAGED/CUSTOMER_DB/PRIVATE binaries. The deployment mode is carried internally (`config-service.ts` → `server context`) and only affects internal behavior. The UI already renders the same interface regardless of mode (the only mode leak is the `#deployment-mode` label being removed per 1.1). No separate employee-facing UIs need to be created or merged.
+The Agent is already a single binary/UI; there are no separate per-mode binaries. The deployment mode is carried internally (`config-service.ts` → `server context`) and only affects internal behavior. The UI already renders the same interface regardless of mode (the only mode leak is the `#deployment-mode` label being removed per 1.1). No separate employee-facing UIs need to be created or merged.
 
 ### 1.4 Addendum F/G — Activity pipeline (FULLY IMPLEMENTED, needs E2E proof)
 

@@ -11,7 +11,6 @@ interface MetricsResponse {
     total: number;
     managed: number;
     customerDb: number;
-    private: number;
     byStatus: Record<string, number>;
     unresolvedModes: number;
     pendingDeployments: number;

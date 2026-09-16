@@ -71,7 +71,6 @@ export function StatusPill({ label, tone }: { label: string; tone: 'ok' | 'warn'
 export function ModePill({ mode }: { mode: string | null }) {
   if (mode === 'MANAGED') return <StatusPill label="MANAGED" tone="ok" />;
   if (mode === 'CUSTOMER_DB') return <StatusPill label="CUSTOMER_DB" tone="info" />;
-  if (mode === 'PRIVATE') return <StatusPill label="PRIVATE" tone="warn" />;
   return <StatusPill label="UNRESOLVED" tone="danger" />;
 }
 

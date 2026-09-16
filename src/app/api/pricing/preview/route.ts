@@ -13,8 +13,8 @@ import { checkRateLimit, RATE_LIMITS, getClientIpFromHeaders } from '@/lib/rate-
 //
 // Body: { planId, deploymentMode: 'MANAGED'|'CUSTOMER_DB', billingPeriod:
 // 'MONTHLY'|'YEARLY', deviceQuantity?: number }
-// Only MANAGED / CUSTOMER_DB are accepted — PRIVATE is legacy and never
-// priced through the V1 catalog.
+// Only MANAGED / CUSTOMER_DB are accepted — those are the only V1 service
+// models priced through the V1 catalog.
 
 export async function POST(req: NextRequest) {
   try {

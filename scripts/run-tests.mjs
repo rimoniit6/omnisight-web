@@ -15,12 +15,24 @@ const files = readdirSync('tests')
   .filter((f) => f.endsWith('.test.ts'))
   .sort();
 
+// Ensure every suite runs against the Docker test database by default. Each
+// test file reads PG_TEST_BASE_URL first and only falls back to a native
+// localhost:5432 default when this variable is absent — always provide it so
+// accidental use of a native PostgreSQL instance is avoided. CI overrides it.
+const PG_TEST_BASE_URL =
+  process.env.PG_TEST_BASE_URL ||
+  (() => {
+    const dockerBase = 'postgresql://omnisight_user:omnisight_password@127.0.0.1:5433';
+    console.log(`[run-tests] PG_TEST_BASE_URL unset — defaulting to the Docker test database (${dockerBase})`);
+    return dockerBase;
+  })();
+
 let failed = 0;
 for (const file of files) {
   process.stdout.write(`\n=== tests/${file} ===\n`);
   const r = spawnSync(process.execPath, ['--import', 'tsx', '--test', `tests/${file}`], {
     stdio: 'inherit',
-    env: process.env,
+    env: { ...process.env, PG_TEST_BASE_URL },
   });
   if (r.status !== 0) {
     failed += 1;

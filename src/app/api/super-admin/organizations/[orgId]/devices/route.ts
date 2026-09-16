@@ -7,8 +7,7 @@ import { effectiveDeviceStatus } from '@/lib/device-status';
 /**
  * GET /api/super-admin/organizations/[orgId]/devices
  *
- * List devices for a MANAGED organization. Super Admin only.
- * Phase 2 privacy: CUSTOMER_DB / PRIVATE organizations are rejected with 403.
+ * List devices for a MANAGED organization. Super Admin only.  * Phase 2 privacy: CUSTOMER_DB organizations are rejected with 403.
  */
 export async function GET(
   req: NextRequest,

@@ -12,12 +12,28 @@ const ORGS = {
   disabled: { id: 'org-e2e-disabled', slug: 'e2e-disabled', name: 'E2E Screenshots-Disabled Org', plan: 'e2e-plan-biz', sub: 'sub-e2e-disabled', emp: 'emp-e2e-disabled', empCode: 'E2E-DISABLED-1', dev: 'dev-e2e-disabled', agentKey: 'e2e-agent-disabled', interval: 0 },
 };
 
-const CUST_DB_DSN = {
+// Host-reachable address for the host-side E2E harness. Consumed from
+// state.json (custDb) by seed-customer / run-e2e on the HOST, where the DB is
+// reached at the published Docker port 127.0.0.1:5433.
+const HOST_CUST_DB_DSN = {
   host: '127.0.0.1',
   port: 5433,
   name: 'omnisight_e2e_customer',
   user: 'omnisight_user',
   password: 'omnisight_password',
+};
+
+// Address STORED into OrganizationSettings — where the RUNNING app (web jobs,
+// live-updates, API routes) resolves the customer DB. Must be reachable from
+// where the app runs: inside the web container that is the compose `db`
+// service, so seed with E2E_CUST_DB_HOST=db E2E_CUST_DB_PORT=5432; on a HOST
+// run the defaults below (equal to HOST_CUST_DB_DSN) apply.
+const CUST_DB_DSN = {
+  host: process.env.E2E_CUST_DB_HOST ?? HOST_CUST_DB_DSN.host,
+  port: Number(process.env.E2E_CUST_DB_PORT ?? HOST_CUST_DB_DSN.port),
+  name: process.env.E2E_CUST_DB_NAME ?? HOST_CUST_DB_DSN.name,
+  user: process.env.E2E_CUST_DB_USER ?? HOST_CUST_DB_DSN.user,
+  password: process.env.E2E_CUST_DB_PASSWORD ?? HOST_CUST_DB_DSN.password,
 };
 
 const ctx = { now: new Date(), in24h: new Date(Date.now() + 24 * 3600e3), in30d: new Date(Date.now() + 30 * 86400e3) };
@@ -137,7 +153,7 @@ async function seedTokens() {
     await db.agentToken.create({ data: { token, employeeId: o.emp, organizationId: o.id, deviceId: o.dev, expiresAt: ctx.in24h, userAgent: 'e2e-harness' } });
     tokens[key] = token;
   }
-  writeFileSync('scripts/e2e/state.json', JSON.stringify({ tokens, orgs: Object.fromEntries(Object.entries(ORGS).map(([k, v]) => [k, { id: v.id, emp: v.emp, dev: v.dev, empCode: v.empCode }])), custDb: CUST_DB_DSN }, null, 2));
+  writeFileSync('scripts/e2e/state.json', JSON.stringify({ tokens, orgs: Object.fromEntries(Object.entries(ORGS).map(([k, v]) => [k, { id: v.id, emp: v.emp, dev: v.dev, empCode: v.empCode }])), custDb: HOST_CUST_DB_DSN }, null, 2));
 }
 
 async function seedAppUser() {

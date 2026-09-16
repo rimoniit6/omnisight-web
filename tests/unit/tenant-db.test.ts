@@ -14,8 +14,8 @@ test('TenantDatabaseError carries code and is fail-closed (no fallback hint)', (
   assert.match(err.message, /no fallback/);
 });
 
-test('TenantDatabaseError supports all three failure codes', () => {
-  for (const code of ['MODE_UNRESOLVABLE', 'CUSTOMER_DB_NOT_CONFIGURED', 'PRIVATE_DB_NOT_REACHABLE'] as const) {
+test('TenantDatabaseError supports all failure codes', () => {
+  for (const code of ['MODE_UNRESOLVABLE', 'CUSTOMER_DB_NOT_CONFIGURED'] as const) {
     const err = new TenantDatabaseError(code, 'org-x', 'detail');
     assert.equal(err.code, code);
     assert.match(err.message, /detail/);

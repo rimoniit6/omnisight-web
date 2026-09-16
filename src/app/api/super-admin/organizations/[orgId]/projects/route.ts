@@ -6,8 +6,7 @@ import { requireManagedTenantAccess } from '@/lib/control-plane';
 /**
  * GET /api/super-admin/organizations/[orgId]/projects
  *
- * List projects for a MANAGED organization. Super Admin only.
- * Phase 2 privacy: CUSTOMER_DB / PRIVATE organizations are rejected with 403.
+ * List projects for a MANAGED organization. Super Admin only.  * Phase 2 privacy: CUSTOMER_DB organizations are rejected with 403.
  */
 export async function GET(
   req: NextRequest,

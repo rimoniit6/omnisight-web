@@ -47,14 +47,10 @@ export async function GET(req: NextRequest) {
         total: totalOrgs,
         managed: byMode.MANAGED ?? 0,
         customerDb: byMode.CUSTOMER_DB ?? 0,
-        // LEGACY COMPATIBILITY: pre-existing rows can still carry the
-        // deprecated PRIVATE mode. It is reported for visibility only — it is
-        // no longer selectable and is not a V1 service model.
-        private: byMode.PRIVATE ?? 0,
         byStatus,
         unresolvedModes,
         // Pending deployments: customer-owned orgs whose mode needs review.
-        pendingDeployments: (byMode.CUSTOMER_DB ?? 0) + (byMode.PRIVATE ?? 0) + unresolvedModes,
+        pendingDeployments: (byMode.CUSTOMER_DB ?? 0) + unresolvedModes,
       },
       subscriptions: {
         byStatus: subs,
@@ -67,7 +63,7 @@ export async function GET(req: NextRequest) {
   } catch (error) {
     log.error('api.super-admin.metrics.get', { error: String(error) }, requestContext(req));
     return apiSuccess({
-      organizations: { total: 0, managed: 0, customerDb: 0, private: 0, byStatus: {}, unresolvedModes: 0, pendingDeployments: 0 },
+      organizations: { total: 0, managed: 0, customerDb: 0, byStatus: {}, unresolvedModes: 0, pendingDeployments: 0 },
       subscriptions: { byStatus: {}, active: 0, expiringSoon: 0, paused: 0 },
       licenses: { active: 0 },
       billing: { pendingInvoices: 0 },

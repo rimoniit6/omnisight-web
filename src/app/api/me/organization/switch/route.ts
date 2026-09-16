@@ -37,7 +37,7 @@ export async function POST(req: NextRequest) {
 
   if (auth.role === 'super_admin') {
     // Phase 1 Step 8: Super Admin may switch ONLY to MANAGED organizations.
-    // CUSTOMER_DB / PRIVATE orgs are rejected server-side (never UI-only):
+    // CUSTOMER_DB orgs are rejected server-side (never UI-only):
     // control-plane metadata for those modes is available via the
     // super-admin metadata APIs, not via tenant switching.
     const org = await prisma.organization.findUnique({

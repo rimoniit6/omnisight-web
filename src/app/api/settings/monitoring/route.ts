@@ -30,7 +30,7 @@ import { log, requestContext } from '@/lib/logger';
 // The current cadence is exposed as `screenshotInterval` (the SUPER ADMIN-owned
 // Organization column) with a `writable` flag derived from deployment mode:
 //   - MANAGED          → read-only for org admins (cadence is centrally managed)
-//   - CUSTOMER_DB/PRIVATE → org admins may write the column via this route
+//   - CUSTOMER_DB      → org admins may write the column via this route
 // Super admins may always write it (they also have the dedicated
 // /api/admin/organizations/[orgId]/settings surface).
 
@@ -85,7 +85,7 @@ export async function GET(req: NextRequest) {
 
     // Screenshot cadence, derived from the SUPER ADMIN-OWNED Organization
     // column. `writable` follows deployment mode: MANAGED is centrally managed
-    // (read-only for org admins); CUSTOMER_DB/PRIVATE org admins may set it.
+    // (read-only for org admins); CUSTOMER_DB org admins may set it.
     const mode = await getOrganizationDeploymentMode(orgId);
     const intervalOrg = await db.organization.findUnique({
       where: { id: orgId },
@@ -128,7 +128,7 @@ export async function PUT(req: NextRequest) {
 
     // Screenshot cadence special case: writes the SUPER ADMIN-owned
     // Organization.screenshotInterval column. Org admins may write it ONLY on
-    // non-MANAGED deployment modes (CUSTOMER_DB/PRIVATE self-managed plans);
+    // non-MANAGED deployment modes (CUSTOMER_DB self-managed plans);
     // on MANAGED plans the cadence is centrally managed (super-admin only).
     if (key === 'screenshotInterval') {
       if (auth.role !== 'super_admin') {

@@ -22,7 +22,7 @@ export async function GET() {
     serverVersion: process.env.npm_package_version || '0.0.0',
     agentProtocol: 1,
     minAgentVersion: '1.1.0',
-    // V1 active modes only. PRIVATE is deprecated in V1 and not supported.
+    // The only V1 deployment modes (no legacy PRIVATE support).
     supportedDeploymentModes: ['MANAGED', 'CUSTOMER_DB'],
   });
 }

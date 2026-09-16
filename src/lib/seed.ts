@@ -22,7 +22,7 @@ export function seedAllowed(): boolean {
 // experimental/demo data and carries no secrets. Field names must match
 // prisma/schema.prisma (Plan model).
 //
-// V1 service models are MANAGED and CUSTOMER_DB. Self-Hosted / PRIVATE is NOT
+// V1 service models are MANAGED and CUSTOMER_DB. Self-Hosted is NOT
 // a V1 service model, so there is NO `Enterprise_SelfHosted` plan here (it was
 // removed with the LicenseKey architecture) and the Plan model no longer has
 // an `isSelfHosted` field. Do NOT reintroduce a self-hosted plan.

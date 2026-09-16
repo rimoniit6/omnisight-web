@@ -15,5 +15,11 @@
 
 set -e
 
+# Forward an explicit command (e.g. the web-migrate service runs `prisma
+# migrate deploy` via the compose `command:`). Without args, start the server.
+if [ "$#" -gt 0 ]; then
+  exec "$@"
+fi
+
 echo "[entrypoint] Starting OmniSight on 0.0.0.0:${PORT:-3000}..."
 exec node server.js
