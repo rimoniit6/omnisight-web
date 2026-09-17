@@ -67,6 +67,7 @@ type ScreenshotImageApi = typeof import('../src/app/api/screenshots/[id]/image/r
 type DiscoverApi = typeof import('../src/app/api/agent/discover/route');
 type AuthApi = typeof import('../src/app/api/agent/authenticate/route');
 type ClaimApproveApi = typeof import('../src/app/api/device-claims/[id]/approve/route');
+type BulkDeleteApi = typeof import('../src/app/api/screenshots/bulk/route');
 
 let screenshotApi: ScreenshotApi;
 let screenshotsApi: ScreenshotsApi;
@@ -75,6 +76,7 @@ let screenshotImageApi: ScreenshotImageApi;
 let discoverApi: DiscoverApi;
 let authApi: AuthApi;
 let claimApproveApi: ClaimApproveApi;
+let bulkDeleteApi: BulkDeleteApi;
 
 // Primary org + a second org for isolation tests.
 let orgA: { id: string };
@@ -93,7 +95,7 @@ before(async () => {
   signJWT = (await import('../src/lib/auth')).signJWT;
   applyConsentTransition = (await import('../src/lib/consent')).applyConsentTransition;
 
-  const [sApi, ssApi, sdApi, siApi, dApi, aApi, caApi] = await Promise.all([
+  const [sApi, ssApi, sdApi, siApi, dApi, aApi, caApi, bApi] = await Promise.all([
     import('../src/app/api/agent/screenshot/route'),
     import('../src/app/api/screenshots/route'),
     import('../src/app/api/screenshots/[id]/route'),
@@ -101,6 +103,7 @@ before(async () => {
     import('../src/app/api/agent/discover/route'),
     import('../src/app/api/agent/authenticate/route'),
     import('../src/app/api/device-claims/[id]/approve/route'),
+    import('../src/app/api/screenshots/bulk/route'),
   ]);
   screenshotApi = sApi;
   screenshotsApi = ssApi;
@@ -109,6 +112,7 @@ before(async () => {
   discoverApi = dApi;
   authApi = aApi;
   claimApproveApi = caApi;
+  bulkDeleteApi = bApi;
 
   hashPassword = (await import('../src/lib/auth')).hashPassword;
   createAgentAccount = (await import('../src/lib/agent-account')).createAgentAccount;
@@ -303,6 +307,25 @@ async function seedScreenshotRow(empId: string, orgId: string, opts: { bytes?: B
     },
   });
   return { row, fileName };
+}
+
+const BULK_URL = 'http://localhost:3000/api/screenshots/bulk';
+
+/** Invoke DELETE /api/screenshots/bulk through the route handler in-process. */
+async function bulkDelete(token: string | null, screenshotIds: string[]) {
+  const res = await bulkDeleteApi.DELETE(req(token, { method: 'DELETE', url: BULK_URL, body: { screenshotIds } }));
+  return {
+    status: res.status,
+    body: (await res.json().catch(() => ({}))) as {
+      success?: boolean;
+      requested?: number;
+      matched?: number;
+      deleted?: number;
+      failed?: number;
+      failedIds?: string[];
+      error?: string;
+    },
+  };
 }
 
 // ─── A. Upload validation ───────────────────────────────────────────────────
@@ -965,4 +988,204 @@ test('SH-38: organization B cannot see organization A screenshot', async () => {
   });
   const imgRes = await screenshotImageApi.GET(imgReq, { params: Promise.resolve({ id: row.id }) });
   assert.equal(imgRes.status, 404, 'org B must get 404 for org A screenshot');
+});
+
+// ─── H. Bulk delete (Phase 2) ───────────────────────────────────────────────
+
+test('SH-BULK-01: unauthenticated bulk delete rejected with 401', async () => {
+  const { status } = await bulkDelete(null, ['cuid-nonexistent-000']);
+  assert.equal(status, 401);
+});
+
+test('SH-BULK-02: viewer cannot bulk delete (403), rows and files survive', async () => {
+  const empA = await seedEmployee('SHB02A-EMP', orgA.id);
+  const { row, fileName } = await seedScreenshotRow(empA.id, orgA.id, { fileName: 'sh-a-bulk-02.png' });
+
+  const viewer = await tokenFor('viewer', 'u-bulk2-viewer');
+  const { status } = await bulkDelete(viewer, [row.id]);
+  assert.equal(status, 403);
+  assert.ok(await db.screenshot.findUnique({ where: { id: row.id } }), 'row must survive a viewer bulk delete');
+  assert.ok(existsSync(join(SCREENSHOT_DIR, fileName)), 'file must survive a viewer bulk delete');
+});
+
+test('SH-BULK-03: manager cannot bulk delete (403)', async () => {
+  const empA = await seedEmployee('SHB03A-EMP', orgA.id);
+  const { row } = await seedScreenshotRow(empA.id, orgA.id, { fileName: 'sh-a-bulk-03.png' });
+
+  const manager = await tokenFor('manager', 'u-bulk3-mgr');
+  const { status } = await bulkDelete(manager, [row.id]);
+  assert.equal(status, 403);
+  assert.ok(await db.screenshot.findUnique({ where: { id: row.id } }), 'row must survive a manager bulk delete');
+});
+
+test('SH-BULK-04: org_admin deletes several own-org screenshots — rows removed, files removed, one audit each', async () => {
+  const empA = await seedEmployee('SHB04A-EMP', orgA.id);
+  const created: { row: { id: string }; fileName: string }[] = [];
+  for (let i = 0; i < 3; i++) {
+    created.push(await seedScreenshotRow(empA.id, orgA.id, { fileName: `sh-a-bulk-04-${i}.png` }));
+  }
+  const ids = created.map((c) => c.row.id);
+
+  const admin = await tokenFor('org_admin', 'u-bulk4-oa');
+  const { status, body } = await bulkDelete(admin, ids);
+  assert.equal(status, 200, JSON.stringify(body));
+  assert.equal(body.success, true);
+  assert.equal(body.requested, 3);
+  assert.equal(body.matched, 3);
+  assert.equal(body.deleted, 3);
+  assert.equal(body.failed, 0);
+  assert.deepEqual(body.failedIds, []);
+
+  for (const c of created) {
+    assert.equal(await db.screenshot.findUnique({ where: { id: c.row.id } }), null, 'DB row must be gone');
+    assert.equal(existsSync(join(SCREENSHOT_DIR, c.fileName)), false, 'physical file must be gone');
+  }
+  const audits = await db.auditLog.findMany({
+    where: { resource: 'screenshot', action: 'delete', resourceId: { in: ids } },
+  });
+  assert.equal(audits.length, 3, 'one audit record per successfully deleted screenshot');
+  for (const a of audits) {
+    assert.equal(a.organizationId, orgA.id);
+    assert.equal(a.userId, 'u-bulk4-oa');
+  }
+});
+
+test('SH-BULK-05: duplicate ids are deduped (requested reflects unique ids, one audit)', async () => {
+  const empA = await seedEmployee('SHB05A-EMP', orgA.id);
+  const { row, fileName } = await seedScreenshotRow(empA.id, orgA.id, { fileName: 'sh-a-bulk-05.png' });
+
+  const admin = await tokenFor('admin', 'u-bulk5-admin');
+  const { status, body } = await bulkDelete(admin, [row.id, row.id, row.id]);
+  assert.equal(status, 200, JSON.stringify(body));
+  assert.equal(body.requested, 1, 'requested must count deduped ids');
+  assert.equal(body.matched, 1);
+  assert.equal(body.deleted, 1);
+  assert.equal(await db.screenshot.findUnique({ where: { id: row.id } }), null);
+  assert.equal(existsSync(join(SCREENSHOT_DIR, fileName)), false);
+  assert.equal(
+    await db.auditLog.count({ where: { resource: 'screenshot', action: 'delete', resourceId: row.id } }),
+    1,
+    'exactly one audit despite duplicate input'
+  );
+});
+
+test('SH-BULK-06: malformed and oversized bodies rejected with 400', async () => {
+  const admin = await tokenFor('admin', 'u-bulk6-admin');
+  const malformed: unknown[] = [
+    {},
+    { screenshotIds: 'not-an-array' },
+    { screenshotIds: null },
+    { screenshotIds: 42 },
+    { screenshotIds: [] },
+    { screenshotIds: [123] },
+    { screenshotIds: [''] },
+    { screenshotIds: ['   '] },
+    { screenshotIds: [null] },
+    { screenshotIds: [undefined] },
+  ];
+  for (const body of malformed) {
+    const res = await bulkDeleteApi.DELETE(req(admin, { method: 'DELETE', url: BULK_URL, body }));
+    assert.equal(res.status, 400, `expected 400 for ${JSON.stringify(body)}`);
+  }
+  // Oversized batch — even when all ids are well-formed.
+  const tooMany = Array.from({ length: 101 }, (_, i) => `cuid-oversized-${i}`);
+  const resBig = await bulkDeleteApi.DELETE(req(admin, { method: 'DELETE', url: BULK_URL, body: { screenshotIds: tooMany } }));
+  assert.equal(resBig.status, 400, 'oversized batch must be rejected');
+});
+
+test('SH-BULK-07: cross-org ids are silently excluded — foreign rows, files and audits untouched', async () => {
+  const empA = await seedEmployee('SHB07A-EMP', orgA.id);
+  const { row: aRow, fileName: aFile } = await seedScreenshotRow(empA.id, orgA.id, { fileName: 'sh-a-bulk-07.png' });
+  const empB = await seedEmployee('SHB07B-EMP', orgB.id);
+  const { row: bRow, fileName: bFile } = await seedScreenshotRow(empB.id, orgB.id, { fileName: 'sh-b-bulk-07.png' });
+
+  const adminA = await tokenFor('admin', 'u-bulk7-a');
+  const { status, body } = await bulkDelete(adminA, [aRow.id, bRow.id]);
+  assert.equal(status, 200, JSON.stringify(body));
+  assert.equal(body.requested, 2);
+  assert.equal(body.matched, 1, 'only the org-A row matches the org-scoped lookup');
+  assert.equal(body.deleted, 1);
+  assert.equal(body.failed, 0);
+
+  // Org A row deleted.
+  assert.equal(await db.screenshot.findUnique({ where: { id: aRow.id } }), null);
+  assert.equal(existsSync(join(SCREENSHOT_DIR, aFile)), false);
+  // Org B row + file survive, with NO cross-tenant audit of any kind.
+  assert.ok(await db.screenshot.findUnique({ where: { id: bRow.id } }), 'cross-org row must survive');
+  assert.ok(existsSync(join(SCREENSHOT_DIR, bFile)), 'cross-org file must survive');
+  assert.equal(await db.auditLog.count({ where: { resource: 'screenshot', action: 'delete', resourceId: bRow.id } }), 0);
+  assert.equal(await db.auditLog.count({ where: { resource: 'screenshot', action: 'delete', resourceId: aRow.id } }), 1);
+});
+
+test('SH-BULK-08: unknown ids are silently excluded and reported via matched', async () => {
+  const empA = await seedEmployee('SHB08A-EMP', orgA.id);
+  const { row } = await seedScreenshotRow(empA.id, orgA.id, { fileName: 'sh-a-bulk-08.png' });
+
+  const admin = await tokenFor('admin', 'u-bulk8-admin');
+  const { status, body } = await bulkDelete(admin, [row.id, 'cuid-missing-99', 'cuid-missing-98']);
+  assert.equal(status, 200, JSON.stringify(body));
+  assert.equal(body.requested, 3);
+  assert.equal(body.matched, 1);
+  assert.equal(body.deleted, 1);
+  assert.equal(body.failed, 0);
+  assert.equal(await db.auditLog.count({ where: { resource: 'screenshot', action: 'delete', resourceId: { in: ['cuid-missing-99', 'cuid-missing-98'] } } }), 0);
+});
+
+test('SH-BULK-09: an all-unknown batch returns 404 and deletes nothing', async () => {
+  const admin = await tokenFor('admin', 'u-bulk9-admin');
+  const { status, body } = await bulkDelete(admin, ['cuid-missing-a', 'cuid-missing-b']);
+  assert.equal(status, 404, JSON.stringify(body));
+  assert.equal(await db.auditLog.count({ where: { resource: 'screenshot', action: 'delete', resourceId: { in: ['cuid-missing-a', 'cuid-missing-b'] } } }), 0);
+});
+
+test('SH-BULK-10: a real storage failure keeps the row, reports failedIds, and writes no audit', async () => {
+  const empA = await seedEmployee('SHB10A-EMP', orgA.id);
+  const { row, fileName } = await seedScreenshotRow(empA.id, orgA.id, { fileName: 'sh-a-bulk-10.png' });
+
+  // Replace the physical file with a DIRECTORY of the same name: fs.unlink then
+  // throws a genuine (non-ENOENT) error, so the row must be kept and reported
+  // as failed — never reported as deleted, never audited as a success.
+  const abs = join(SCREENSHOT_DIR, fileName);
+  rmSync(abs, { force: true });
+  mkdirSync(abs);
+
+  const admin = await tokenFor('admin', 'u-bulk10-admin');
+  let result: { status: number; body: Awaited<ReturnType<typeof bulkDelete>>['body'] };
+  try {
+    result = await bulkDelete(admin, [row.id]);
+  } finally {
+    rmSync(abs, { recursive: true, force: true });
+  }
+
+  const { status, body } = result!;
+  assert.equal(status, 200, JSON.stringify(body));
+  assert.equal(body.success, true);
+  assert.equal(body.requested, 1);
+  assert.equal(body.matched, 1);
+  assert.equal(body.deleted, 0);
+  assert.equal(body.failed, 1);
+  assert.deepEqual(body.failedIds, [row.id]);
+  assert.ok(await db.screenshot.findUnique({ where: { id: row.id } }), 'row must survive a storage failure');
+  assert.equal(
+    await db.auditLog.count({ where: { resource: 'screenshot', action: 'delete', resourceId: row.id } }),
+    0,
+    'storage-failed delete must not be audited as success'
+  );
+});
+
+test('SH-BULK-11: thumbnail and original artifacts are both removed for each deleted row', async () => {
+  const empA = await seedEmployee('SHB11A-EMP', orgA.id);
+  const { row, fileName } = await seedScreenshotRow(empA.id, orgA.id, { fileName: 'sh-a-bulk-11.png' });
+  const thumbName = 'sh-a-bulk-11-thumb.png';
+  writeFileSync(join(SCREENSHOT_DIR, thumbName), PNG_BYTES);
+  createdFiles.push(thumbName);
+  await db.screenshot.update({ where: { id: row.id }, data: { thumbnailPath: `/uploads/screenshots/${thumbName}` } });
+
+  const admin = await tokenFor('admin', 'u-bulk11-admin');
+  const { status, body } = await bulkDelete(admin, [row.id]);
+  assert.equal(status, 200, JSON.stringify(body));
+  assert.equal(body.deleted, 1);
+  assert.equal(existsSync(join(SCREENSHOT_DIR, fileName)), false, 'original file must be removed');
+  assert.equal(existsSync(join(SCREENSHOT_DIR, thumbName)), false, 'thumbnail file must be removed');
+  assert.equal(await db.auditLog.count({ where: { resource: 'screenshot', action: 'delete', resourceId: row.id } }), 1);
 });

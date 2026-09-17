@@ -58,7 +58,93 @@ function assertOrg(sourceOrgId: string, rowOrgId: unknown, destinationOrgId: str
  * the destination password) stay redacted. This is the exact text the status
  * card's "Reason:" line and the SA audit trail show.
  */
+/**
+ * SQLSTATE → short operator-facing label. PostgreSQL failures carry a 5-char
+ * SQLSTATE that states exactly WHAT failed; the old userSafeError dropped it
+ * and kept only the noisy `Invalid \`prisma.$executeRawUnsafe()\` invocation:`
+ * header, which is why a destination failure surfaced as an unactionable reason.
+ */
+const PG_SQLSTATE_LABELS: Record<string, string> = {
+  '23505': 'unique constraint violation',
+  '23502': 'not-null constraint violation',
+  '23503': 'foreign-key constraint violation',
+  '23514': 'check constraint violation',
+  '42703': 'undefined column',
+  '42P01': 'undefined table',
+  '42501': 'insufficient privilege',
+  '28P01': 'password authentication failed',
+  '3D000': 'database does not exist',
+  '08006': 'connection failure',
+  '08003': 'connection does not exist',
+  '08001': 'could not establish connection',
+  '53300': 'too many connections',
+  '57014': 'query cancelled (timeout)',
+  '40001': 'serialization failure',
+  '40P01': 'deadlock detected',
+};
+
+function pgSqlstateLabel(code: string): string {
+  if (PG_SQLSTATE_LABELS[code]) return PG_SQLSTATE_LABELS[code];
+  if (code.startsWith('08')) return 'connection failure';
+  if (code.startsWith('42')) return 'undefined object / permission error';
+  if (code.startsWith('23')) return 'constraint violation';
+  if (code.startsWith('53')) return 'resource limit exceeded';
+  if (code.startsWith('57')) return 'operation aborted';
+  return '';
+}
+
+/**
+ * Recover the real PostgreSQL cause from a Prisma error. Two shapes matter:
+ *   • PrismaClientKnownRequestError P2010 (raw query) — the SQLSTATE and the
+ *     one-line driver sentence live in `meta.code` / `meta.message`;
+ *   • PrismaClientUnknownRequestError — the driver line is embedded in the
+ *     message body after the invocation header.
+ * Returns null when there is no recognizable PostgreSQL cause (the caller then
+ * keeps the legacy `Error code:` handling), so this only ever ADDS detail.
+ */
+function extractPgCause(err: unknown): { code: string; message: string } | null {
+  const e = (err ?? {}) as { meta?: unknown; message?: unknown };
+  const meta = (e.meta ?? {}) as { code?: unknown; message?: unknown };
+  const metaCode = typeof meta.code === 'string' && /^[0-9A-Z]{5}$/.test(meta.code) ? meta.code : '';
+  const metaMessage = typeof meta.message === 'string' ? meta.message.trim() : '';
+  if (metaCode && metaMessage) return { code: metaCode, message: metaMessage };
+
+  const raw = typeof e.message === 'string' ? e.message : typeof err === 'string' ? err : '';
+  if (!raw) return null;
+  const code = raw.match(/\bCode:\s*[`"']?([0-9A-Z]{5})[`"']?/)?.[1] ?? '';
+  const line = raw
+    .split('\n')
+    .map((l) => l.trim())
+    .find((l) =>
+      /(duplicate key value|violates .*constraint|does not exist|permission denied|password authentication failed|too many connections|connection (refused|reset|closed)|timeout|canceling statement|deadlock)/i.test(
+        l
+      )
+    );
+  if (!code && !line) return null;
+  return { code, message: line ?? '' };
+}
+
+/**
+ * Surface a migration error the way the operator can actually diagnose from.
+ * Priority:
+ *   1. The structured PostgreSQL cause (SQLSTATE-labelled one-liner) — this is
+ *      what the previous implementation threw away on Prisma raw-query errors.
+ *   2. The legacy `Error code:` tail (Prisma's MEANING is at the END, not the
+ *      noisy head that repeats the source snippet).
+ *   3. The first NON-HEADER message line.
+ * URLs (which carry the destination password) stay redacted. This is the exact
+ * text the status card's "Reason:" line and the SA audit trail show.
+ */
 export function userSafeError(err: unknown): string {
+  const cause = extractPgCause(err);
+  if (cause && (cause.code || cause.message)) {
+    const label = cause.code ? pgSqlstateLabel(cause.code) : '';
+    const head = [label, cause.code ? `(${cause.code})` : ''].filter(Boolean).join(' ');
+    const composed = head && cause.message ? `${head}: ${cause.message}` : head || cause.message;
+    const sanitizedCause = composed ? sanitizeProbeErrorForLog({ message: composed }) : '';
+    if (sanitizedCause) return sanitizedCause;
+  }
+
   const raw = (err as Error)?.message ?? (typeof err === 'string' ? err : '');
   let chosen: string;
   const codeIdx = raw.lastIndexOf('Error code:');
@@ -66,7 +152,8 @@ export function userSafeError(err: unknown): string {
     const head = raw.slice(0, codeIdx).trim().split('\n').filter((l) => l.trim().length > 0).slice(-2).join(' ');
     chosen = `${head} — ${raw.slice(codeIdx, codeIdx + 80)}`.trim();
   } else {
-    chosen = raw.trim().split('\n').filter((l) => l.trim().length > 0)[0] ?? raw;
+    const lines = raw.trim().split('\n').filter((l) => l.trim().length > 0);
+    chosen = lines.find((l) => !/^Invalid `prisma\.[A-Za-z]+\(\)` invocation:?$/.test(l.trim())) ?? lines[0] ?? raw;
   }
   if (!chosen) return 'Unknown destination failure';
   const sanitized = sanitizeProbeErrorForLog({ message: chosen });
@@ -223,12 +310,15 @@ function describeExecFailure(err: NodeJS.ErrnoException & { killed?: boolean; si
 //   • CURRENT_OMNISIGHT  → no-op success. A destination that already carries
 //                          the plan schema (a previous run, or a full build
 //                          left over by the old push) is accepted untouched.
-//   • LEGACY_OMNISIGHT   → REFUSED with the conflicting objects NAMED (tables
-//                          / columns / enum values older builds carried and
-//                          the current schema dropped). Nothing is modified,
-//                          no data is deleted, Managed infrastructure stays
-//                          active, and the run is retryable after the operator
-//                          fixes the destination.
+//   • LEGACY_OMNISIGHT   → CONTROLLED UPGRADE: the audited obsolete Self-
+//                          Hosted/PRIVATE structures are removed ONLY when
+//                          proven data-free (fail-closed preconditions), then
+//                          the schema additively converges to the migration
+//                          plan. If legacy data IS present, the upgrade is
+//                          REFUSED with the offending records NAMED — nothing
+//                          is modified, no data is deleted, Managed
+//                          infrastructure stays active, and the run is
+//                          retryable after an operator resolves the destination.
 //   • FOREIGN_OR_UNKNOWN → REFUSED (fail closed — there is no policy for a
 //                          non-empty database OmniSight cannot identify).
 //
@@ -249,15 +339,41 @@ export const ORGANIZATION_ANCHOR_COLUMNS = [
   'id', 'name', 'slug', 'status', 'timezone', 'language', 'currency', 'createdAt', 'updatedAt',
 ] as const;
 
-/** Legacy-object fingerprints: things EARLIER OmniSight generations created
- *  that the current schema dropped. Their presence marks the destination as an
- *  older build that a forced sync would have to destructively change. */
+/**
+ * Legacy fingerprints of the EARLIER OmniSight generation — things it created
+ * that the CURRENT schema dropped. Presence classifies a destination as
+ * LEGACY_OMNISIGHT (see classifyDestinationSchema).
+ *
+ * REMOVAL POLICY (Phase 3/6 legacy-cleanup): the legacy objects below carry
+ * ZERO current business data by design:
+ *   • LicenseKey rows were legacy self-hosted license GRANTS (an architecture
+ *     that no longer exists — no issuance path, no consumer); their removal is
+ *     a no-op for MANAGED/CUSTOMER_DB operation.
+ *   • Organization.licenseKeyId was the optional "current license" POINTER;
+ *     when null it references nothing at all.
+ *   • Plan.isSelfHosted was a plan-catalog flag; plans without it are just
+ *     MANAGED/CUSTOMER_DB plans.
+ *   • DeploymentMode='PRIVATE' was a service model that no current code path
+ *     accepts (validators only admit MANAGED | CUSTOMER_DB).
+ * Only fingerprints listed here may be cleaned by upgradeLegacyDestination —
+ * and ONLY while they are data-free (see LEGACY_GUARDS + upgradeLegacyDestination).
+ */
 const LEGACY_OMNISIGHT_TABLES = ['Guest', 'AgentRegistration', 'AgentBuild', 'LicenseKey'];
 const LEGACY_OMNISIGHT_COLUMNS: ReadonlyArray<[table: string, column: string, context: string]> = [
   ['Employee', 'guestId', 'guest tracking was removed from employees'],
   ['Organization', 'licenseKeyId', 'self-hosted license keys were removed'],
   ['Plan', 'isSelfHosted', 'the self-hosted plan flag was removed'],
 ];
+
+/** Legacy fingerprints OUTSIDE the controlled-upgrade cleanup scope: older
+ *  structures the upgrade does NOT know how to interpret, so their presence
+ *  REFUSES the upgrade outright (fail closed — an operator must review them).
+ *  Only the four audited Self-Hosted/PRIVATE artifacts are ever cleaned. */
+const OUT_OF_SCOPE_LEGACY_TABLES = LEGACY_OMNISIGHT_TABLES.filter((t) => t !== 'LicenseKey');
+const OUT_OF_SCOPE_LEGACY_COLUMNS = LEGACY_OMNISIGHT_COLUMNS.filter(
+  ([table, column]) =>
+    !(table === 'Organization' && column === 'licenseKeyId') && !(table === 'Plan' && column === 'isSelfHosted'),
+);
 
 export type DestinationSchemaClass =
   | { kind: 'EMPTY' }
@@ -542,13 +658,377 @@ export async function applyDestinationSchema(destination: PrismaClient, sql: str
 }
 
 /**
+ * PRECONDITIONS for the controlled legacy upgrade (upgradeLegacyDestination).
+ * Every guard is a table/column + a value that MUST be data-free before the
+ * corresponding obsolete object may be removed. Each guard names exactly what
+ * the legacy object meant so the failure message stays actionable if a future
+ * database violates the expectation. When data IS present, the upgrade refuses
+ * and an operator must decide — never silent data loss.
+ */
+const LEGACY_GUARDS: ReadonlyArray<{
+  table: string;
+  column: string;
+  describe: (count: number) => string;
+}> = [
+  {
+    table: 'LicenseKey',
+    column: 'id',
+    describe: (n) => `legacy table "LicenseKey" still holds ${n} license-key row(s) — legacy license grants must be reviewed by an operator before removal`,
+  },
+  {
+    table: 'Organization',
+    column: 'licenseKeyId',
+    describe: (n) => `${n} organization(s) still point at a license key via "Organization.licenseKeyId" — re-point or clear them deliberately first`,
+  },
+  {
+    table: 'Plan',
+    column: 'isSelfHosted',
+    describe: (n) => `${n} plan(s) are flagged self-hosted — confirm no subscription depends on a self-hosted plan before removal`,
+  },
+];
+
+/** Count rows that a legacy-object removal would affect (0 = safe to remove).
+ *  Missing objects count as 0 — every guard is idempotent by construction. */
+async function countLegacyGuardRows(destination: PrismaClient, table: string, column: string): Promise<number> {
+  try {
+    if (table === 'LicenseKey') {
+      const rows = await destination.$queryRaw<Array<{ c: bigint }>>`SELECT COUNT(*)::bigint AS c FROM "LicenseKey"`;
+      return Number(rows[0]?.c ?? 0);
+    }
+    if (table === 'Organization' && column === 'licenseKeyId') {
+      const rows = await destination.$queryRaw<Array<{ c: bigint }>>`SELECT COUNT(*)::bigint AS c FROM "Organization" WHERE "licenseKeyId" IS NOT NULL`;
+      return Number(rows[0]?.c ?? 0);
+    }
+    if (table === 'Plan' && column === 'isSelfHosted') {
+      const rows = await destination.$queryRaw<Array<{ c: bigint }>>`SELECT COUNT(*)::bigint AS c FROM "Plan" WHERE "isSelfHosted" = true`;
+      return Number(rows[0]?.c ?? 0);
+    }
+    return 0;
+  } catch {
+    // The object may not exist at all (already removed / different shape).
+    return 0;
+  }
+}
+
+/**
+ * Build the ADDITIVE completion script for a legacy destination that is being
+ * upgraded: only what is actually MISSING from the destination relative to the
+ * current migration-plan schema, derived from the same `prisma migrate diff`
+ * single source of truth.
+ *
+ * Why not simply re-run the EMPTY-path script? A legacy destination already
+ * carries most plan tables (plus their types/indexes), so a naive re-run would
+ * collide (duplicate table/type/index) — and it would MISS column drift on
+ * existing tables (an older build's Screenshot lacks columns the current
+ * schema added), which would later break the data copy. This builder:
+ *   • emits CREATE TYPE only for enums the destination lacks;
+ *   • emits CREATE TABLE only for plan tables the destination lacks
+ *     (Organization anchor included when absent — never altered when present);
+ *   • emits ADD COLUMN for plan-table columns the destination lacks
+ *     (definitions taken verbatim from the current schema; enum-typed columns
+ *     first ensure their type exists);
+ *   • emits CREATE INDEX / FK only when the SUBJECT table is being created
+ *     now (pre-existing tables keep their original indexes/constraints — the
+ *     data copy needs only the primary key, which always exists).
+ * Purely additive — no DROP/ALTER-of-existing ever appears in the output.
+ */
+async function buildLegacyAdditiveCompletion(destination: PrismaClient): Promise<string> {
+  const script = await runMigrateDiffScript();
+  const statements = parseDiffScript(script);
+  const allowed = new Set<string>([...MIGRATION_TABLES.map((t) => t.table), 'Organization']);
+
+  // Destination inventory (read-only).
+  const tableRows = await destination.$queryRaw<Array<{ table_name: string }>>`
+    SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' AND table_type = 'BASE TABLE'`;
+  const tables = new Set(tableRows.map((r) => String(r.table_name)));
+  const columnRows = await destination.$queryRaw<Array<{ table_name: string; column_name: string }>>`
+    SELECT table_name, column_name FROM information_schema.columns WHERE table_schema = 'public'`;
+  const columns = new Map<string, Set<string>>();
+  for (const c of columnRows) {
+    const set = columns.get(String(c.table_name)) ?? new Set<string>();
+    set.add(String(c.column_name));
+    columns.set(String(c.table_name), set);
+  }
+  const typeRows = await destination.$queryRaw<Array<{ typname: string }>>`
+    SELECT t.typname FROM pg_catalog.pg_type t JOIN pg_catalog.pg_namespace n ON t.typnamespace = n.oid WHERE n.nspname = 'public'`;
+  const types = new Set(typeRows.map((r) => String(r.typname)));
+
+  const parts: string[] = [];
+
+  // Enums actually used by the migration-plan tables (+ the reduced anchor) —
+  // the same contract as subsetDestinationSchemaSql: platform-only enums are
+  // NOT carried into the destination (SSC-4).
+  const usedEnums = new Set<string>();
+  for (const stmt of statements) {
+    if (stmt.kind !== 'table' || !allowed.has(stmt.subject)) continue;
+    const body = stmt.subject === 'Organization' ? reduceOrganizationTable(stmt).split(/\r?\n/) : stmt.body;
+    for (const line of body) {
+      const m = line.match(/^"[^"]+" "([^"]+)" (NOT )?NULL/);
+      if (m) usedEnums.add(m[1]);
+    }
+  }
+
+  // 1. Missing enum types (needed both by fresh tables and ADD COLUMNs).
+  for (const stmt of statements) {
+    if (stmt.kind === 'enum' && usedEnums.has(stmt.subject) && !types.has(stmt.subject)) {
+      parts.push(stmt.sql);
+      types.add(stmt.subject);
+    }
+  }
+
+  // 2. Missing plan tables / missing columns on existing plan tables.
+  for (const stmt of statements) {
+    if (stmt.kind !== 'table' || !allowed.has(stmt.subject)) continue;
+    if (!tables.has(stmt.subject)) {
+      parts.push(stmt.subject === 'Organization' ? reduceOrganizationTable(stmt) : stmt.sql);
+      continue;
+    }
+    if (stmt.subject === 'Organization') continue; // the anchor is never altered
+    const have = columns.get(stmt.subject) ?? new Set<string>();
+    for (const line of stmt.body) {
+      const m = line.match(/^"([A-Za-z][A-Za-z0-9_]*)"/);
+      if (!m || have.has(m[1])) continue;
+      const def = line.trim().replace(/,$/, '');
+      // An enum-typed column requires its type to exist first.
+      const tm = def.match(/^"[^"]+" "([^"]+)"/);
+      if (tm && usedEnums.has(tm[1]) && !types.has(tm[1])) {
+        const enumStmt = statements.find((s) => s.kind === 'enum' && s.subject === tm[1]);
+        if (enumStmt) {
+          parts.push(enumStmt.sql);
+          types.add(tm[1]);
+        }
+      }
+      parts.push(`ALTER TABLE "${stmt.subject}" ADD COLUMN ${def};`);
+    }
+  }
+
+  // 3. Indexes / FKs — added only when their SUBJECT table is being created
+  //  now: a brand-new table is empty, so an FK to an EXISTING plan table
+  //  always validates, and indexes on it cannot collide. Pre-existing tables
+  //  keep their original indexes/constraints untouched. Platform tables
+  //  (e.g. Subscription) are never created here, so their constraints are
+  //  never emitted even when they reference a plan table.
+  for (const stmt of statements) {
+    if (stmt.kind === 'index' && !tables.has(stmt.subject) && allowed.has(stmt.subject)) {
+      parts.push(stmt.sql);
+    }
+    if (
+      stmt.kind === 'fk' &&
+      !tables.has(stmt.subject) &&
+      allowed.has(stmt.subject) &&
+      stmt.referenced !== undefined &&
+      allowed.has(stmt.referenced)
+    ) {
+      parts.push(stmt.sql);
+    }
+  }
+
+  return parts.join('\n\n');
+}
+
+/**
+ * Controlled LEGACY destination upgrade (Phase 3/6): removes ONLY the obsolete
+ * Self-Hosted/PRIVATE structures that carry no current business data, then
+ * lets the normal additive completion run so a legacy `db push`-created
+ * database (which has NO `_prisma_migrations` history) converges to the
+ * migration-plan schema.
+ *
+ * Safety contract — this function is fail-closed on every axis:
+ *   1. AUDIT (read-only): verifies the destination is not EMPTY and re-checks
+ *      the LEGACY classification itself.
+ *   2. GUARDS: for every removable object, counts the rows its removal would
+ *      affect. ANY nonzero count REFUSES the whole upgrade (nothing removed,
+ *      message names what an operator must review) — obsolete structures are
+ *      only removed when PROVEN data-free.
+ *   3. ADDITIVE script built FIRST (read-only): the destination is inventoried
+ *      and the missing-schema script (enums/tables/columns/indexes/FKs the
+ *      destination lacks) is derived from the same source of truth BEFORE any
+ *      write happens. A failure here refuses with NOTHING modified.
+ *   4. ATOMIC apply: cleanup + additive completion run inside ONE interactive
+ *      transaction — `IF EXISTS` DROPs of exactly the four audited obsolete
+ *      objects + the PRIVATE enum value (type swap, mirroring
+ *      prisma/migrations/20260916000000_remove_private_deployment_mode —
+ *      column defaults are dropped/re-added around the swap), then the
+ *      additive statements. Any failure rolls EVERYTHING back, so the
+ *      destination can never be left half-upgraded (and therefore
+ *      unclassifiable/non-retryable).
+ *   5. VERIFY: re-runs the classifier; must land on CURRENT_OMNISIGHT with all
+ *      migration-plan tables present, else the failure is reported verbatim.
+ *
+ * IDEMPOTENT: every statement is IF EXISTS / additive; running it twice (or
+ * on a destination that was already upgraded) is a no-op-safe re-run.
+ */
+async function upgradeLegacyDestination(
+  destination: PrismaClient,
+  legacy: { kind: 'LEGACY_OMNISIGHT'; conflicts: string[] }
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  try {
+    // 1. Re-audit right before acting (never trust a stale classification).
+    const cls = await classifyDestinationSchema(destination);
+    if (cls.kind === 'CURRENT_OMNISIGHT') return { ok: true };
+    if (cls.kind === 'FOREIGN_OR_UNKNOWN') {
+      return {
+        ok: false,
+        error: `Destination database changed state while the legacy upgrade was starting: ${cls.reason}. Nothing was modified — resolve the destination state first.`,
+      };
+    }
+    // EMPTY or LEGACY: both proceed below (cleanup only applies to LEGACY;
+    // EMPTY simply skips straight to the additive completion).
+
+    // 2a. Out-of-scope legacy fingerprints → REFUSE before touching anything.
+    //     The controlled cleanup only covers the four audited Self-Hosted/
+    //     PRIVATE artifacts; ANY other legacy structure (Guest, agent build
+    //     tracking, …) means this database is an older generation the upgrade
+    //     does not fully understand — never partially modify it.
+    if (cls.kind === 'LEGACY_OMNISIGHT') {
+      const inventory = await inventoryDestinationSchema(destination);
+      const outOfScope: string[] = [];
+      for (const table of OUT_OF_SCOPE_LEGACY_TABLES) {
+        if (inventory.tables.has(table)) outOfScope.push(`table "${table}"`);
+      }
+      for (const [table, column] of OUT_OF_SCOPE_LEGACY_COLUMNS) {
+        if (inventory.columns.get(table)?.has(column)) outOfScope.push(`column "${table}.${column}"`);
+      }
+      if (outOfScope.length > 0) {
+        log.warn('migration.schema.legacy.out-of-scope', { outOfScope });
+        return {
+          ok: false,
+          error: `Destination database is an EARLIER OmniSight generation whose legacy schema contains structures outside the controlled upgrade scope: ${outOfScope.join(', ')}. Detected legacy artifacts: ${cls.conflicts.join('; ')}. Nothing was modified — the existing data is intact. This destination requires a controlled legacy conversion reviewed by an operator, or a fresh empty Customer DB.`,
+        };
+      }
+    }
+
+    // 2. Guards — refuse unless every obsolete object is PROVEN data-free.
+    const blockers: string[] = [];
+    for (const guard of LEGACY_GUARDS) {
+      const count = await countLegacyGuardRows(destination, guard.table, guard.column);
+      if (count > 0) blockers.push(guard.describe(count));
+    }
+    if (blockers.length > 0) {
+      log.warn('migration.schema.legacy.blocked', { blockers });
+      return {
+        ok: false,
+        error: `Destination database is an EARLIER OmniSight generation whose legacy objects still carry data: ${blockers.join('; ')}. Nothing was modified — the existing data is intact. This destination requires a controlled legacy conversion (review the listed legacy records first), or configure a fresh empty Customer DB instead.`,
+      };
+    }
+
+    // 3. Transactional removal of the audited obsolete structures.
+    let privateOrphaned = 0;
+    try {
+      const rows = await destination.$queryRaw<Array<{ c: bigint }>>`
+        SELECT COUNT(*)::bigint AS c FROM "Organization" WHERE "deploymentMode" = 'PRIVATE'`;
+      privateOrphaned = Number(rows[0]?.c ?? 0);
+    } catch {
+      privateOrphaned = 0; // Organization absent (EMPTY re-audit race) — nothing to convert
+    }
+    if (privateOrphaned > 0) {
+      return {
+        ok: false,
+        error: `Destination has ${privateOrphaned} organization(s) still in the retired PRIVATE deployment mode. Nothing was modified — convert them explicitly before upgrading this database.`,
+      };
+    }
+
+    // The legacy DB may predate some of the enum's columns entirely (it was
+    // `db push`-created by an older generation), so the type swap must be built
+    // from the ACTUAL columns using the enum, discovered from pg_catalog —
+    // never a hardcoded table list.
+    const enumColumns = await destination.$queryRaw<
+      Array<{ table_name: string; column_name: string; default_expr: string | null }>
+    >`
+      SELECT c.relname AS "table_name", a.attname AS "column_name",
+             pg_get_expr(d.adbin, d.adrelid) AS "default_expr"
+      FROM pg_attribute a
+      JOIN pg_class c ON a.attrelid = c.oid
+      JOIN pg_namespace n ON c.relnamespace = n.oid
+      LEFT JOIN pg_attrdef d ON d.adrelid = a.attrelid AND d.adnum = a.attnum
+      WHERE n.nspname = 'public'
+        AND c.relkind = 'r'
+        AND a.atttypid = '"DeploymentMode"'::regtype
+        AND a.attnum > 0 AND NOT a.attisdropped`;
+
+    await destination.$transaction(
+      async (tx) => {
+        // Organization.licenseKeyId — FK, unique index, then column.
+        await tx.$executeRawUnsafe(`ALTER TABLE "Organization" DROP CONSTRAINT IF EXISTS "Organization_licenseKeyId_fkey"`);
+        await tx.$executeRawUnsafe(`DROP INDEX IF EXISTS "Organization_licenseKeyId_key"`);
+        await tx.$executeRawUnsafe(`ALTER TABLE "Organization" DROP COLUMN IF EXISTS "licenseKeyId"`);
+        // LicenseKey table (its own indexes drop with it).
+        await tx.$executeRawUnsafe(`DROP INDEX IF EXISTS "LicenseKey_key_key"`);
+        await tx.$executeRawUnsafe(`DROP INDEX IF EXISTS "LicenseKey_organizationId_idx"`);
+        await tx.$executeRawUnsafe(`DROP INDEX IF EXISTS "LicenseKey_planId_idx"`);
+        await tx.$executeRawUnsafe(`DROP INDEX IF EXISTS "LicenseKey_isActive_idx"`);
+        await tx.$executeRawUnsafe(`DROP INDEX IF EXISTS "LicenseKey_validUntil_idx"`);
+        await tx.$executeRawUnsafe(`DROP TABLE IF EXISTS "LicenseKey"`);
+        // Plan.isSelfHosted flag.
+        await tx.$executeRawUnsafe(`ALTER TABLE "Plan" DROP COLUMN IF EXISTS "isSelfHosted"`);
+        // DeploymentMode.PRIVATE — enum type swap (PG15 cannot ALTER TYPE DROP
+        // VALUE). Column DEFAULTs are literals of the OLD enum type and cannot
+        // be cast automatically between two distinct enum types, so each
+        // discovered default is dropped before the column type change and
+        // re-added afterwards (only the audited schema default 'MANAGED' is
+        // ever restored). Statements reference only columns proven to exist.
+        for (const col of enumColumns) {
+          if (col.default_expr !== null) {
+            await tx.$executeRawUnsafe(`ALTER TABLE "${col.table_name}" ALTER COLUMN "${col.column_name}" DROP DEFAULT`);
+          }
+        }
+        await tx.$executeRawUnsafe(`ALTER TYPE "DeploymentMode" RENAME TO "DeploymentMode_legacy"`);
+        await tx.$executeRawUnsafe(`CREATE TYPE "DeploymentMode" AS ENUM ('MANAGED', 'CUSTOMER_DB')`);
+        for (const col of enumColumns) {
+          await tx.$executeRawUnsafe(`ALTER TABLE "${col.table_name}" ALTER COLUMN "${col.column_name}" TYPE "DeploymentMode" USING "${col.column_name}"::text::"DeploymentMode"`);
+        }
+        for (const col of enumColumns) {
+          // Restore only the known schema default (Organization → 'MANAGED').
+          if (col.default_expr !== null && col.default_expr.includes('MANAGED')) {
+            await tx.$executeRawUnsafe(`ALTER TABLE "${col.table_name}" ALTER COLUMN "${col.column_name}" SET DEFAULT 'MANAGED'`);
+          }
+        }
+        await tx.$executeRawUnsafe(`DROP TYPE "DeploymentMode_legacy"`);
+
+        // Additive completion — SAME transaction, so a failure in any missing-
+        // schema statement rolls the ENTIRE upgrade (cleanup included) back:
+        // the destination can never be left half-upgraded and unclassifiable.
+        const script = await buildLegacyAdditiveCompletion(tx as unknown as PrismaClient);
+        const statements = splitSqlStatements(script);
+        for (const statement of statements) {
+          await tx.$executeRawUnsafe(statement);
+        }
+      },
+      { maxWait: 60_000, timeout: SCHEMA_SYNC_TIMEOUT_MS },
+    );
+    log.info('migration.schema.legacy.cleaned', { conflicts: legacy.conflicts });
+
+    // 5. Verify — the destination must now classify as CURRENT.
+    const after = await classifyDestinationSchema(destination);
+    if (after.kind !== 'CURRENT_OMNISIGHT') {
+      const reason = 'reason' in after ? after.reason : `unexpected classification ${after.kind}`;
+      return {
+        ok: false,
+        error: `Legacy cleanup finished but the destination schema did not converge: ${reason}. The legacy upgrade is transactional per statement group — resolve the remaining difference and re-run.`,
+      };
+    }
+    log.info('migration.schema.legacy.upgraded');
+    return { ok: true };
+  } catch (err) {
+    log.error('migration.schema.legacy.upgrade.failed', { error: userSafeError(err) });
+    return { ok: false, error: `The controlled legacy-database upgrade failed and nothing further was changed: ${userSafeError(err)}` };
+  }
+}
+
+/**
  * STEP 1 — Prepare the destination schema for the data copy:
- *   • EMPTY  → create the plan tables + Organization anchor (additive, atomic);
+ *   • EMPTY   → create the plan tables + Organization anchor (additive, atomic);
  *   • CURRENT → success, nothing modified;
- *   • LEGACY / FOREIGN → REFUSED, nothing modified, the conflicting objects
- *     named so an operator can act.
- * Only ADD is ever performed — existing objects are never dropped or altered,
- * and no destination data is ever destroyed.
+ *   • LEGACY  → CONTROLLED UPGRADE: the audited obsolete Self-Hosted/PRIVATE
+ *     structures (LicenseKey, Organization.licenseKeyId, Plan.isSelfHosted,
+ *     DeploymentMode='PRIVATE') are removed ONLY when proven data-free
+ *     (fail-closed guards), then the schema additively converges to the
+ *     migration plan. If any legacy object still carries data, the upgrade
+ *     REFUSES with an explicit operator-action message and nothing is modified.
+ *   • FOREIGN → REFUSED, nothing modified, the conflicting objects named.
+ * Only ADD is ever performed outside the audited legacy cleanup — existing
+ * objects are never dropped or altered, and no destination data is ever
+ * destroyed.
  */
 export async function prepareDestinationSchema(destination: PrismaClient): Promise<{ ok: true } | { ok: false; error: string }> {
   try {
@@ -560,10 +1040,7 @@ export async function prepareDestinationSchema(destination: PrismaClient): Promi
       return { ok: true };
     }
     if (cls.kind === 'LEGACY_OMNISIGHT') {
-      return {
-        ok: false,
-        error: `Destination database is an EARLIER OmniSight generation that the current schema cannot adopt without data loss. Conflicting objects: ${cls.conflicts.join('; ')}. Refusing — nothing was modified and the existing data is intact. Use a fresh empty database, or advance the existing database with the standard platform schema migrations first.`,
-      };
+      return upgradeLegacyDestination(destination, cls);
     }
     return {
       ok: false,
@@ -848,6 +1325,21 @@ export async function verifyCutoverDestination(
   return { ok: true };
 }
 
+/** Bounded identity read of the destination's Organization rows (no tenant content). */
+interface DestinationOrgIdentity {
+  id: string;
+  slug: string | null;
+}
+
+/** Actionable, secret-free refusal for a destination that cannot be anchored. */
+function destinationAnchorRefusal(orgId: string, detail: string): string {
+  return (
+    `Destination database is not eligible for this organization: ${detail}. ` +
+    `A dedicated destination must be empty of organizations before the transfer, or already anchored to exactly this organization (id ${orgId}). ` +
+    `Reconcile the destination "Organization" rows (a different org, a duplicate slug, or leftover rows) and retry. Nothing was written.`
+  );
+}
+
 /**
  * Ensure the destination holds the ORGANIZATION ANCHOR row so org-owned
  * rows' `organizationId` FKs resolve. The anchor carries ONLY the org's
@@ -855,6 +1347,16 @@ export async function verifyCutoverDestination(
  * control-plane fields (subscription, license, seats, deployment mode),
  * which stay authoritative in the platform database. Idempotent: an existing
  * anchor (previous run) is left untouched.
+ *
+ * FAIL-CLOSED: a dedicated destination must hold NOTHING but this one
+ * organization. The old implementation blindly ran
+ * `INSERT ... ON CONFLICT ("id") DO NOTHING`, which only covers the PRIMARY KEY:
+ * a destination already holding a DIFFERENT organization id but the SAME unique
+ * slug threw a bare SQLSTATE 23505 — masked as
+ * "Invalid `prisma.$executeRawUnsafe()` invocation:" — and failed the whole
+ * transfer at the migrate stage. A NOT NULL column absent from the legacy anchor
+ * failed the same opaque way (23502). We now INSPECT the destination first and
+ * refuse with an actionable reason instead of writing anything.
  */
 export async function ensureDestinationOrgAnchor(destination: PrismaClient, orgId: string): Promise<void> {
   const org = await db.organization.findUnique({
@@ -862,6 +1364,35 @@ export async function ensureDestinationOrgAnchor(destination: PrismaClient, orgI
     select: { id: true, name: true, slug: true, status: true, timezone: true, language: true, currency: true, createdAt: true, updatedAt: true },
   });
   if (!org) throw new Error('Organization not found in the platform database');
+
+  const existing = await destination.$queryRawUnsafe<DestinationOrgIdentity[]>(
+    `SELECT "id", "slug" FROM "Organization" ORDER BY "id" ASC LIMIT 50`
+  );
+
+  if (existing.length > 1) {
+    throw new Error(destinationAnchorRefusal(orgId, `the destination already holds ${existing.length} organization rows`));
+  }
+  if (existing.length === 1) {
+    const only = existing[0];
+    if (only.id !== orgId) {
+      throw new Error(
+        destinationAnchorRefusal(
+          orgId,
+          `the destination already holds a different organization (id ${only.id}${only.slug ? `, slug "${only.slug}"` : ''})`
+        )
+      );
+    }
+    if ((only.slug ?? null) !== (org.slug ?? null)) {
+      throw new Error(
+        destinationAnchorRefusal(
+          orgId,
+          `the destination organization has a conflicting identity slug ("${only.slug ?? ''}" vs platform "${org.slug ?? ''}")`
+        )
+      );
+    }
+    return; // Idempotent: the exact, matching anchor is already present — left untouched.
+  }
+
   await destination.$executeRawUnsafe(
     `INSERT INTO "Organization" ("id", "name", "slug", "status", "timezone", "language", "currency", "createdAt", "updatedAt")
      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)

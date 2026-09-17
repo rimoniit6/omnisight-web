@@ -1,15 +1,14 @@
-# OmniSight — Web Admin Panel
+# OmniSight
 
-> AI-powered workforce intelligence platform. Privacy-first, available as
-> OmniSight Managed or with a Customer Database.
+AI-powered workforce intelligence platform. Privacy-first, available as OmniSight Managed or with a Customer Database.
 
 ---
 
 ## Overview
 
-OmniSight is an organization workforce-management and workforce-intelligence platform consisting of a central **Admin Panel** (this repository — `omnisight-web`) and a **Windows Desktop Agent** (`omnisight-agent`).
+OmniSight is an organization workforce-management and workforce-intelligence platform consisting of a central **Control Plane** (`omnisight-web`) and a **Windows Desktop Agent** (`omnisight-agent`).
 
-The Admin Panel is a Next.js 16 application that provides:
+The Control Plane is a Next.js 16 application that provides:
 
 - **Employee Activity Monitoring** — real-time activity feed, application/website tracking, productivity categorization
 - **Screenshot Capture & OCR** — periodic screenshots with blur detection, flagging, and optional OCR text extraction
@@ -32,28 +31,28 @@ The Admin Panel is a Next.js 16 application that provides:
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                     Browser / Admin UI                       │
-│                    React 19 + Tailwind 4                     │
-│                    shadcn/ui + Radix UI                      │
-├─────────────────────────────────────────────────────────────┤
-│                        Next.js 16                            │
-│                     App Router + API                         │
-├──────────────────────┬──────────────────────────────────────┤
-│  REST API (130+)     │  Socket.io Realtime (port 3010)     │
-│  JWT + Session Auth  │  org-scoped events                  │
-├──────────────────────┴──────────────────────────────────────┤
-│                   Prisma 6 + PostgreSQL                     │
-│                   43+ models, tenant isolation              │
-└─────────────────────────────────────────────────────────────┘
-                              │
-                              │ API
-                              ▼
-┌─────────────────────────────────────────────────────────────┐
-│              OmniSight Desktop Agent (Electron)              │
-│              Windows · Activity · Screenshots                │
-│              Location · USB · Keyboard · Webcam              │
-└─────────────────────────────────────────────────────────────┘
++---------------------------------------------------------------+
+|                     Browser / Admin UI                        |
+|                    React 19 + Tailwind 4                      |
+|                    shadcn/ui + Radix UI                       |
++---------------------------------------------------------------+
+|                        Next.js 16                             |
+|                     App Router + API                          |
++--------------------------+------------------------------------+
+|  REST API (130+)         |  Socket.io Realtime (port 3010)   |
+|  JWT + Session Auth      |  org-scoped events                |
++--------------------------+------------------------------------+
+|                   Prisma 6 + PostgreSQL                      |
+|                   50+ models, tenant isolation               |
++---------------------------------------------------------------+
+                              |
+                              | API
+                              v
++---------------------------------------------------------------+
+|              OmniSight Desktop Agent (Electron)               |
+|              Windows - Activity - Screenshots                 |
+|              Location - USB - Keyboard - Webcam               |
++---------------------------------------------------------------+
 ```
 
 ## Tech Stack
@@ -78,102 +77,112 @@ The Admin Panel is a Next.js 16 application that provides:
 
 ```
 omnisight-web/
-├── prisma/                        # Schema + migrations
-│   ├── schema.prisma              # 43+ models
-│   └── migrations/                # PostgreSQL migrations
-├── src/
-│   ├── app/                       # Next.js App Router
-│   │   ├── api/                   # 130+ REST API routes
-│   │   │   ├── auth/              # Login, logout, sessions, users
-│   │   │   ├── agent/             # Agent enrollment, heartbeat, activity, etc.
-│   │   │   ├── super-admin/       # Platform administration
-│   │   │   ├── employees/         # Employee CRUD
-│   │   │   ├── devices/           # Device management
-│   │   │   ├── projects/          # Project management
-│   │   │   ├── screenshots/       # Screenshot serving
-│   │   │   ├── consent/           # Consent management
-│   │   │   ├── analytics/         # Dashboard analytics
-│   │   │   ├── reports/           # Report generation
-│   │   │   ├── branding/          # Branding management
-│   │   │   ├── health/            # Health check
-│   │   │   └── ...                # 30+ more route groups
-│   │   ├── (dashboard)/           # Dashboard layout
-│   │   └── uploads/               # Local file serving
-│   ├── components/                # React components
-│   │   ├── ui/                    # shadcn/ui primitives (40+ components)
-│   │   ├── dashboard/             # Dashboard widgets, KPI cards, charts
-│   │   ├── employees/             # Employee management, telemetry, location map
-│   │   ├── devices/               # Device management
-│   │   ├── projects/              # Project management, time tracking
-│   │   ├── analytics/             # Analytics charts, comparison tools
-│   │   ├── activities/            # Activity monitoring
-│   │   ├── screenshots/           # Screenshot viewer
-│   │   ├── consent/               # Consent management UI
-│   │   ├── policies/              # App whitelist/blacklist
-│   │   ├── branding/              # Branding configuration
-│   │   ├── super-admin/           # Super Admin management
-│   │   ├── alerts/                # Alert management
-│   │   ├── anomalies/             # Anomaly management
-│   │   ├── audit/                 # Audit log viewer
-│   │   ├── reports/               # Report generation
-│   │   ├── insights/              # AI insights
-│   │   ├── sentiment/             # Sentiment analysis
-│   │   ├── audio/                 # Audio transcription
-│   │   ├── break-status/          # Break mode management
-│   │   ├── live-monitor/          # Real-time monitoring
-│   │   ├── self-portal/           # Employee self-service
-│   │   └── layout/                # App header, sidebar, org switcher
-│   ├── lib/                       # Core business logic
-│   │   ├── auth.ts                # JWT + bcrypt + session cookies
-│   │   ├── permissions.ts         # RBAC definitions (single source of truth)
-│   │   ├── api.ts                 # API middleware helpers
-│   │   ├── session.ts             # Server-authoritative web sessions
-│   │   ├── consent.ts             # Consent state machine
-│   │   ├── crypto.ts              # AES-256-GCM encryption at rest
-│   │   ├── branding.ts            # Hierarchical branding resolution
-│   │   ├── location-service.ts    # 5 km threshold location ingestion
-│   │   ├── agent/                 # Agent auth, activation, sessions
-│   │   ├── jobs/                  # Background job processors
-│   │   ├── storage/               # Storage driver (local + Supabase)
-│   │   ├── pdf/                   # PDF report generation
-│   │   ├── notifications/         # Notification creation + delivery
-│   │   ├── breaks/                # Break mode management
-│   │   ├── audio/                 # Audio transcription service
-│   │   ├── policies/              # App policy enforcement
-│   │   └── ...                    # 50+ utility modules
-│   ├── hooks/                     # React hooks
-│   └── types/                     # TypeScript types
-├── mini-services/
-│   ├── live-updates/              # Socket.io realtime (Bun runtime)
-│   └── transcription/             # Python Whisper transcription
-├── tests/                         # 100+ test files
-│   ├── e2e/                       # Playwright E2E tests
-│   └── *.test.ts                  # Unit/integration tests
-├── scripts/                       # 70+ utility scripts
-├── uploads/                       # Local file storage
-├── public/                        # Static assets
-├── docs/                          # Documentation
-└── Caddyfile                      # Reverse proxy config (port 81)
++-- prisma/                        # Schema + migrations
+|   +-- schema.prisma              # 50+ models
+|   +-- migrations/                # PostgreSQL migrations
++-- src/
+|   +-- app/                       # Next.js App Router
+|   |   +-- api/                   # 130+ REST API routes
+|   |   |   +-- auth/              # Login, logout, sessions, users
+|   |   |   +-- agent/             # Agent enrollment, heartbeat, activity
+|   |   |   +-- super-admin/       # Platform administration
+|   |   |   +-- employees/         # Employee CRUD
+|   |   |   +-- devices/           # Device management
+|   |   |   +-- projects/          # Project management
+|   |   |   +-- screenshots/       # Screenshot serving
+|   |   |   +-- consent/           # Consent management
+|   |   |   +-- analytics/         # Dashboard analytics
+|   |   |   +-- reports/           # Report generation
+|   |   |   +-- branding/          # Branding management
+|   |   |   +-- health/            # Health check
+|   |   |   +-- ...                # 30+ more route groups
+|   |   +-- (dashboard)/           # Dashboard layout
+|   |   +-- uploads/               # Local file serving
+|   +-- components/                # React components
+|   |   +-- ui/                    # shadcn/ui primitives (40+ components)
+|   |   +-- dashboard/             # Dashboard widgets, KPI cards, charts
+|   |   +-- employees/             # Employee management, telemetry, location map
+|   |   +-- devices/               # Device management
+|   |   +-- projects/              # Project management, time tracking
+|   |   +-- analytics/             # Analytics charts, comparison tools
+|   |   +-- activities/            # Activity monitoring
+|   |   +-- screenshots/           # Screenshot viewer
+|   |   +-- consent/               # Consent management UI
+|   |   +-- policies/              # App whitelist/blacklist
+|   |   +-- branding/              # Branding configuration
+|   |   +-- super-admin/           # Super Admin management
+|   |   +-- alerts/                # Alert management
+|   |   +-- anomalies/             # Anomaly management
+|   |   +-- audit/                 # Audit log viewer
+|   |   +-- reports/               # Report generation
+|   |   +-- insights/              # AI insights
+|   |   +-- sentiment/             # Sentiment analysis
+|   |   +-- audio/                 # Audio transcription
+|   |   +-- break-status/          # Break mode management
+|   |   +-- live-monitor/          # Real-time monitoring
+|   |   +-- self-portal/           # Employee self-service
+|   |   +-- layout/                # App header, sidebar, org switcher
+|   +-- lib/                       # Core business logic
+|   |   +-- auth.ts                # JWT + bcrypt + session cookies
+|   |   +-- permissions.ts         # RBAC definitions (single source of truth)
+|   |   +-- api.ts                 # API middleware helpers
+|   |   +-- session.ts             # Server-authoritative web sessions
+|   |   +-- consent.ts             # Consent state machine
+|   |   +-- crypto.ts              # AES-256-GCM encryption at rest
+|   |   +-- branding.ts            # Hierarchical branding resolution
+|   |   +-- location-service.ts    # 5 km threshold location ingestion
+|   |   +-- agent/                 # Agent auth, activation, sessions
+|   |   +-- jobs/                  # Background job processors
+|   |   +-- storage/               # Storage driver (local + Supabase)
+|   |   +-- pdf/                   # PDF report generation
+|   |   +-- notifications/         # Notification creation + delivery
+|   |   +-- breaks/                # Break mode management
+|   |   +-- audio/                 # Audio transcription service
+|   |   +-- policies/              # App policy enforcement
+|   |   +-- ...                    # 50+ utility modules
+|   +-- hooks/                     # React hooks
+|   +-- types/                     # TypeScript types
++-- mini-services/
+|   +-- live-updates/              # Socket.io realtime (Bun runtime)
+|   +-- transcription/             # Python Whisper transcription
++-- tests/                         # 150+ test files
+|   +-- e2e/                       # Playwright E2E tests
+|   +-- *.test.ts                  # Unit/integration tests
++-- scripts/                       # 85+ utility scripts
++-- uploads/                       # Local file storage
++-- public/                        # Static assets
++-- docs/                          # Documentation
++-- Caddyfile                      # Reverse proxy config (port 81)
 ```
+
+## Service Models
+
+### OmniSight Managed
+
+OmniSight operates the application, API, platform database, and storage. Organizations are activated by a Super Admin through the subscription and manual payment flow. Super Admin has operational visibility into the organization's dashboard.
+
+### Customer Database
+
+OmniSight operates the application and API. The customer owns and manages their primary database and optionally their storage infrastructure. The application routes queries to the customer's database through an approved change request and data migration workflow. Super Admin sees control-plane metadata only.
 
 ## Requirements
 
 ### Development
 
-- **Node.js** ≥ 20
+- **Node.js** >= 20
 - **PostgreSQL** 14+ (or Supabase)
-- **npm** (or pnpm/bun)
+- **bun** (canonical package manager; `bun.lock` is the committed lockfile)
 - **Python 3.9+** (only for audio transcription microservice)
 - **FFmpeg** (only for audio transcription)
 
 ### Production
 
-- **Node.js** ≥ 20
-- **PostgreSQL** 14+ (Supabase recommended for Vercel deployments)
+- **Node.js** >= 20
+- **PostgreSQL** 14+ (Supabase recommended for cloud deployments)
 - **Bun** runtime (for the live-updates mini-service)
 - **Caddy** (recommended reverse proxy, see `Caddyfile`)
 
-## Quick Start
+## Local Development
 
 ### 1. Clone and install
 
@@ -182,14 +191,6 @@ git clone <repository-url> omnisight-web
 cd omnisight-web
 bun install
 ```
-
-> **Canonical package manager: bun.** `bun.lock` is the committed,
-> authoritative lockfile and matches the installed `node_modules`. npm-based
-> `package-lock.json` files are ignored in this repo (see `.gitignore`) so a
-> second, conflicting lock authority cannot appear. `bun run <script>`
-> executes the same npm-compatible scripts used throughout this document.
-> `npm install` still works locally, but it will create an untracked
-> `package-lock.json` — do not commit it.
 
 ### 2. Configure environment
 
@@ -229,7 +230,7 @@ npm run dev
 ```
 
 This starts both:
-- **Next.js admin app** on `http://localhost:3000`
+- **Next.js Control Plane** on `http://localhost:3000`
 - **Realtime service** on `http://localhost:3010`
 
 ### 5. Open the application
@@ -246,6 +247,8 @@ Visit `http://localhost:3000` and log in with the Super Admin credentials.
 | `npm run build` | Production build |
 | `npm start` | Start production server (port 3000) |
 | `npm run lint` | ESLint |
+| `npm run typecheck` | TypeScript type checking |
+| `npm test` | Run all unit/integration tests |
 | `npm run bootstrap:super-admin` | Create/verify Super Admin account |
 | `npm run db:seed:dev` | Seed Super Admin + Plan catalog (dev only) |
 | `npm run db:deploy` | Run pending Prisma migrations |
@@ -256,40 +259,38 @@ Visit `http://localhost:3000` and log in with the Super Admin credentials.
 | `npm run db:production-clean` | Clean production data |
 | `npm run jobs` | Run background jobs |
 
-## Configuration
-
-### Environment Variables
+## Environment Configuration
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `DATABASE_URL` | Yes | — | PostgreSQL pooled connection string (port 6543 for Supabase) |
+| `DATABASE_URL` | Yes | - | PostgreSQL pooled connection string (port 6543 for Supabase) |
 | `DIRECT_URL` | No | falls back to `DATABASE_URL` | PostgreSQL direct connection for migrations (port 5432) |
-| `JWT_SECRET` | Yes | — | HMAC-SHA256 signing key (≥ 16 chars, 32+ recommended) |
-| `JWT_EXPIRES_IN` | No | `7d` | Session lifetime (`<number><s\|m\|h\|d>`) |
+| `JWT_SECRET` | Yes | - | HMAC-SHA256 signing key (>= 16 chars, 32+ recommended) |
+| `JWT_EXPIRES_IN` | No | `7d` | Session lifetime (`<number><s|m|h|d>`) |
 | `SESSION_COOKIE_NAME` | No | `worklens_token` | httpOnly session cookie name |
-| `SUPER_ADMIN_EMAIL` | Yes | — | Super Admin bootstrap email |
-| `SUPER_ADMIN_PASSWORD` | Yes | — | Super Admin bootstrap password (≥ 12 chars) |
+| `SUPER_ADMIN_EMAIL` | Yes | - | Super Admin bootstrap email |
+| `SUPER_ADMIN_PASSWORD` | Yes | - | Super Admin bootstrap password (>= 12 chars) |
 | `SUPER_ADMIN_NAME` | No | `System Administrator` | Super Admin display name |
 | `ENCRYPTION_KEY` | Yes (prod) | auto-generated (dev) | 32-byte hex key for AES-256-GCM secret encryption |
 | `STORAGE_DRIVER` | No | `local` | `local` or `supabase` |
-| `SUPABASE_URL` | Conditional | — | Required when `STORAGE_DRIVER=supabase` |
-| `SUPABASE_SERVICE_ROLE_KEY` | Conditional | — | Required when `STORAGE_DRIVER=supabase` (server-only) |
+| `SUPABASE_URL` | Conditional | - | Required when `STORAGE_DRIVER=supabase` |
+| `SUPABASE_SERVICE_ROLE_KEY` | Conditional | - | Required when `STORAGE_DRIVER=supabase` (server-only) |
 | `NEXT_PUBLIC_LIVE_UPDATES_URL` | No | `http://localhost:3010` (dev) | WebSocket URL for browser realtime connection |
 | `LIVE_UPDATES_PORT` | No | `3010` | Port for the live-updates mini-service |
 | `ALLOWED_ORIGIN` | No | `http://localhost:3000` | Allowed browser origin for socket CORS |
 | `JOBS_INTERVAL_SECONDS` | No | `3600` | Background maintenance jobs interval |
 | `PROJECT_TIME_SYNC_INTERVAL_SECONDS` | No | `60` | Project time sync interval (min: 15) |
 | `PRESENCE_ONLINE_THRESHOLD_MS` | No | `300000` | Employee online-presence threshold (5 min) |
-| `TRANSCRIPTION_API_KEY` | No | — | API key for the transcription microservice |
+| `TRANSCRIPTION_API_KEY` | No | - | API key for the transcription microservice |
 | `WHISPER_MODEL` | No | `base` | Whisper model for transcription |
-| `AGENT_SERVER_URL` | No | — | Server URL baked into agent installer builds |
-| `PG_TEST_BASE_URL` | No | — | Test-only: local Postgres for test databases |
+| `AGENT_SERVER_URL` | No | - | Server URL baked into agent installer builds |
+| `PG_TEST_BASE_URL` | No | - | Test-only: local Postgres for test databases |
 
 See `.env.example` for complete documentation with security notes.
 
 ## Database
 
-PostgreSQL via Prisma ORM with 43+ models covering:
+PostgreSQL via Prisma ORM with 50+ models covering:
 
 | Domain | Models |
 |--------|--------|
@@ -302,11 +303,13 @@ PostgreSQL via Prisma ORM with 43+ models covering:
 | **Projects** | Project, ProjectMember, TimeEntry, ProjectTimeSync |
 | **Consent** | ConsentPolicy, Consent, ConsentLog |
 | **Policies** | AppListEntry, PolicyViolation |
-| **AI** | AiInsight, Anomaly, SentimentRecord |
+| **AI** | AiInsight, AiUsage, Anomaly, SentimentRecord |
 | **Notifications** | Notification, Alert, NotificationPreference |
 | **Reports** | Report |
-| **Branding** | PlatformBranding, OrganizationBranding |
+| **Branding** | PlatformBranding, OrganizationBranding, LandingContent |
 | **Audio** | AudioRecording, AudioTranscription |
+| **Billing** | Plan, PlanPricing, Subscription, Invoice, PurchaseRequest, Offer |
+| **Customer Database** | OrganizationSettings, InfrastructureChangeRequest, InfrastructureMigration, InfrastructurePendingTest |
 | **System** | SystemSetting, RateLimitCounter, JobRun |
 
 ### Key commands
@@ -320,24 +323,61 @@ npx prisma db push           # Push schema changes (dev only)
 npx prisma migrate reset     # Reset database (dev only)
 ```
 
+## Seed Architecture
+
+The system distinguishes between **bootstrap** (required production initialization) and **seed** (optional development fixtures).
+
+### Bootstrap (Production)
+
+The only production bootstrap is the Super Admin account, created from environment variables:
+
+```bash
+npm run bootstrap:super-admin
+# or: npx tsx scripts/bootstrap-super-admin.ts
+```
+
+This is idempotent: creates the Super Admin on first run, leaves existing accounts untouched. Reads `SUPER_ADMIN_EMAIL` and `SUPER_ADMIN_PASSWORD` from environment. No demo data, no organizations, no employees are created.
+
+### Seed (Development Only)
+
+```bash
+npm run db:seed:dev
+```
+
+Guarded by `NODE_ENV !== 'production'` AND `SEED_ALLOWED=1`. Creates Super Admin + Plan catalog (Free/Pro/Business) only. No demo organizations, employees, devices, or monitoring data.
+
+### Production Initialization Flow
+
+```
+Database migration  ->  Super Admin bootstrap  ->  Empty production system
+                                                        |
+                                                   Super Admin logs in
+                                                        |
+                                                   Creates organizations
+                                                        |
+                                                   Configures packages / service model / payment
+```
+
+No automatic demo or business data is created.
+
 ## Authentication
 
-- **Web login**: Email + password → JWT (HMAC-SHA256) + httpOnly session cookie
+- **Web login**: Email + password -> JWT (HMAC-SHA256) + httpOnly session cookie
 - **Server-authoritative sessions**: Each login creates a `UserSession` row; JWT carries `sessionId` for server-side revocation
 - **Password hashing**: bcrypt (12 rounds)
 - **Rate limiting**: Dual-layer brute-force protection (per-email + per-IP+email) with PostgreSQL-backed token bucket
-- **Agent authentication**: Two paths — Device Claim (PATH A) and Agent Login (PATH B)
+- **Agent authentication**: Two paths -- Device Claim (PATH A) and Agent Login (PATH B)
 - **Encryption at rest**: AES-256-GCM for stored secrets (AI API keys)
 
-See [docs/SECURITY.md](docs/SECURITY.md) for details.
+See `docs/SECURITY.md` for details.
 
 ## Roles & Permissions
 
 | Role | Scope | Description |
 |------|-------|-------------|
 | `super_admin` | Platform | Full access across all organizations. Manages organizations, users, platform settings, branding. |
-| `org_admin` | Organization | Full organization management — employees, devices, projects, policies, settings, branding. |
-| `manager` | Organization | Operational management — create/update employees, projects, view reports and analytics. |
+| `org_admin` | Organization | Full organization management -- employees, devices, projects, policies, settings, branding. |
+| `manager` | Organization | Operational management -- create/update employees, projects, view reports and analytics. |
 | `viewer` | Organization | Read-only access to dashboard, analytics, reports, and data views. |
 
 Legacy role aliases (`owner`, `admin`) are mapped to `org_admin` for backward compatibility.
@@ -358,14 +398,14 @@ The RBAC system is defined in `src/lib/permissions.ts` as the single source of t
 Two enrollment paths:
 
 ### PATH A: Device Claim (Traditional)
-1. Agent discovers device → creates `DeviceClaim` with hashed secret
-2. Admin approves claim → assigns employee → issues `AgentToken`
-3. Agent authenticates with device credentials → receives 24-hour token
+1. Agent discovers device -> creates `DeviceClaim` with hashed secret
+2. Admin approves claim -> assigns employee -> issues `AgentToken`
+3. Agent authenticates with device credentials -> receives 24-hour token
 
 ### PATH B: Agent Login
 1. Admin creates `AgentAccount` (agentId + password) for an employee
-2. Agent enters credentials → receives short-lived `AgentSession`
-3. Agent discovers device → admin approves → issues `AgentToken`
+2. Agent enters credentials -> receives short-lived `AgentSession`
+3. Agent discovers device -> admin approves -> issues `AgentToken`
 
 **Single active device rule**: One employee may have many registered devices, but only one device may hold a valid active `AgentToken` at a time.
 
@@ -384,7 +424,7 @@ Two enrollment paths:
 ## Privacy & Consent
 
 - **Break Mode**: Admin, self-service, or agent-initiated; pauses monitoring
-- **Consent State Machine**: pending → granted → revoked/expired (with version tracking)
+- **Consent State Machine**: pending -> granted -> revoked/expired (with version tracking)
 - **Policy Versioning**: Versioned consent policies; employees must re-consent to new versions
 - **Consent Enforcement**: Server-side validation before any data collection
 - **Audit Trail**: Immutable consent log with full history
@@ -423,7 +463,7 @@ In development, `npm run dev` starts both services. In production, the live-upda
 
 | Job | Purpose |
 |-----|---------|
-| Consent expiration | Processes expired consents (granted → expired) |
+| Consent expiration | Processes expired consents (granted -> expired) |
 | Retention cleanup | Removes old screenshots, activity, location data |
 | Rate limit cleanup | Sweeps stale rate limit counters |
 | Project time sync | Syncs agent activity to project time entries |
@@ -432,6 +472,7 @@ In development, `npm run dev` starts both services. In production, the live-upda
 | Anomaly detection | Analyzes activity patterns for anomalies |
 | Sentiment calculation | Computes employee/project sentiment scores |
 | Web session cleanup | Removes expired web sessions |
+| Data expiry reminder | Notifies organizations of approaching data retention expiry |
 
 ## Testing
 
@@ -452,6 +493,7 @@ npm run test:health
 npm run test:sentiment
 npm run test:project-sentiment
 npm run test:members-add
+npm run test:members-pagination
 npm run test:consent-seed
 npm run test:consent-summary
 
@@ -463,22 +505,9 @@ npm run test:integration     # subscription, invoices, data-expiry
 npx playwright test
 ```
 
-See [docs/TESTING.md](docs/TESTING.md) for details.
-
-## Production Build
-
-```bash
-npm run build
-npm start
-```
-
-The build produces a standalone output (except on Vercel where the platform adapter handles bundling).
+See `docs/TESTING.md` for details.
 
 ## Production Deployment
-
-See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for comprehensive deployment instructions.
-
-Quick summary:
 
 1. Set all environment variables
 2. Run `npx prisma migrate deploy`
@@ -489,16 +518,10 @@ Quick summary:
 7. Start the app: `npm start`
 8. Set up Caddy/reverse proxy for port 81 (WebSocket transform for realtime)
 
-**Service models:** V1 supports **OmniSight Managed** and **Customer Database**
-only. Organizations are activated by a Super Admin through the subscription +
-manual-payment flow — there is no license-key step, and Self-Hosted is not a
-V1 service model.
-
 **Docker:** a multi-stage `Dockerfile` + `docker-compose.yml` run PostgreSQL and
 the app (the entrypoint applies Prisma migrations, then starts the server).
-See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
 
-**Release process:** see [RELEASE.md](RELEASE.md).
+**Release process:** see `RELEASE.md`.
 
 ## Security
 
@@ -514,11 +537,18 @@ See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
 - Tenant isolation via organization-scoped queries
 - Audit logging for all sensitive operations
 
-See [docs/SECURITY.md](docs/SECURITY.md) for details.
+See `docs/SECURITY.md` for details.
 
-## Troubleshooting
+## Known Limitations
 
-See [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) for common issues and solutions.
+- The Windows Desktop Agent does not support macOS or Linux. Native collectors (foreground window, keyboard hook, GPS, webcam, USB) are Windows-specific.
+- Code signing for the Agent installer is not configured in the repository (activates when `CSC_LINK` and `CSC_KEY_PASSWORD` are set at build time).
+- Browser extension for website tracking requires a registered Chrome/Edge/Firefox native messaging host. The extension-free `BrowserActivityMonitor` provides BEST_EFFORT tracking without an extension.
+- Webcam is video-only (no audio), strictly command-driven (no continuous recording), with a 5-minute session TTL.
+- Device integrity checks (binary verification, debugger detection) are not implemented.
+- The `AppUser.organizationId` field is deprecated for multi-org but retained for backward compatibility.
+- Seat limits were removed (employee capacity is unlimited per organization).
+- Email monitoring capability exists in the consent framework but is not implemented in the Agent.
 
 ## Documentation
 
@@ -532,14 +562,6 @@ See [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) for common issues and sol
 - [Admin Guide](docs/ADMIN_GUIDE.md)
 - [Agent Integration](docs/AGENT_INTEGRATION.md)
 
-## Known Limitations
-
-- The `AppUser.organizationId` field is deprecated for multi-org but retained for backward compatibility
-- Seat limits were removed (employee capacity is unlimited per organization)
-- Device integrity checks (binary verification, debugger detection) are not implemented
-- Email monitoring capability exists in the consent framework but is not implemented in the Agent
-- Code signing for the Agent installer is not currently configured
-
 ## License
 
-Proprietary — Internal use only.
+Proprietary -- Internal use only.

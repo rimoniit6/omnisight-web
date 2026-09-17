@@ -50,6 +50,7 @@ import {
 } from '@/components/ui/select';
 import { EmployeeCombobox } from '@/components/employees/employee-combobox';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
+import { Checkbox } from '@/components/ui/checkbox';
 import {
   Dialog,
   DialogContent,
@@ -236,6 +237,9 @@ export function ScreenshotsPage() {
   // hidden — the server enforces 403 regardless.
   const currentUser = useAuthStore((s) => s.user);
   const canMutate = currentUser?.role !== 'viewer';
+  // Deletion is admin-only — managers can select/analyze but never delete.
+  // The server remains authoritative (requireAdminOrg) on every mutation.
+  const canDelete = isOrgAdminRole(currentUser?.role);
   const [viewMode, setViewMode] = useState<ViewMode>('grid');
   const [search, setSearch] = useState('');
   const [searchMode, setSearchMode] = useState<SearchMode>('general');
@@ -291,6 +295,7 @@ export function ScreenshotsPage() {
     }
   };
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [bulkDeleteDialogOpen, setBulkDeleteDialogOpen] = useState(false);
   const [flagDialogOpen, setFlagDialogOpen] = useState(false);
   const [flagReasonInput, setFlagReasonInput] = useState('');
   const [analyzing, setAnalyzing] = useState(false);
@@ -485,6 +490,49 @@ export function ScreenshotsPage() {
     },
   });
 
+  // Bulk delete (org admins only): ONE request for the whole selection. The
+  // server deletes artifacts first, keeps rows whose storage delete failed,
+  // and reports exactly which ids failed so they can be retried.
+  const bulkDeleteMutation = useMutation({
+    mutationFn: async () => {
+      if (!isOrgAdminRole(currentUser?.role)) {
+        throw new PermissionDeniedError('Delete screenshots', 'Organization Admin', currentUser?.role);
+      }
+      const res = await fetch('/api/screenshots/bulk', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ screenshotIds: Array.from(selectedForBatch) }),
+      });
+      if (!res.ok) {
+        const body = (await res.json().catch(() => ({}))) as { error?: string };
+        throw new Error(body.error || 'Bulk delete failed');
+      }
+      return res.json() as Promise<{ deleted: number; failed: number; failedIds: string[] }>;
+    },
+    onSuccess: (data) => {
+      setBulkDeleteDialogOpen(false);
+      const deleted = data.deleted ?? 0;
+      const failedIds = data.failedIds ?? [];
+      const failed = data.failed ?? 0;
+      if (deleted > 0 && failed > 0) {
+        toast.warning(`Deleted ${deleted} of ${deleted + failed} screenshot(s); ${failed} could not be deleted (storage unavailable?)`);
+      } else if (deleted > 0) {
+        toast.success(`Deleted ${deleted} screenshot${deleted === 1 ? '' : 's'}`);
+      } else {
+        toast.error(`Could not delete the selected screenshot${failed === 1 ? '' : 's'}`);
+      }
+      // Drop the deleted ids; keep the failed ones selected so they can be
+      // retried without re-locating them.
+      setSelectedForBatch(new Set(failedIds));
+      queryClient.invalidateQueries({ queryKey: ['screenshots'] });
+      queryClient.invalidateQueries({ queryKey: ['screenshot-stats'] });
+    },
+    onError: (err) => {
+      if (handleDeniedError(err)) return;
+      toast.error(err instanceof Error ? err.message : 'Failed to delete screenshots');
+    },
+  });
+
   function handleFilterChange() {
     setPage(1);
   }
@@ -530,6 +578,21 @@ export function ScreenshotsPage() {
       else next.add(id);
       return next;
     });
+  };
+
+  // Selection toolbar state. Select All acts on the visible page only and is
+  // tri-state (none / some / all of the currently loaded screenshots).
+  // Cross-page selection survives but is never auto-cleared or auto-selected.
+  const selectionCount = selectedForBatch.size;
+  const allVisibleSelected = screenshots.length > 0 && screenshots.every((s) => selectedForBatch.has(s.id));
+  const someVisibleSelected = screenshots.length > 0 && !allVisibleSelected && screenshots.some((s) => selectedForBatch.has(s.id));
+
+  const handleSelectAllToggle = (checked: boolean | 'indeterminate') => {
+    if (checked) {
+      setSelectedForBatch(new Set(screenshots.map((s) => s.id)));
+    } else {
+      setSelectedForBatch(new Set());
+    }
   };
 
   // Manual screenshot capture mutation (defined after `screenshots` is available)
@@ -859,6 +922,34 @@ export function ScreenshotsPage() {
               )}
             </div>
           </div>
+          {/* Selection toolbar — Select All (page scope, tri-state) + bulk delete */}
+          {canMutate && screenshots.length > 0 && (
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-2 border-t pt-3">
+              <label className="flex items-center gap-2 text-xs text-muted-foreground cursor-pointer select-none shrink-0">
+                <Checkbox
+                  checked={allVisibleSelected ? true : someVisibleSelected ? 'indeterminate' : false}
+                  onCheckedChange={handleSelectAllToggle}
+                  aria-label="Select all screenshots on this page"
+                />
+                {selectionCount > 0 ? `${selectionCount} selected` : 'Select all on page'}
+              </label>
+              {canDelete && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-8 text-destructive hover:text-destructive hover:bg-destructive/10"
+                  onClick={() => setBulkDeleteDialogOpen(true)}
+                  disabled={selectionCount === 0 || bulkDeleteMutation.isPending}
+                >
+                  {bulkDeleteMutation.isPending ? (
+                    <><RefreshCw className="w-3.5 h-3.5 mr-1.5 animate-spin" /> Deleting...</>
+                  ) : (
+                    <><Trash2 className="w-3.5 h-3.5 mr-1.5" /> Delete Selected ({selectionCount})</>
+                  )}
+                </Button>
+              )}
+            </div>
+          )}
         </div>
       </div>
 
@@ -933,6 +1024,7 @@ export function ScreenshotsPage() {
                 onClick={() => openViewer(screenshot.id)}
                 selected={canMutate && selectedForBatch.has(screenshot.id)}
                 onToggleSelect={canMutate ? () => toggleBatchSelect(screenshot.id) : undefined}
+                onDelete={canDelete ? () => { setSelectedId(screenshot.id); setDeleteDialogOpen(true); } : undefined}
               />
             ))}
           </div>
@@ -973,6 +1065,11 @@ export function ScreenshotsPage() {
           totalPages={totalPages}
           onPrevPage={() => setPage(page - 1)}
           onNextPage={() => setPage(page + 1)}
+          canSelect={canMutate}
+          selectedIds={selectedForBatch}
+          onToggleSelect={toggleBatchSelect}
+          canDelete={canDelete}
+          onDelete={(id) => { setSelectedId(id); setDeleteDialogOpen(true); }}
         />
       )}
 
@@ -1282,6 +1379,28 @@ export function ScreenshotsPage() {
         </AlertDialogContent>
       </AlertDialog>
 
+      {/* Bulk Delete Confirmation */}
+      <AlertDialog open={bulkDeleteDialogOpen} onOpenChange={setBulkDeleteDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete {selectionCount} Selected Screenshots</AlertDialogTitle>
+            <AlertDialogDescription>
+              Are you sure you want to delete {selectionCount} selected screenshot{selectionCount === 1 ? '' : 's'}? This action cannot be undone. The screenshot files and all associated data will be permanently removed.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive hover:bg-destructive/90 text-white"
+              onClick={() => bulkDeleteMutation.mutate()}
+              disabled={bulkDeleteMutation.isPending || selectionCount === 0}
+            >
+              {bulkDeleteMutation.isPending ? 'Deleting...' : `Delete ${selectionCount}`}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
       {/* Delete Confirmation */}
       <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
         <AlertDialogContent>
@@ -1433,11 +1552,13 @@ function ScreenshotGridCard({
   onClick,
   selected,
   onToggleSelect,
+  onDelete,
 }: {
   screenshot: ScreenshotItem;
   onClick: () => void;
   selected: boolean;
   onToggleSelect?: () => void;
+  onDelete?: () => void;
 }) {
   const category = getCategory(screenshot.aiAnalysis);
   const gradient = getGradientForApp(screenshot.appWindow);
@@ -1484,6 +1605,17 @@ function ScreenshotGridCard({
             </Badge>
           </div>
         )}
+        {/* Individual delete (admins only) — visible without opening the viewer */}
+        {onDelete && (
+          <button
+            className="absolute bottom-2 left-2 z-10 w-7 h-7 rounded-md bg-black/45 hover:bg-destructive/90 text-white flex items-center justify-center transition-colors"
+            onClick={(e) => { e.stopPropagation(); onDelete(); }}
+            aria-label={`Delete screenshot — ${screenshot.appWindow || 'Unknown Application'}`}
+            title="Delete screenshot"
+          >
+            <Trash2 className="w-3.5 h-3.5" />
+          </button>
+        )}
         {/* Category badge */}
         <div className="absolute top-2 left-2">
           <Badge variant="secondary" className={`text-[10px] px-1.5 py-0 ${getCategoryColor(category)}`}>
@@ -1524,6 +1656,11 @@ function ScreenshotListView({
   totalPages,
   onPrevPage,
   onNextPage,
+  canSelect,
+  selectedIds,
+  onToggleSelect,
+  canDelete,
+  onDelete,
 }: {
   screenshots: ScreenshotItem[];
   onOpen: (id: string) => void;
@@ -1533,6 +1670,11 @@ function ScreenshotListView({
   totalPages: number;
   onPrevPage: () => void;
   onNextPage: () => void;
+  canSelect: boolean;
+  selectedIds: Set<string>;
+  onToggleSelect: (id: string) => void;
+  canDelete: boolean;
+  onDelete: (id: string) => void;
 }) {
   return (
     <>
@@ -1541,6 +1683,9 @@ function ScreenshotListView({
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b bg-muted/30">
+                {canSelect && (
+                  <th className="w-px px-4 py-3" aria-label="Select" />
+                )}
                 <th className="text-left px-4 py-3 font-medium text-muted-foreground">Preview</th>
                 <th className="text-left px-4 py-3 font-medium text-muted-foreground">Employee</th>
                 <th className="text-left px-4 py-3 font-medium text-muted-foreground hidden md:table-cell">Device</th>
@@ -1558,6 +1703,15 @@ function ScreenshotListView({
                   className="border-b last:border-0 hover:bg-muted/20 transition-colors cursor-pointer"
                   onClick={() => onOpen(s.id)}
                 >
+                  {canSelect && (
+                    <td className="px-4 py-2.5 w-px" onClick={(e) => e.stopPropagation()}>
+                      <Checkbox
+                        checked={selectedIds.has(s.id)}
+                        onCheckedChange={() => onToggleSelect(s.id)}
+                        aria-label={`Select screenshot — ${s.appWindow || 'Unknown Application'}`}
+                      />
+                    </td>
+                  )}
                   <td className="px-4 py-2.5">
                     <div className="relative w-16 h-10 rounded overflow-hidden bg-muted">
                       <ScreenshotPreview
@@ -1611,14 +1765,27 @@ function ScreenshotListView({
                     </div>
                   </td>
                   <td className="px-4 py-2.5 text-right">
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="h-7 px-2 text-xs"
-                      onClick={(e) => { e.stopPropagation(); onOpen(s.id); }}
-                    >
-                      View
-                    </Button>
+                    <div className="flex items-center justify-end gap-1">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-7 px-2 text-xs"
+                        onClick={(e) => { e.stopPropagation(); onOpen(s.id); }}
+                      >
+                        View
+                      </Button>
+                      {canDelete && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-7 px-2 text-xs text-destructive hover:text-destructive hover:bg-destructive/10"
+                          onClick={(e) => { e.stopPropagation(); onDelete(s.id); }}
+                        >
+                          <Trash2 className="w-3.5 h-3.5 mr-1" />
+                          Delete
+                        </Button>
+                      )}
+                    </div>
                   </td>
                 </tr>
               ))}

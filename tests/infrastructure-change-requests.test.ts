@@ -26,6 +26,19 @@
  *   INFRA-12  Idempotency: resubmitting the exact ACTIVE config is a 200
  *             `unchanged` (no spurious change request).
  *
+ * Hardening 1 (client configFingerprint REQUIRED on enable/adoption paths)
+ * and Hardening 2 (atomic supersede+create) — DB-H1..H5, STORAGE-H1..H5,
+ * TXN-01/02:
+ *   DB-H1..H4     enable submissions REQUIRE a matching configFingerprint
+ *                 (missing/tampered → 422, no request) before the live probe.
+ *   DB-H5/STORAGE-H5  disable / return-to-platform paths keep working WITHOUT
+ *                 a destination test/fingerprint (intentional behavior).
+ *   STORAGE-H1..H4  supabase adoption submissions REQUIRE a matching
+ *                 configFingerprint; probe verified against an in-process
+ *                 mock Supabase Storage (loopback HTTP, test-only relaxation).
+ *   TXN-01/02     supersede + create run in ONE transaction: a failed create
+ *                 rolls the supersede back (old request stays open).
+ *
  * Runs against a THROWAWAY PostgreSQL database (DATABASE approvals probe a
  * second throwaway DB the same way a customer DB would be verified).
  * Run: npx tsx --test tests/infrastructure-change-requests.test.ts
@@ -33,6 +46,7 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { execSync } from 'node:child_process';
+import { createServer, type Server } from 'node:http';
 import { req } from './helpers/request';
 
 // ─── Test DB isolation ──────────────────────────────────────────────────
@@ -54,6 +68,12 @@ process.env.SUPER_ADMIN_PASSWORD = 'S3cure!Infra2026x';
 // These suites probe REAL loopback destinations (throwaway Postgres, mock Supabase).
 // Test-only SSRF relaxation — see src/lib/ssrf.ts. Never set in production.
 (process.env as Record<string, string>).OMNISIGHT_ALLOW_PRIVATE_TARGETS = '1';
+// (Hardening 1 tests) The storage suites exercise the submit path against an
+// in-process mock Supabase Storage on loopback HTTP — the same pattern as
+// tests/full-org-cutover.test.ts. Test-only relaxation of the https:// rule in
+// validateStorageConfig; production must NOT set this. The live destination
+// probe still runs for real in every environment.
+(process.env as Record<string, string>).OMNISIGHT_ALLOW_INSECURE_STORAGE_URLS = '1';
 
 before(() => {
   execSync(`node scripts/pg-test-db.mjs ensure ${TEST_DB_NAME}`, {
@@ -165,9 +185,52 @@ const dbConfig = (name: string, password: string, port = PROBE_PORT) => ({
 const CONFIG_A = dbConfig(CUSTOMER_DB_1, REAL_PASSWORD);
 const CONFIG_B = dbConfig(CUSTOMER_DB_2, REAL_PASSWORD);
 
-async function submitDb(body: Record<string, unknown>) {
+// (Hardening 1) Fingerprint helpers — compute EXACTLY what the server
+// recomputes, using the same canonical helpers from src/lib/infrastructure
+// (no duplicated hashing). dbFp derives from the validated non-secret config
+// shape; storageFp from {driver, url}. Secrets are never fingerprinted.
+async function dbFp(cfg: ReturnType<typeof dbConfig>): Promise<string> {
+  const { configFingerprint, dbConfigFingerprintInput } = await import('../src/lib/infrastructure');
+  return configFingerprint(dbConfigFingerprintInput({
+    host: cfg.dbHost as string,
+    port: (cfg.dbPort as number) ?? null,
+    name: cfg.dbName as string,
+    user: cfg.dbUser as string,
+    ssl: cfg.dbSsl === true,
+    useOwnDb: cfg.useOwnDb !== false,
+  }));
+}
+
+async function storageFp(url: string): Promise<string> {
+  const { configFingerprint, storageConfigFingerprintInput } = await import('../src/lib/infrastructure');
+  return configFingerprint(storageConfigFingerprintInput({ driver: 'supabase', url }));
+}
+
+// Fresh org + admin per scenario so request-numbering/open-request state
+// never collides between tests.
+async function freshOrg(slug: string) {
+  const o = await db.organization.create({ data: { name: slug, slug } });
+  const admin = await db.appUser.create({
+    data: { email: `${slug}@infra.test`, name: 'Admin', password: 'x', role: 'admin', organizationId: o.id },
+  });
+  await db.organizationMembership.createMany({
+    data: [{ userId: admin.id, organizationId: o.id, role: 'admin', status: 'ACTIVE' }],
+  });
+  return { orgId: o.id, token: await signJWT({ userId: admin.id, email: admin.email, role: 'admin', organizationId: o.id, activeOrganizationId: o.id }) };
+}
+
+async function submitDbAs(token: string, orgId: string, body: Record<string, unknown>) {
   const api = await import('../src/app/api/organizations/[orgId]/settings/database/route');
-  return api.PUT(req(orgAdminToken, { method: 'PUT', body, url: `http://localhost:3000/api/organizations/${org.id}/settings/database` }), params({ orgId: org.id }));
+  return api.PUT(req(token, { method: 'PUT', body, url: `http://localhost:3000/api/organizations/${orgId}/settings/database` }), params({ orgId }));
+}
+
+async function submitDb(body: Record<string, unknown>) {
+  return submitDbAs(orgAdminToken, org.id, body);
+}
+
+async function submitStorageAs(token: string, orgId: string, body: Record<string, unknown>) {
+  const api = await import('../src/app/api/organizations/[orgId]/settings/storage/route');
+  return api.PUT(req(token, { method: 'PUT', body, url: `http://localhost:3000/api/organizations/${orgId}/settings/storage` }), params({ orgId }));
 }
 
 async function approve(id: string, note?: string) {
@@ -183,15 +246,19 @@ async function runMigrationsToReady(): Promise<void> {
   }
 }
 
-async function testDb(body: Record<string, unknown>) {
+async function testDbAs(token: string, orgId: string, body: Record<string, unknown>) {
   const api = await import('../src/app/api/organizations/[orgId]/settings/database/test/route');
-  return api.POST(req(orgAdminToken, { method: 'POST', body, url: `http://localhost:3000/api/organizations/${org.id}/settings/database/test` }), params({ orgId: org.id }));
+  return api.POST(req(token, { method: 'POST', body, url: `http://localhost:3000/api/organizations/${orgId}/settings/database/test` }), params({ orgId }));
+}
+
+async function testDb(body: Record<string, unknown>) {
+  return testDbAs(orgAdminToken, org.id, body);
 }
 
 // ─── INFRA-01: submit never touches active settings; secrets encrypted ─────
 
 test('INFRA-01: PUT settings/database submits a change request (settings untouched, secrets encrypted)', async () => {
-  const res = await submitDb(CONFIG_A as unknown as Record<string, unknown>);
+  const res = await submitDb({ ...CONFIG_A, configFingerprint: await dbFp(CONFIG_A) } as unknown as Record<string, unknown>);
   assert.equal(res.status, 201);
   const body = await res.json();
 
@@ -202,7 +269,7 @@ test('INFRA-01: PUT settings/database submits a change request (settings untouch
   assert.equal(r.config.host, PROBE_HOST);
   assert.equal(r.config.name, CUSTOMER_DB_1);
   assert.equal(r.hasSecret, true);
-  assert.equal(r.secretLast4, 'word');
+  assert.equal(r.secretLast4, REAL_PASSWORD.slice(-4));
 
   // Active settings are NOT touched by a submit.
   const active = await db.organizationSettings.findUnique({ where: { organizationId: org.id } });
@@ -219,7 +286,7 @@ test('INFRA-01: PUT settings/database submits a change request (settings untouch
 // ─── INFRA-02: one open request per kind ───────────────────────────────────
 
 test('INFRA-02: second pending request for the same kind is rejected with 409', async () => {
-  const res = await submitDb(CONFIG_A as unknown as Record<string, unknown>);
+  const res = await submitDb({ ...CONFIG_A, configFingerprint: await dbFp(CONFIG_A) } as unknown as Record<string, unknown>);
   assert.equal(res.status, 409);
   const body = await res.json();
   assert.match(body.error, /already pending/i);
@@ -236,7 +303,7 @@ test('INFRA-03: STORAGE change-request submission (service-role key encrypted at
   const res = await api.PUT(
     req(orgAdminToken, {
       method: 'PUT',
-      body: { storageDriver: 'supabase', storageUrl: 'https://abcd.supabase.co', storageKey: 'sb_secret_123456' },
+      body: { storageDriver: 'supabase', storageUrl: 'https://abcd.supabase.co', storageKey: 'sb_secret_123456', configFingerprint: await storageFp('https://abcd.supabase.co') },
       url: `http://localhost:3000/api/organizations/${org.id}/settings/storage`,
     }),
     params({ orgId: org.id })
@@ -275,7 +342,7 @@ test('INFRA-04: SA queue and detail expose only masked secrets', async () => {
   const detailRes = await detailApi.GET(req(superAdminToken, { url: `http://localhost:3000/api/admin/infrastructure-requests/${stored!.id}` }), params({ id: stored!.id }));
   assert.equal(detailRes.status, 200);
   const detail = await detailRes.json();
-  assert.equal(detail.data.request.secretLast4, 'word');
+  assert.equal(detail.data.request.secretLast4, REAL_PASSWORD.slice(-4));
   assert.ok(!JSON.stringify(detail).includes('dbPasswordEncrypted'));
   assert.ok(!JSON.stringify(detail).includes('omnisight_password'));
 });
@@ -323,7 +390,8 @@ test('INFRA-06: an unreachable target fails closed at SUBMIT (settings untouched
   // creating the request, so an unreachable target is rejected 422 and never
   // reaches the SA queue — a stricter fail-closed than the old approve-time
   // 502. Settings remain untouched either way.
-  const submit = await submitDb(dbConfig(CUSTOMER_DB_1, REAL_PASSWORD, 1) as unknown as Record<string, unknown>);
+  const unreachableConfig = dbConfig(CUSTOMER_DB_1, REAL_PASSWORD, 1);
+  const submit = await submitDb({ ...unreachableConfig, configFingerprint: await dbFp(unreachableConfig) } as unknown as Record<string, unknown>);
   assert.equal(submit.status, 422);
   const body = await submit.json();
   assert.match(body.error, /connection test .* failed/i);
@@ -341,7 +409,7 @@ test('INFRA-06: an unreachable target fails closed at SUBMIT (settings untouched
 // ─── INFRA-07: newer request supersedes an approved-but-failed one ─────────
 
 test('INFRA-07: a newer request supersedes an earlier open request', async () => {
-  const submit = await submitDb(CONFIG_B as unknown as Record<string, unknown>);
+  const submit = await submitDb({ ...CONFIG_B, configFingerprint: await dbFp(CONFIG_B) } as unknown as Record<string, unknown>);
   assert.equal(submit.status, 201); // any earlier OPEN request is superseded
   const submitted = await submit.json();
   const reqId = submitted.request.id;
@@ -382,7 +450,8 @@ test('INFRA-08: SA reject moves submitted → rejected; reason is required', asy
   // (which accepts those credentials only on PROBE_PORT) — so submit via the
   // idempotent-safe config and instead rely on dbName CUSTOMER_DB_1 being
   // different from the active CUSTOMER_DB_2.
-  const submit = await submitDb(dbConfig(CUSTOMER_DB_1, REAL_PASSWORD) as unknown as Record<string, unknown>);
+  const rejectTarget = dbConfig(CUSTOMER_DB_1, REAL_PASSWORD);
+  const submit = await submitDb({ ...rejectTarget, configFingerprint: await dbFp(rejectTarget) } as unknown as Record<string, unknown>);
   assert.equal(submit.status, 201);
   const reqId = (await submit.json()).request.id;
 
@@ -412,7 +481,7 @@ test('INFRA-09: org admin can cancel a pending request, then resubmit', async ()
   // dbName CUSTOMER_DB_1 differs from the active CONFIG_B; reachable so the
   // INFRA-10 approval can truly activate it.
   const target = dbConfig(CUSTOMER_DB_1, REAL_PASSWORD);
-  const submit = await submitDb(target as unknown as Record<string, unknown>);
+  const submit = await submitDb({ ...target, configFingerprint: await dbFp(target) } as unknown as Record<string, unknown>);
   assert.equal(submit.status, 201);
   const reqId = (await submit.json()).request.id;
 
@@ -425,7 +494,7 @@ test('INFRA-09: org admin can cancel a pending request, then resubmit', async ()
   assert.equal(row?.cancelledAt !== null, true);
 
   // Resubmit is now allowed.
-  const resubmit = await submitDb(target as unknown as Record<string, unknown>);
+  const resubmit = await submitDb({ ...target, configFingerprint: await dbFp(target) } as unknown as Record<string, unknown>);
   assert.equal(resubmit.status, 201);
 });
 
@@ -510,13 +579,24 @@ test('INFRA-13: database test endpoint returns a configFingerprint on success', 
 // ─── INFRA-14: submit blocks when fingerprint is missing or wrong ────────────
 
 test('INFRA-14: submit rejects when configFingerprint is missing (no test performed)', async () => {
-  // Submit a config that was NOT tested (no fingerprint).
+  // (Hardening 1) Submit a config that was NOT tested (no fingerprint) for an
+  // org that has NO pending test evidence. The enable path REQUIRES a
+  // fingerprint — deterministic 422, and no request may be created for an
+  // untested configuration.
+  //
+  // NB: the RC-1 fix legitimately binds a fresh server-side PENDING test when
+  // the client cannot supply the fingerprint (Test → reload → Submit — see
+  // TE-02), so this scenario needs its OWN fresh org. Previously it reused the
+  // shared org whose CONFIG_B had just been tested by INFRA-13.
+  const { orgId, token } = await freshOrg('infra-14-no-fp');
+  const beforeCount = await db.infrastructureChangeRequest.count({ where: { organizationId: orgId, kind: 'DATABASE' } });
   const untestedConfig = dbConfig(CUSTOMER_DB_2, REAL_PASSWORD);
-  const res = await submitDb({ ...untestedConfig, dbPassword: REAL_PASSWORD } as unknown as Record<string, unknown>);
-  // Should succeed because the backend treats missing fingerprint as "legacy"
-  // (no gate enforced when fingerprint is absent — backward compatible).
-  // This verifies the endpoint still works without the gate.
-  assert.ok(res.status === 200 || res.status === 201 || res.status === 409 || res.status === 422);
+  const res = await submitDbAs(token, orgId, { ...untestedConfig, dbPassword: REAL_PASSWORD } as unknown as Record<string, unknown>);
+  assert.equal(res.status, 422);
+  const body = await res.json();
+  assert.match(body.error, /test the destination database connection first/i);
+  const afterCount = await db.infrastructureChangeRequest.count({ where: { organizationId: orgId, kind: 'DATABASE' } });
+  assert.equal(afterCount, beforeCount, 'no request may be created without a configFingerprint');
 });
 
 test('INFRA-14b: submit rejects when configFingerprint does not match the config', async () => {
@@ -599,4 +679,417 @@ test('INFRA-16: submitting config B with config A fingerprint is rejected', asyn
     configFingerprint: fingerprintA,
   } as unknown as Record<string, unknown>);
   assert.equal(res.status, 422, 'must reject when fingerprint does not match the submitted config');
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Hardening 1 — client configFingerprint REQUIRED at submission (enable path)
+// ═══════════════════════════════════════════════════════════════════════════
+
+test('DB-H1: enable submission WITHOUT configFingerprint is rejected 422, no request created', async () => {
+  const { orgId, token } = await freshOrg('infra-h1-no-fp');
+  const cfg = dbConfig(CUSTOMER_DB_2, REAL_PASSWORD);
+  const res = await submitDbAs(token, orgId, cfg as unknown as Record<string, unknown>);
+  assert.equal(res.status, 422);
+  const body = await res.json();
+  assert.match(body.error, /test the destination database connection first/i);
+  const stored = await db.infrastructureChangeRequest.findFirst({ where: { organizationId: orgId, kind: 'DATABASE' } });
+  assert.equal(stored, null, 'request must NOT be created');
+});
+
+test('DB-H2: enable submission with a TAMPERED fingerprint is rejected 422, no request created', async () => {
+  const { orgId, token } = await freshOrg('infra-h2-tampered-fp');
+  const cfg = dbConfig(CUSTOMER_DB_2, REAL_PASSWORD);
+  const res = await submitDbAs(token, orgId, { ...cfg, configFingerprint: 'deadbeefdeadbeef' } as unknown as Record<string, unknown>);
+  assert.equal(res.status, 422);
+  const body = await res.json();
+  assert.match(body.error, /changed since the last connection test|test the connection again/i);
+  const stored = await db.infrastructureChangeRequest.findFirst({ where: { organizationId: orgId, kind: 'DATABASE' } });
+  assert.equal(stored, null, 'request must NOT be created');
+});
+
+test('DB-H3: correct fingerprint + live DB probe succeeds → request created', async () => {
+  const { orgId, token } = await freshOrg('infra-h3-valid');
+  const cfg = dbConfig(CUSTOMER_DB_2, REAL_PASSWORD);
+  const res = await submitDbAs(token, orgId, { ...cfg, configFingerprint: await dbFp(cfg) } as unknown as Record<string, unknown>);
+  assert.equal(res.status, 201);
+  const body = await res.json();
+  assert.equal(body.request.status, 'submitted');
+  assert.equal(body.request.config.name, CUSTOMER_DB_2);
+  assert.equal(body.request.lastTestStatus, 'success', 'request is born with fresh probe evidence');
+  // The stored fingerprint is the server-recomputed one (matches the client's).
+  const storedRow = await db.infrastructureChangeRequest.findUnique({ where: { id: body.request.id } });
+  assert.equal(storedRow?.lastTestConfigFingerprint, await dbFp(cfg));
+});
+
+test('DB-H4: correct fingerprint + live DB probe FAILS → 422, no request created', async () => {
+  const { orgId, token } = await freshOrg('infra-h4-probe-fail');
+  const cfg = dbConfig(CUSTOMER_DB_1, REAL_PASSWORD, 1); // port 1: unreachable
+  const res = await submitDbAs(token, orgId, { ...cfg, configFingerprint: await dbFp(cfg) } as unknown as Record<string, unknown>);
+  assert.equal(res.status, 422);
+  const body = await res.json();
+  assert.match(body.error, /connection test .* failed/i);
+  const stored = await db.infrastructureChangeRequest.findFirst({ where: { organizationId: orgId, kind: 'DATABASE' } });
+  assert.equal(stored, null, 'request must NOT be created for a failing destination');
+});
+
+test('DB-H5: DISABLE request needs no destination test/fingerprint (existing behavior preserved)', async () => {
+  const { orgId, token } = await freshOrg('infra-h5-disable');
+  const res = await submitDbAs(token, orgId, { useOwnDb: false, dbHost: '', dbName: '', dbUser: '' });
+  assert.equal(res.status, 201);
+  const body = await res.json();
+  assert.equal(body.request.kind, 'DATABASE');
+  assert.equal(body.request.status, 'submitted');
+  assert.equal(body.request.config.useOwnDb, false);
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// RC-1 — Test Connection BEFORE submit: org-scoped PENDING evidence binding
+// ═══════════════════════════════════════════════════════════════════════════
+// The transfer gate needs fingerprint-bound, fresh evidence on the REQUEST. A
+// test that runs BEFORE the request exists used to be discarded (no open
+// request → nothing persisted), leaving the request untested and blocked from
+// migration. These prove the pre-submit test is persisted org-scoped and bound
+// to the request it authorizes — without ever trusting the client, and without
+// bypassing the live submit-time probe or the migration gate.
+
+test('TE-01: a successful pre-submit Test persists org-scoped pending evidence (no request created)', async () => {
+  const { orgId, token } = await freshOrg('infra-te1-pending');
+  const cfg = dbConfig(CUSTOMER_DB_2, REAL_PASSWORD);
+  const res = await testDbAs(token, orgId, { ...cfg, dbPassword: REAL_PASSWORD });
+  assert.equal(res.status, 200);
+  assert.equal((await res.json()).status, 'success');
+
+  const pending = await db.infrastructurePendingTest.findUnique({
+    where: { organizationId_kind: { organizationId: orgId, kind: 'DATABASE' } },
+  });
+  assert.ok(pending, 'pending evidence must be recorded even with no open request');
+  assert.equal(pending?.lastTestStatus, 'success');
+  assert.equal(pending?.lastTestConfigFingerprint, await dbFp(cfg));
+  assert.ok(pending?.lastTestedAt, 'pending evidence carries the test timestamp');
+  assert.equal(
+    await db.infrastructureChangeRequest.count({ where: { organizationId: orgId, kind: 'DATABASE' } }),
+    0,
+    'a Test never creates a change request'
+  );
+});
+
+test('TE-02: submit WITHOUT the client fingerprint binds the fresh matching pending test', async () => {
+  const { orgId, token } = await freshOrg('infra-te2-bind');
+  const cfg = dbConfig(CUSTOMER_DB_2, REAL_PASSWORD);
+  const testRes = await testDbAs(token, orgId, { ...cfg, dbPassword: REAL_PASSWORD });
+  assert.equal(testRes.status, 200);
+  const tested = await testRes.json();
+
+  const pending = await db.infrastructurePendingTest.findUnique({
+    where: { organizationId_kind: { organizationId: orgId, kind: 'DATABASE' } },
+  });
+  assert.ok(pending?.lastTestedAt);
+
+  // Submit the SAME config with NO configFingerprint — the classic
+  // Test → (page reload) → Submit sequence.
+  const res = await submitDbAs(token, orgId, { ...cfg, dbPassword: REAL_PASSWORD } as unknown as Record<string, unknown>);
+  assert.equal(res.status, 201);
+  const body = await res.json();
+  assert.equal(body.request.lastTestStatus, 'success', 'request is born with the bound successful evidence');
+
+  const stored = await db.infrastructureChangeRequest.findUnique({ where: { id: body.request.id } });
+  assert.equal(stored?.lastTestStatus, 'success');
+  assert.equal(stored?.lastTestConfigFingerprint, tested.configFingerprint);
+  assert.equal(stored?.lastTestConfigFingerprint, await dbFp(cfg));
+  assert.equal(
+    new Date(stored!.lastTestedAt!).getTime(),
+    new Date(pending!.lastTestedAt!).getTime(),
+    'the bound evidence keeps the timestamp of the test that was actually run'
+  );
+  // Submit never activates; the active settings stay untouched.
+  const settings = await db.organizationSettings.findUnique({ where: { organizationId: orgId } });
+  assert.notEqual(settings?.useOwnDb, true, 'submit must not switch the active infrastructure');
+});
+
+test('TE-03: a changed config (no matching pending test) is rejected 422', async () => {
+  const { orgId, token } = await freshOrg('infra-te3-changed');
+  const tested = dbConfig(CUSTOMER_DB_2, REAL_PASSWORD);
+  await testDbAs(token, orgId, { ...tested, dbPassword: REAL_PASSWORD });
+
+  // Submit a DIFFERENT destination (customer DB 1) without a fingerprint.
+  const other = dbConfig(CUSTOMER_DB_1, REAL_PASSWORD);
+  const res = await submitDbAs(token, orgId, { ...other, dbPassword: REAL_PASSWORD });
+  assert.equal(res.status, 422);
+  assert.match((await res.json()).error, /test the destination database connection first/i);
+  assert.equal(await db.infrastructureChangeRequest.count({ where: { organizationId: orgId, kind: 'DATABASE' } }), 0);
+});
+
+test('TE-04: stale pending evidence (older than the freshness window) is not bindable', async () => {
+  const { orgId, token } = await freshOrg('infra-te4-stale');
+  const cfg = dbConfig(CUSTOMER_DB_2, REAL_PASSWORD);
+  await testDbAs(token, orgId, { ...cfg, dbPassword: REAL_PASSWORD });
+  await db.infrastructurePendingTest.update({
+    where: { organizationId_kind: { organizationId: orgId, kind: 'DATABASE' } },
+    data: { lastTestedAt: new Date(Date.now() - 8 * 24 * 60 * 60 * 1000) },
+  });
+  const res = await submitDbAs(token, orgId, { ...cfg, dbPassword: REAL_PASSWORD });
+  assert.equal(res.status, 422);
+  assert.match((await res.json()).error, /test the destination database connection first/i);
+});
+
+test('TE-05: a FAILED test never becomes bindable evidence', async () => {
+  const { orgId, token } = await freshOrg('infra-te5-failed');
+  const cfg = dbConfig(CUSTOMER_DB_2, REAL_PASSWORD);
+  // Reachable host, wrong password → the probe fails but the fingerprint is
+  // still computed for the exact config the admin entered.
+  const testRes = await testDbAs(token, orgId, { ...cfg, dbPassword: 'definitely-wrong-password' });
+  assert.equal(testRes.status, 200);
+  assert.equal((await testRes.json()).status, 'failed');
+  const pending = await db.infrastructurePendingTest.findUnique({
+    where: { organizationId_kind: { organizationId: orgId, kind: 'DATABASE' } },
+  });
+  assert.equal(pending?.lastTestStatus, 'failed');
+
+  // The correct config, submitted without a fingerprint, must NOT be authorized.
+  const res = await submitDbAs(token, orgId, { ...cfg, dbPassword: REAL_PASSWORD });
+  assert.equal(res.status, 422);
+  assert.match((await res.json()).error, /test the destination database connection first/i);
+});
+
+test('TE-06: pending evidence is ORG-SCOPED — another org posting the same config is rejected', async () => {
+  const a = await freshOrg('infra-te6-org-a');
+  const b = await freshOrg('infra-te6-org-b');
+  const cfg = dbConfig(CUSTOMER_DB_2, REAL_PASSWORD);
+  await testDbAs(a.token, a.orgId, { ...cfg, dbPassword: REAL_PASSWORD });
+  const res = await submitDbAs(b.token, b.orgId, { ...cfg, dbPassword: REAL_PASSWORD });
+  assert.equal(res.status, 422, "org B must not bind org A's pending test");
+  assert.match((await res.json()).error, /test the destination database connection first/i);
+});
+
+test('TE-07: an explicit mismatching client fingerprint is never overridden by pending evidence', async () => {
+  const { orgId, token } = await freshOrg('infra-te7-mismatch');
+  const tested = dbConfig(CUSTOMER_DB_2, REAL_PASSWORD);
+  await testDbAs(token, orgId, { ...tested, dbPassword: REAL_PASSWORD }); // pending for CONFIG_B
+  const other = dbConfig(CUSTOMER_DB_1, REAL_PASSWORD);
+  const res = await submitDbAs(token, orgId, {
+    ...other,
+    dbPassword: REAL_PASSWORD,
+    configFingerprint: await dbFp(tested),
+  });
+  assert.equal(res.status, 422);
+  assert.match((await res.json()).error, /changed since the last connection test|test the connection again/i);
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Hardening 1 — Storage adoption submissions (mock Supabase on loopback)
+// ═══════════════════════════════════════════════════════════════════════════
+
+/** In-process mock Supabase Storage: bucket list + scratch write/verify/delete. */
+async function startMockSupabase(mode: 'ok' | 'auth403'): Promise<{ url: string; close: () => Promise<void> }> {
+  let lastScratch = '';
+  const server: Server = createServer((req, res) => {
+    const u = new URL(req.url ?? '/', 'http://localhost');
+    if (mode === 'auth403') {
+      res.statusCode = 403;
+      res.setHeader('content-type', 'application/json');
+      res.end(JSON.stringify({ statusCode: '403', error: 'Unauthorized', message: 'Invalid Compact JWS', code: 'AccessDenied' }));
+      return;
+    }
+    if (u.pathname === '/storage/v1/bucket' && req.method === 'GET') {
+      res.statusCode = 200;
+      res.setHeader('content-type', 'application/json');
+      res.end(JSON.stringify([{ id: 'screenshots' }, { id: 'avatars' }]));
+      return;
+    }
+    if (u.pathname.startsWith('/storage/v1/object/screenshots/')) {
+      if (req.method === 'POST') {
+        const chunks: Buffer[] = [];
+        req.on('data', (c) => chunks.push(c as Buffer));
+        req.on('end', () => {
+          lastScratch = Buffer.concat(chunks).toString('utf8');
+          res.statusCode = 200;
+          res.end('{}');
+        });
+        return;
+      }
+      if (req.method === 'GET') {
+        res.statusCode = 200;
+        res.setHeader('content-type', 'text/plain;charset=utf-8');
+        res.end(lastScratch);
+        return;
+      }
+      res.statusCode = 200;
+      res.end('{}');
+      return;
+    }
+    res.statusCode = 404;
+    res.end('{}');
+  });
+  await new Promise<void>((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', () => resolve());
+  });
+  const addr = server.address();
+  const port = typeof addr === 'object' && addr ? addr.port : 0;
+  return { url: `http://127.0.0.1:${port}`, close: () => new Promise((resolve) => server.close(() => resolve())) };
+}
+
+test('STORAGE-H1: storage adoption WITHOUT configFingerprint is rejected 422, no request created', async () => {
+  const { orgId, token } = await freshOrg('infra-sh1-no-fp');
+  const res = await submitStorageAs(token, orgId, { storageDriver: 'supabase', storageUrl: 'https://sh1.supabase.co', storageKey: 'sb_secret_h1key' });
+  assert.equal(res.status, 422);
+  const body = await res.json();
+  assert.match(body.error, /test the destination storage connection first/i);
+  const stored = await db.infrastructureChangeRequest.findFirst({ where: { organizationId: orgId, kind: 'STORAGE' } });
+  assert.equal(stored, null, 'request must NOT be created');
+});
+
+test('STORAGE-H2: storage adoption with a TAMPERED fingerprint is rejected 422, no request created', async () => {
+  const { orgId, token } = await freshOrg('infra-sh2-tampered-fp');
+  const res = await submitStorageAs(token, orgId, { storageDriver: 'supabase', storageUrl: 'https://sh2.supabase.co', storageKey: 'sb_secret_h2key', configFingerprint: 'deadbeefdeadbeef' });
+  assert.equal(res.status, 422);
+  const body = await res.json();
+  assert.match(body.error, /changed since the last connection test|test the connection again/i);
+  const stored = await db.infrastructureChangeRequest.findFirst({ where: { organizationId: orgId, kind: 'STORAGE' } });
+  assert.equal(stored, null, 'request must NOT be created');
+});
+
+test('STORAGE-H3: correct fingerprint + scratch probe succeeds → request created', async () => {
+  const mock = await startMockSupabase('ok');
+  try {
+    const { orgId, token } = await freshOrg('infra-sh3-valid');
+    const res = await submitStorageAs(token, orgId, { storageDriver: 'supabase', storageUrl: mock.url, storageKey: 'sb_secret_h3key', configFingerprint: await storageFp(mock.url) });
+    assert.equal(res.status, 201);
+    const body = await res.json();
+    assert.equal(body.request.status, 'submitted');
+    assert.equal(body.request.config.driver, 'supabase');
+    assert.equal(body.request.lastTestStatus, 'success');
+    // The secret key must never appear anywhere in the response.
+    assert.ok(!JSON.stringify(body).includes('sb_secret_h3key'));
+  } finally {
+    await mock.close();
+  }
+});
+
+test('STORAGE-H4: correct fingerprint + storage probe FAILS → 422, no request created', async () => {
+  const mock = await startMockSupabase('auth403');
+  try {
+    const { orgId, token } = await freshOrg('infra-sh4-probe-fail');
+    const res = await submitStorageAs(token, orgId, { storageDriver: 'supabase', storageUrl: mock.url, storageKey: 'sb_secret_h4key', configFingerprint: await storageFp(mock.url) });
+    assert.equal(res.status, 422);
+    const body = await res.json();
+    assert.match(body.error, /connection test .* failed/i);
+    // The raw auth-failure shape must not leak into the API response.
+    assert.ok(!JSON.stringify(body).includes('sb_secret_h4key'));
+    const stored = await db.infrastructureChangeRequest.findFirst({ where: { organizationId: orgId, kind: 'STORAGE' } });
+    assert.equal(stored, null, 'request must NOT be created for a failing destination');
+  } finally {
+    await mock.close();
+  }
+});
+
+test('STORAGE-H5: return-to-LOCAL request needs no destination test/fingerprint (existing behavior preserved)', async () => {
+  const { orgId, token } = await freshOrg('infra-sh5-local');
+  const res = await submitStorageAs(token, orgId, { storageDriver: 'local' });
+  assert.equal(res.status, 201);
+  const body = await res.json();
+  assert.equal(body.request.kind, 'STORAGE');
+  assert.equal(body.request.status, 'submitted');
+  assert.equal(body.request.config.driver, 'local');
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Hardening 2 — atomic supersede + create inside submitChangeRequest
+// ═══════════════════════════════════════════════════════════════════════════
+
+test('TXN-01: failed request creation ROLLS BACK the supersede (old request stays open)', async () => {
+  const { orgId } = await freshOrg('infra-txn-rollback');
+  const { submitChangeRequest } = await import('../src/lib/infrastructure');
+  const dbModule = await import('../src/lib/db');
+
+  // First submission succeeds → open request #1.
+  const first = await submitChangeRequest({
+    organizationId: orgId,
+    kind: 'DATABASE',
+    actor: { id: 'txn-actor', email: 'txn@infra.test' },
+    configJson: JSON.stringify({ useOwnDb: true, host: 'h1', port: 5432, name: 'n1', user: 'u1', ssl: false }),
+  });
+  assert.equal(first.superseded, 0);
+  assert.equal(first.request.requestNo, 1);
+
+  // Second submission: force the CREATE inside the transaction to throw AFTER
+  // the supersede has run, by wrapping db.$transaction so the tx client's
+  // infrastructureChangeRequest.create always rejects.
+  const realDb = dbModule.db as unknown as { $transaction: (fn: (tx: unknown) => Promise<unknown>) => Promise<unknown> };
+  const originalTransaction = realDb.$transaction.bind(realDb);
+  const boom = new Error('simulated create failure');
+  (realDb as unknown as Record<string, unknown>).$transaction = async (fn: (tx: unknown) => Promise<unknown>) =>
+    originalTransaction(async (prismaTx) => {
+      const tx = prismaTx as { infrastructureChangeRequest: Record<string, unknown> };
+      const failingTx = new Proxy(tx, {
+        get(target, prop) {
+          if (prop !== 'infrastructureChangeRequest') {
+            const v = Reflect.get(target, prop);
+            return typeof v === 'function' ? (v as (...a: unknown[]) => unknown).bind(target) : v;
+          }
+          const delegate = target.infrastructureChangeRequest;
+          return new Proxy(delegate, {
+            get(t2, p2) {
+              if (p2 === 'create') return async () => { throw boom; };
+              const v2 = Reflect.get(t2, p2);
+              return typeof v2 === 'function' ? (v2 as (...a: unknown[]) => unknown).bind(t2) : v2;
+            },
+          });
+        },
+      });
+      return fn(failingTx);
+    });
+
+  try {
+    await assert.rejects(
+      submitChangeRequest({
+        organizationId: orgId,
+        kind: 'DATABASE',
+        actor: { id: 'txn-actor', email: 'txn@infra.test' },
+        configJson: JSON.stringify({ useOwnDb: true, host: 'h2', port: 5432, name: 'n2', user: 'u2', ssl: false }),
+      }),
+      (err: Error) => err.message === 'simulated create failure',
+      'submitChangeRequest must propagate the create failure',
+    );
+  } finally {
+    (realDb as unknown as Record<string, unknown>).$transaction = originalTransaction;
+  }
+
+  // ROLLBACK PROVEN: the old request is still open (not superseded) and no
+  // orphan/new request exists.
+  const oldRow = await db.infrastructureChangeRequest.findUnique({ where: { id: first.request.id } });
+  assert.equal(oldRow?.status, 'submitted', 'old request must NOT be left superseded');
+  assert.equal(oldRow?.supersededByRequestNo, null);
+  assert.equal(oldRow?.supersededAt, null);
+  const total = await db.infrastructureChangeRequest.count({ where: { organizationId: orgId, kind: 'DATABASE' } });
+  assert.equal(total, 1, 'no new request row may survive a rolled-back transaction');
+});
+
+test('TXN-02: successful replacement supersedes the old request and creates the new one', async () => {
+  const { orgId } = await freshOrg('infra-txn-success');
+  const { submitChangeRequest } = await import('../src/lib/infrastructure');
+
+  const first = await submitChangeRequest({
+    organizationId: orgId,
+    kind: 'DATABASE',
+    actor: { id: 'txn-actor', email: 'txn@infra.test' },
+    configJson: JSON.stringify({ useOwnDb: true, host: 'h1', port: 5432, name: 'n1', user: 'u1', ssl: false }),
+  });
+  const second = await submitChangeRequest({
+    organizationId: orgId,
+    kind: 'DATABASE',
+    actor: { id: 'txn-actor', email: 'txn@infra.test' },
+    configJson: JSON.stringify({ useOwnDb: true, host: 'h2', port: 5432, name: 'n2', user: 'u2', ssl: false }),
+  });
+
+  assert.equal(second.superseded, 1);
+  assert.equal(second.request.requestNo, 2);
+
+  const oldRow = await db.infrastructureChangeRequest.findUnique({ where: { id: first.request.id } });
+  assert.equal(oldRow?.status, 'superseded');
+  assert.equal(oldRow?.supersededByRequestNo, 2);
+  assert.ok(oldRow?.supersededAt);
+
+  const newRow = await db.infrastructureChangeRequest.findUnique({ where: { id: second.request.id } });
+  assert.equal(newRow?.status, 'submitted');
 });

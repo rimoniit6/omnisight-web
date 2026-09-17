@@ -1,5 +1,5 @@
 // OmniSight Database Schema
-// Self-hosted, AI-powered workforce intelligence platform
+// AI-powered workforce intelligence platform
 // (formerly branded as WorkLensAI — schema identifiers are unchanged)
 
 generator client {
@@ -26,10 +26,10 @@ enum BillingPeriod {
 }
 
 enum SubscriptionStatus {
-  PENDING   // Payment pending verification
-  ACTIVE    // Fully active
-  PAUSED    // Temporarily paused by Super Admin
-  EXPIRED   // Passed endDate
+  PENDING // Payment pending verification
+  ACTIVE // Fully active
+  PAUSED // Temporarily paused by Super Admin
+  EXPIRED // Passed endDate
   CANCELLED // Manually cancelled by admin/user
 }
 
@@ -64,28 +64,28 @@ enum DeploymentMode {
 // ==================== Plan ====================
 
 model Plan {
-  id            String        @id @default(cuid())
-  name          String        @unique // "Free", "Pro", "Business" (V1 catalog)
+  id            String   @id @default(cuid())
+  name          String   @unique // "Free", "Pro", "Business" (V1 catalog)
   description   String?
-  priceMonthly  Float         @default(0.0)
+  priceMonthly  Float    @default(0.0)
   priceYearly   Float?
-  currency      String        @default("BDT")
+  currency      String   @default("BDT")
   // 0 or -1 = Unlimited (self-hosted)
-  maxDevices    Int           @default(5)
+  maxDevices    Int      @default(5)
   // 0 = Unlimited, 365 = 1 year
-  retentionDays Int           @default(90)
+  retentionDays Int      @default(90)
   // NOTE: `isSelfHosted` was REMOVED by migration
   // 20260912120000_remove_license_key_self_hosted — Self-Hosted is not a V1
   // service model (V1 service models are MANAGED and CUSTOMER_DB).
   // JSON array: ["screenshots", "ai_insights", "usb_monitoring", "webcam"]
-  features      Json          @default("[]")
-  isActive      Boolean       @default(true)
-  createdAt     DateTime      @default(now())
-  updatedAt     DateTime      @updatedAt
+  features      Json     @default("[]")
+  isActive      Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
 
-  subscriptions Subscription[]
-  pricings        PlanPricing[]
-  offers          Offer[]        @relation("OfferPlanScope")
+  subscriptions    Subscription[]
+  pricings         PlanPricing[]
+  offers           Offer[]           @relation("OfferPlanScope")
   purchaseRequests PurchaseRequest[]
 }
 
@@ -107,21 +107,21 @@ model Plan {
 //   - CUSTOMER_DB devices are ALWAYS unlimited — no device cap is derived
 //     from this model, and enforcement must never cap CUSTOMER_DB orgs.
 model PlanPricing {
-  id                   String        @id @default(cuid())
-  planId               String
-  plan                 Plan          @relation(fields: [planId], references: [id], onDelete: Cascade)
-  deploymentMode       DeploymentMode
-  billingPeriod        BillingPeriod
-  basePrice            Float
-  currency             String        @default("BDT")
+  id                    String         @id @default(cuid())
+  planId                String
+  plan                  Plan           @relation(fields: [planId], references: [id], onDelete: Cascade)
+  deploymentMode        DeploymentMode
+  billingPeriod         BillingPeriod
+  basePrice             Float
+  currency              String         @default("BDT")
   // Managed-only device entitlement config (ignored for CUSTOMER_DB):
-  includedDevices      Int           @default(5)
-  additionalDevicePrice Float        @default(0.0)
-  isActive             Boolean       @default(true)
-  createdAt            DateTime      @default(now())
-  updatedAt            DateTime      @updatedAt
+  includedDevices       Int            @default(5)
+  additionalDevicePrice Float          @default(0.0)
+  isActive              Boolean        @default(true)
+  createdAt             DateTime       @default(now())
+  updatedAt             DateTime       @updatedAt
 
-  offers               Offer[]
+  offers Offer[]
 
   @@unique([planId, deploymentMode, billingPeriod])
   @@index([planId, isActive])
@@ -145,7 +145,7 @@ model Offer {
   // Free offer / trial: when true the final price resolves to 0 regardless
   // of the discount math (resolver clamps at 0).
   isFree         Boolean         @default(false)
-  freeTrialDays  Int?            // optional trial length metadata (informational)
+  freeTrialDays  Int? // optional trial length metadata (informational)
   currency       String          @default("BDT")
   startsAt       DateTime?
   endsAt         DateTime?
@@ -176,19 +176,19 @@ model Offer {
 //            (any open state →) REJECTED / CANCELLED
 // Activation goes through the EXISTING subscription lifecycle (no fork).
 model PurchaseRequest {
-  id             String   @id @default(cuid())
-  requestNumber  String   @unique // PR-YYYY-NNNN, sequential like invoices
+  id            String @id @default(cuid())
+  requestNumber String @unique // PR-YYYY-NNNN, sequential like invoices
 
   // Customer info (public form — no login required).
-  companyName    String
-  contactName    String
-  contactEmail   String
-  contactPhone   String?
-  notes          String?
+  companyName  String
+  contactName  String
+  contactEmail String
+  contactPhone String?
+  notes        String?
 
   // Commercial selection.
   planId         String
-  plan           Plan     @relation(fields: [planId], references: [id])
+  plan           Plan           @relation(fields: [planId], references: [id])
   deploymentMode DeploymentMode
   billingPeriod  BillingPeriod
   // Managed: chosen device quantity. CUSTOMER_DB: null (unlimited).
@@ -196,12 +196,12 @@ model PurchaseRequest {
 
   // Authoritative server-side price snapshot.
   basePrice      Float
-  deviceCharge   Float    @default(0.0)
-  discountAmount Float    @default(0.0)
+  deviceCharge   Float   @default(0.0)
+  discountAmount Float   @default(0.0)
   finalPrice     Float
-  currency       String   @default("BDT")
+  currency       String  @default("BDT")
   offerId        String?
-  offer          Offer?   @relation(fields: [offerId], references: [id], onDelete: SetNull)
+  offer          Offer?  @relation(fields: [offerId], references: [id], onDelete: SetNull)
   offerName      String?
   priceSnapshot  Json
 
@@ -209,31 +209,31 @@ model PurchaseRequest {
   // display the produced organization + subscription without extra queries.
   activatedSubscription Subscription? @relation("PurchaseRequestActivation", fields: [activatedSubscriptionId], references: [id], onDelete: SetNull)
 
-  status         String   @default("SUBMITTED") // PurchaseRequestStatus values
-  statusHistory  Json? // [{ status, at, by, note }]
+  status        String @default("SUBMITTED") // PurchaseRequestStatus values
+  statusHistory Json? // [{ status, at, by, note }]
 
   // Review / payment / activation trail.
-  reviewedById    String?
-  reviewedAt      DateTime?
-  reviewNote      String?
-  paymentVerifiedById String?
-  paymentVerifiedAt   DateTime?
-  paymentReference   String?
+  reviewedById            String?
+  reviewedAt              DateTime?
+  reviewNote              String?
+  paymentVerifiedById     String?
+  paymentVerifiedAt       DateTime?
+  paymentReference        String?
   // Full manual payment record (§10) — captured at payment verification.
   // Complements the price snapshot (requested price stays immutable); the
   // amount received is what was actually paid.
-  paymentMethod      String?
-  paymentAmount      Float?
-  paymentDate        DateTime?
-  paymentNote        String?
-  activatedSubscriptionId String? @unique
-  activatedAt       DateTime?
-  rejectedAt        DateTime?
-  rejectionReason   String?
-  cancelledAt       DateTime?
+  paymentMethod           String?
+  paymentAmount           Float?
+  paymentDate             DateTime?
+  paymentNote             String?
+  activatedSubscriptionId String?   @unique
+  activatedAt             DateTime?
+  rejectedAt              DateTime?
+  rejectionReason         String?
+  cancelledAt             DateTime?
 
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@index([status, createdAt])
   @@index([contactEmail])
@@ -253,16 +253,16 @@ model PurchaseRequest {
 // ==================== Subscription ====================
 
 model Subscription {
-  id              String             @id @default(cuid())
-  organizationId  String
-  planId          String
-  status          SubscriptionStatus @default(PENDING)
-  startDate       DateTime           @default(now())
-  endDate         DateTime?
-  trialEndDate    DateTime?
-  notes           String?
-  createdAt       DateTime           @default(now())
-  updatedAt       DateTime @updatedAt
+  id             String             @id @default(cuid())
+  organizationId String
+  planId         String
+  status         SubscriptionStatus @default(PENDING)
+  startDate      DateTime           @default(now())
+  endDate        DateTime?
+  trialEndDate   DateTime?
+  notes          String?
+  createdAt      DateTime           @default(now())
+  updatedAt      DateTime           @updatedAt
 
   // ── V1 commercial snapshot (Phase: Pricing/PurchaseRequest) ───────────────
   // Retains the commercial terms active at purchase time so later pricing
@@ -273,18 +273,18 @@ model Subscription {
   //   deploymentMode — mode snapshot at purchase (MANAGED | CUSTOMER_DB)
   //   priceSnapshot  — full resolver breakdown JSON (base, devices, offer,
   //                    discount, final price, currency)
-  billingPeriod   BillingPeriod?
-  deviceQuantity  Int?
+  billingPeriod          BillingPeriod?
+  deviceQuantity         Int?
   deploymentModeSnapshot DeploymentMode?
-  priceSnapshot   Json?
+  priceSnapshot          Json?
 
   // Two relations to Organization (must be explicitly named):
   //  - "SubscriptionHistory": one-to-many billing/contract history
   //  - "CurrentOrgSubscription": the denormalized one-to-one pointer on
   //    Organization.subscriptionId to the CURRENT subscription.
-  organization              Organization   @relation("SubscriptionHistory", fields: [organizationId], references: [id], onDelete: Cascade)
-  currentForOrganization    Organization?  @relation("CurrentOrgSubscription")
-  plan                      Plan            @relation(fields: [planId], references: [id])
+  organization              Organization     @relation("SubscriptionHistory", fields: [organizationId], references: [id], onDelete: Cascade)
+  currentForOrganization    Organization?    @relation("CurrentOrgSubscription")
+  plan                      Plan             @relation(fields: [planId], references: [id])
   invoices                  Invoice[]
   // Reverse of PurchaseRequest.activatedSubscriptionId — one request can
   // activate at most one subscription (unique pointer), preserved for the
@@ -310,7 +310,7 @@ model Invoice {
   status          InvoiceStatus @default(PENDING)
   dueDate         DateTime
   paidAt          DateTime?
-  paymentMethod   String?       // "Bank_Transfer", "bKash", "Nagad", "Rocket"
+  paymentMethod   String? // "Bank_Transfer", "bKash", "Nagad", "Rocket"
   transactionId   String?
   paymentProofUrl String?
   notes           String?
@@ -331,24 +331,24 @@ model Invoice {
 // ==================== Organization ====================
 
 model Organization {
-  id        String   @id @default(cuid())
-  name      String
-  slug      String   @unique
-  logo      String?
-  email     String?
-  phone     String?
-  timezone  String   @default("Asia/Dhaka")
-  language  String   @default("en")
-  currency  String   @default("USD")
-  address   String?
-  status    String   @default("active") // active, paused, archived
+  id                       String         @id @default(cuid())
+  name                     String
+  slug                     String         @unique
+  logo                     String?
+  email                    String?
+  phone                    String?
+  timezone                 String         @default("Asia/Dhaka")
+  language                 String         @default("en")
+  currency                 String         @default("USD")
+  address                  String?
+  status                   String         @default("active") // active, paused, archived
   // NOTE: seat-limit fields (maxSeats/currentSeats) were REMOVED by migration
   // 20260810130000_remove_seat_limit — employee capacity is unlimited.
   // --- SaaS fields ---
-  subscriptionId     String?  @unique
-  trialEndsAt        DateTime?
-  screenshotInterval Int      @default(5) // Minutes between screenshots. 0 = disabled. Range: 0-1440.
-  activeDeviceCount  Int      @default(0)
+  subscriptionId           String?        @unique
+  trialEndsAt              DateTime?
+  screenshotInterval       Int            @default(5) // Minutes between screenshots. 0 = disabled. Range: 0-1440.
+  activeDeviceCount        Int            @default(0)
   // Tracks the last time a data-expiry reminder email was sent for the
   // current retention cycle, so the daily job never spams the same org.
   lastDataExpiryReminderAt DateTime?
@@ -359,66 +359,67 @@ model Organization {
   // pre-existing organizations until an explicit assignment of CUSTOMER_DB.
   // Never infer this from legacy indicators at request time — use
   // getOrganizationDeploymentMode().
-  deploymentMode         DeploymentMode @default(MANAGED)
+  deploymentMode           DeploymentMode @default(MANAGED)
   // When the authoritative mode could not be determined automatically during
   // backfill, the row keeps deploymentMode=MANAGED but is flagged here so a
   // human reviews it instead of silently running under the wrong mode.
-  deploymentModeUnresolved Boolean @default(false)
-  createdAt          DateTime @default(now())
-  updatedAt          DateTime @updatedAt
+  deploymentModeUnresolved Boolean        @default(false)
+  createdAt                DateTime       @default(now())
+  updatedAt                DateTime       @updatedAt
 
   // Relations
-  subscription              Subscription?   @relation("CurrentOrgSubscription", fields: [subscriptionId], references: [id], onDelete: SetNull)
-  subscriptions             Subscription[]   @relation("SubscriptionHistory")
-  employees                 Employee[]
-  departments               Department[]
-  devices                   Device[]
-  users                     AppUser[]
-  memberships               OrganizationMembership[]
-  notifications             Notification[]
-  alerts                    Alert[]
-  auditLogs                 AuditLog[]
-  reports                   Report[]
-  aiInsights                AiInsight[]
-  aiUsage                   AiUsage[]
-  deviceClaims              DeviceClaim[]
-  screenshots               Screenshot[]
-  anomalies                 Anomaly[]
-  consents                  Consent[]
-  consentPolicies           ConsentPolicy[]
-  organizationSettings      OrganizationSetting[]
-  customSettings            OrganizationSettings?
+  subscription                 Subscription?                 @relation("CurrentOrgSubscription", fields: [subscriptionId], references: [id], onDelete: SetNull)
+  subscriptions                Subscription[]                @relation("SubscriptionHistory")
+  employees                    Employee[]
+  departments                  Department[]
+  devices                      Device[]
+  users                        AppUser[]
+  memberships                  OrganizationMembership[]
+  notifications                Notification[]
+  alerts                       Alert[]
+  auditLogs                    AuditLog[]
+  reports                      Report[]
+  aiInsights                   AiInsight[]
+  aiUsage                      AiUsage[]
+  deviceClaims                 DeviceClaim[]
+  screenshots                  Screenshot[]
+  anomalies                    Anomaly[]
+  consents                     Consent[]
+  consentPolicies              ConsentPolicy[]
+  organizationSettings         OrganizationSetting[]
+  customSettings               OrganizationSettings?
   infrastructureChangeRequests InfrastructureChangeRequest[]
   infraMigrations              InfrastructureMigration[]
-  projects                  Project[]
-  projectMembers            ProjectMember[]
-  timeEntries               TimeEntry[]
-  projectTimeSyncs          ProjectTimeSync[]
-  sentimentRecords          SentimentRecord[]
-  keyboardActivities        KeyboardActivity[]
-  locationEvents            LocationEvent[]
-  agentCommands             AgentCommand[]
-  webcamSessions            WebcamSession[]
-  notificationPreferences   NotificationPreference[]
-  userSessions              UserSession[]
-  activeOrgSessions         UserSession[]           @relation("ActiveOrgSession")
-  breakSessions             BreakSession[]
-  audioRecordings           AudioRecording[]
-  audioTranscriptions       AudioTranscription[]
-  agentTokens               AgentToken[]
-  activityBatchReceipts     ActivityBatchReceipt[]
-  categoryRules             CategoryRule[]
-  workDaySummaries          WorkDaySummary[]
-  alertRules                AlertRule[]
-  alertRuleFirings          AlertRuleFiring[]
-  billingInvoices           Invoice[]
-  branding                  OrganizationBranding?
+  pendingInfrastructureTests   InfrastructurePendingTest[]
+  projects                     Project[]
+  projectMembers               ProjectMember[]
+  timeEntries                  TimeEntry[]
+  projectTimeSyncs             ProjectTimeSync[]
+  sentimentRecords             SentimentRecord[]
+  keyboardActivities           KeyboardActivity[]
+  locationEvents               LocationEvent[]
+  agentCommands                AgentCommand[]
+  webcamSessions               WebcamSession[]
+  notificationPreferences      NotificationPreference[]
+  userSessions                 UserSession[]
+  activeOrgSessions            UserSession[]                 @relation("ActiveOrgSession")
+  breakSessions                BreakSession[]
+  audioRecordings              AudioRecording[]
+  audioTranscriptions          AudioTranscription[]
+  agentTokens                  AgentToken[]
+  activityBatchReceipts        ActivityBatchReceipt[]
+  categoryRules                CategoryRule[]
+  workDaySummaries             WorkDaySummary[]
+  alertRules                   AlertRule[]
+  alertRuleFirings             AlertRuleFiring[]
+  billingInvoices              Invoice[]
+  branding                     OrganizationBranding?
   // Phase 1, Step 10 — direct tenant ownership back-relations.
-  activities                Activity[]
-  appListEntries            AppListEntry[]
-  usbEvents                 UsbEvent[]
-  policyViolations          PolicyViolation[]
-  consentLogs               ConsentLog[]
+  activities                   Activity[]
+  appListEntries               AppListEntry[]
+  usbEvents                    UsbEvent[]
+  policyViolations             PolicyViolation[]
+  consentLogs                  ConsentLog[]
 
   @@index([deploymentMode])
   @@index([status])
@@ -733,7 +734,7 @@ model Lead {
   planInterest String   @default("Enterprise") // Free, Pro, Business, Enterprise
   message      String?
   status       String   @default("NEW") // NEW, CONTACTED, CONVERTED, IGNORED
-  source       String?  // "contact_page", "pricing", "email"
+  source       String? // "contact_page", "pricing", "email"
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
@@ -750,8 +751,8 @@ model Lead {
 // in plaintext by any API.
 
 model OrganizationSettings {
-  id             String   @id @default(cuid())
-  organizationId String   @unique
+  id             String       @id @default(cuid())
+  organizationId String       @unique
   organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
 
   // AI Provider
@@ -761,13 +762,13 @@ model OrganizationSettings {
   aiModel    String?
 
   // Analytics Database (optional; independent of the platform cloud DB)
-  useOwnDb  Boolean  @default(false)
-  dbHost    String?
-  dbPort    Int?
-  dbName    String?
-  dbUser    String?
+  useOwnDb   Boolean @default(false)
+  dbHost     String?
+  dbPort     Int?
+  dbName     String?
+  dbUser     String?
   dbPassword String? // encrypted via encryptSecret()
-  dbSsl     Boolean  @default(false)
+  dbSsl      Boolean @default(false)
 
   // Testing status
   aiTestedAt   DateTime?
@@ -779,9 +780,9 @@ model OrganizationSettings {
   // "local" = platform-managed (current default); "supabase" = dedicated
   // customer bucket. storageKey is encrypted via encryptSecret() and is never
   // returned in plaintext by any API.
-  storageDriver String? // "local", "supabase"
-  storageUrl    String? // Supabase project REST/storage URL (never a secret)
-  storageKey     String? // encrypted via encryptSecret()
+  storageDriver     String? // "local", "supabase"
+  storageUrl        String? // Supabase project REST/storage URL (never a secret)
+  storageKey        String? // encrypted via encryptSecret()
   storageTestedAt   DateTime?
   storageTestStatus String? // "success", "failed"
 
@@ -810,25 +811,25 @@ model OrganizationSettings {
 // submitted request are rejected with 409 (submit a new request instead).
 
 model InfrastructureChangeRequest {
-  id             String   @id @default(cuid())
+  id             String       @id @default(cuid())
   organizationId String
   organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   kind           String // "DATABASE" | "STORAGE"
   requestNo      Int // 1-based, monotonic per (organizationId, kind)
-  status         String @default("draft") // draft|submitted|approved|applied|active|rejected|cancelled|superseded
+  status         String       @default("draft") // draft|submitted|approved|applied|active|rejected|cancelled|superseded
 
   // Non-secret config snapshot (JSON string). Contains host/port/name/user/ssl
   // for DATABASE and driver/url/bucket for STORAGE — NEVER the secret itself.
   configJson String
 
   // Secrets — encrypted at rest (encryptSecret()), never returned in plaintext.
-  dbPasswordEncrypted  String?
-  storageKeyEncrypted  String?
+  dbPasswordEncrypted String?
+  storageKeyEncrypted String?
 
   // Connection test result for the PROPOSED config.
-  lastTestStatus  String? // "success", "failed", "not-run"
-  lastTestMessage String?
-  lastTestedAt    DateTime?
+  lastTestStatus            String? // "success", "failed", "not-run"
+  lastTestMessage           String?
+  lastTestedAt              DateTime?
   // Server-computed fingerprint of the EXACT config the last test probed
   // (same hash the test response returns). The transfer gate requires this to
   // match the request snapshot, proving the tested config is the migrated one.
@@ -850,9 +851,9 @@ model InfrastructureChangeRequest {
   rejectedAt      DateTime?
   rejectionReason String?
 
-  cancelledById    String?
-  cancelledByEmail String?
-  cancelledAt      DateTime?
+  cancelledById      String?
+  cancelledByEmail   String?
+  cancelledAt        DateTime?
   cancellationReason String?
 
   supersededByRequestNo Int? // requestNo of the newer request that replaced this one
@@ -876,6 +877,42 @@ model InfrastructureChangeRequest {
   @@index([createdAt])
 }
 
+// ==================== Infrastructure Pending Connection Test ====================
+// Org-scoped "pending test" evidence for a PROPOSED destination configuration
+// that has no open change request yet (the common Test-Connection-BEFORE-submit
+// flow). The connection-test routes write it; the submit routes bind it to the
+// newly created InfrastructureChangeRequest only when the server-recomputed
+// fingerprint matches AND the evidence is still inside the freshness window.
+//
+// This is deliberately SEPARATE from OrganizationSettings.dbTestStatus /
+// storageTestStatus (which describe the ACTIVE configuration and only turn
+// 'success' at cutover) and from the request's own lastTest* evidence (which is
+// authoritative for a request). Nothing here is ever trusted on its own: the
+// submit route still runs the live destination probe, and the migration gate
+// still requires the request's fingerprint-bound evidence.
+//
+// One row per (organization, kind). Only non-secret test metadata is stored —
+// never the password, service-role key, or connection URL.
+model InfrastructurePendingTest {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  kind           String // "DATABASE" | "STORAGE"
+
+  lastTestStatus            String? // "success", "failed"
+  lastTestMessage           String?
+  lastTestedAt              DateTime?
+  // Server-computed fingerprint of the EXACT config probed (same hash the Test
+  // endpoint returns and the request stores). Binding this to a submitted
+  // request proves the pending test belongs to the submitted configuration.
+  lastTestConfigFingerprint String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([organizationId, kind])
+  @@index([organizationId])
+}
 
 // ==================== Infrastructure Data Migration ====================
 // Organization-scoped copy of the FULL org-owned analytics data from the
@@ -901,44 +938,44 @@ model InfrastructureChangeRequest {
 //     began. `cutoverAt` is the deterministic cutover boundary (sets once, at
 //     the atomic routing flip). `activatedAt` is when the switch fully lands.
 model InfrastructureMigration {
-  id             String   @id @default(cuid())
-  requestId      String   @unique // one migration per InfrastructureChangeRequest
+  id             String                      @id @default(cuid())
+  requestId      String                      @unique // one migration per InfrastructureChangeRequest
   request        InfrastructureChangeRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
   organizationId String
-  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  organization   Organization                @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   kind           String // "DATABASE" | "STORAGE" (mirrors the request kind)
 
   // queued|migrating|reconciling|verifying|ready_to_activate|cutover|activated|failed|cancelled
-  status         String   @default("queued")
+  status String @default("queued")
 
   // REAL progress — incremented from actual copied work, never simulated.
-  recordsTotal   Int      @default(0)
-  recordsDone    Int      @default(0)
-  objectsTotal   Int      @default(0)
-  objectsDone    Int      @default(0)
-  bytesTotal     BigInt   @default(0)
-  bytesDone      BigInt   @default(0)
+  recordsTotal  Int     @default(0)
+  recordsDone   Int     @default(0)
+  objectsTotal  Int     @default(0)
+  objectsDone   Int     @default(0)
+  bytesTotal    BigInt  @default(0)
+  bytesDone     BigInt  @default(0)
   // Per-table/object progress snapshot, e.g. {"Employee":{"done":120,"total":120},...}
-  tableProgress  String?
+  tableProgress String?
 
-  currentTable   String?
-  verifiedCount  Int? // destination rows/objects counted during verification
-  errorStage     String? // migrate|verify|storage
-  errorMessage   String? // sanitized, user-safe (never credentials)
-  startedAt      DateTime?
-  verifiedAt     DateTime?
+  currentTable  String?
+  verifiedCount Int? // destination rows/objects counted during verification
+  errorStage    String? // migrate|verify|storage
+  errorMessage  String? // sanitized, user-safe (never credentials)
+  startedAt     DateTime?
+  verifiedAt    DateTime?
   // Deterministic cutover boundary: the database-server timestamp at which the
   // runtime routing flipped to the destination AND the drain of any in-flight
   // platform rows began. Every org-owned row written before this boundary is
   // drained to the destination; every row written after lands directly there.
-  cutoverAt      DateTime?
-  activatedAt    DateTime?
+  cutoverAt     DateTime?
+  activatedAt   DateTime?
   // When the old platform data becomes eligible for cleanup (activatedAt + retention window).
   // Until retiredAt, old data is retained for verification and potential rollback.
-  retiredAt      DateTime?
-  finishedAt     DateTime?
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
+  retiredAt     DateTime?
+  finishedAt    DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
 
   @@index([organizationId, status])
   @@index([status, createdAt])
@@ -1376,23 +1413,23 @@ model AiInsight {
 // ==================== App User (for auth/admin) ====================
 
 model AppUser {
-  id             String    @id @default(cuid())
-  email          String    @unique
-  name           String
-  password       String?
-  role           String    @default("admin") // super_admin, owner, admin, manager, viewer
-  avatar         String?
+  id                 String    @id @default(cuid())
+  email              String    @unique
+  name               String
+  password           String?
+  role               String    @default("admin") // super_admin, owner, admin, manager, viewer
+  avatar             String?
   // DEPRECATED for multi-org: use OrganizationMembership instead.
   // Kept for backward compatibility until all consumers migrate.
-  organizationId String?
-  isActive       Boolean   @default(true)
+  organizationId     String?
+  isActive           Boolean   @default(true)
   // First-login security: set true when an admin provisions this user with a
   // temporary password. Login succeeds but the UI forces a password change
   // before granting access to the rest of the app.
-  mustChangePassword Boolean    @default(false)
-  lastLogin      DateTime?
-  createdAt      DateTime  @default(now())
-  updatedAt      DateTime  @updatedAt
+  mustChangePassword Boolean   @default(false)
+  lastLogin          DateTime?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
 
   // Relations
   organization Organization?            @relation(fields: [organizationId], references: [id], onDelete: SetNull)
@@ -1841,7 +1878,7 @@ model ConsentLog {
   anonymizedAt   DateTime? // set when PII fields are scrubbed after retention period
   createdAt      DateTime  @default(now())
 
-  consent Consent @relation(fields: [consentId], references: [id], onDelete: Restrict)
+  consent      Consent      @relation(fields: [consentId], references: [id], onDelete: Restrict)
   // Org ownership (Phase 1, Step 10 — previously FK-less tenant column).
   // Cascade matches Consent.organization: org erasure removes its audit trail.
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)

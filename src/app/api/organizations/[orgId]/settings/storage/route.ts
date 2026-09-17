@@ -15,6 +15,7 @@ import {
 } from '@/lib/infrastructure';
 import { testStorageConnection, sanitizeProbeErrorForLog } from '@/lib/infra-connect';
 import { buildRequestTestEvidence } from '@/lib/infrastructure-state';
+import { loadPendingTestEvidence, selectBindablePendingEvidence } from '@/lib/infrastructure-pending-test';
 
 // PUT /api/organizations/[orgId]/settings/storage
 //
@@ -46,12 +47,10 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ orgI
   if (!validation.ok) return apiError(validation.error, 422);
   const { config } = validation;
 
-  // Verify the config was tested before allowing submission.
-  // (Phase 2, R-3) The client-sent fingerprint is a fast-path equality hint:
-  // a config-changed-after-test mismatch is still rejected immediately. The
-  // AUTHORITATIVE evidence is re-derived SERVER-SIDE below via a live probe
-  // of the submitted config (bucket + scratch write/verify/delete), so a
-  // client can never assert an untested success.
+  // (Phase 2, R-3) The submitted destination must have passed the server-side
+  // live probe (bucket + scratch write/verify/delete) at submission time, and
+  // (Hardening 1) the request must carry the fingerprint of the exact config
+  // being submitted. UI state is never trusted — the probe is authoritative.
 
   const submittingLocal = config.driver === 'local';
   if (submittingLocal) {
@@ -73,6 +72,32 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ orgI
   const sameAsActive = settings.storageDriver === 'supabase' && (settings.storageUrl ?? null) === config.url;
   if (sameAsActive && settings.storageKey) {
     return apiSuccess({ request: null, unchanged: true, message: 'The org storage is already pointed at this Supabase project — no change request needed' });
+  }
+
+  // (Hardening 1) Supabase adoption requests MUST present the configFingerprint
+  // of the exact destination being submitted — the same value the Test
+  // endpoint returns for this config. Missing/mismatched → 422 BEFORE the
+  // probe; the live probe below remains the authoritative evidence (bucket
+  // existence + scratch write/verify/delete). The local/platform path above
+  // intentionally requires no destination test/fingerprint. The secret key is
+  // never part of the fingerprint.
+  //
+  // (RC-1) A successful Test Connection that ran BEFORE this request existed is
+  // persisted as org-scoped PENDING evidence (see infrastructure-pending-test).
+  // When the client cannot supply the fingerprint (e.g. the page was reloaded
+  // between Test and Submit), that server-side evidence stands in for it — but
+  // only if it is a SUCCESS for THIS exact config and still fresh. The live
+  // probe below still runs and must succeed; nothing here bypasses it.
+  const submittedFingerprint = typeof body.configFingerprint === 'string' ? body.configFingerprint : '';
+  const expectedFingerprint = await configFingerprint(storageConfigFingerprintInput(config));
+  const boundPending = submittedFingerprint
+    ? null
+    : selectBindablePendingEvidence(await loadPendingTestEvidence(orgId, 'STORAGE'), expectedFingerprint);
+  if (!submittedFingerprint && !boundPending) {
+    return apiError('Test the destination storage connection first — the fingerprint from a successful test is required before submitting a transfer request.', 422);
+  }
+  if (submittedFingerprint && submittedFingerprint !== expectedFingerprint) {
+    return apiError('The configuration has changed since the last connection test. Please test the connection again before submitting.', 422);
   }
 
   let effectiveKey: string | undefined;
@@ -110,9 +135,13 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ orgI
     actor: { id: auth.userId, email: auth.email },
     configJson: JSON.stringify({ driver: 'supabase', url: config.url }),
     storageKey: effectiveKey,
-    testStatus: testEvidence.lastTestStatus,
-    testMessage: testEvidence.lastTestMessage,
-    testFingerprint: testEvidence.lastTestConfigFingerprint,
+    // When a bound pending test authorized this submit, carry ITS fingerprint
+    // and timestamp (the evidence that was actually verified); otherwise the
+    // fresh submit-time probe evidence.
+    testStatus: 'success',
+    testMessage: boundPending ? boundPending.lastTestMessage : testEvidence.lastTestMessage,
+    testFingerprint: boundPending ? boundPending.lastTestConfigFingerprint : testEvidence.lastTestConfigFingerprint,
+    testedAt: boundPending?.lastTestedAt ? new Date(boundPending.lastTestedAt) : null,
   });
 
   await audit(userId(auth), auth.email, orgId, request.id, 'supabase', request.requestNo);

@@ -155,7 +155,15 @@ export function validateStorageConfig(body: Record<string, unknown>): { ok: true
     : undefined;
 
   if (driver === 'supabase') {
-    if (!url || !/^https:\/\//i.test(url)) {
+    // TEST-ONLY escape hatch (never set in production), mirroring
+    // OMNISIGHT_ALLOW_PRIVATE_TARGETS in src/lib/ssrf.ts: the integration
+    // suites run an in-process mock Supabase Storage on loopback HTTP so the
+    // submit path can be tested hermetically end-to-end. Production must NOT
+    // set this variable — https:// remains mandatory there. This relaxes ONLY
+    // the URL-scheme validation; the live destination probe (bucket + scratch
+    // write/verify/delete) still runs for real in every environment.
+    const allowInsecureUrlsForTests = process.env.OMNISIGHT_ALLOW_INSECURE_STORAGE_URLS === '1';
+    if (!url || (!/^https:\/\//i.test(url) && !(allowInsecureUrlsForTests && /^http:\/\//i.test(url)))) {
       return { ok: false, error: 'A valid https:// Supabase project URL is required for the supabase driver' };
     }
     if (!key) return { ok: false, error: 'The Supabase service-role key is required for the supabase driver' };
@@ -343,36 +351,52 @@ export async function submitChangeRequest(params: {
   testMessage?: string | null;
   /** Server-recomputed fingerprint of the config the server itself probed. */
   testFingerprint?: string | null;
+  /**
+   * When the success evidence came from a bound PENDING test (Test-Connection
+   * before submit), its original timestamp is carried over so the request
+   * reflects when the server actually probed. Omitted → stamped now.
+   */
+  testedAt?: Date | null;
 }): Promise<{ request: Awaited<ReturnType<typeof db.infrastructureChangeRequest.create>>; superseded: number }> {
-  const { organizationId, kind, actor, configJson, password, storageKey, testStatus, testMessage, testFingerprint } = params;
+  const { organizationId, kind, actor, configJson, password, storageKey, testStatus, testMessage, testFingerprint, testedAt } = params;
 
   const requestNo = await nextRequestNo(organizationId, kind);
 
-  // Supersede any earlier open request of the same kind (draft/submitted/approved).
-  const superseded = await db.infrastructureChangeRequest.updateMany({
-    where: { organizationId, kind, status: { in: [...OPEN_STATUSES] } },
-    data: { status: 'superseded', supersededByRequestNo: requestNo, supersededAt: new Date() },
+  // ATOMIC REPLACEMENT (hardening 2): supersede + create run in ONE
+  // transaction. If the create fails, the supersede rolls back with it, so a
+  // crash/failure can never leave the previous open request 'superseded'
+  // without a replacement — the org always keeps exactly one actionable
+  // request. Request numbering semantics are unchanged (nextRequestNo is read
+  // before the transaction, exactly as before).
+  const { request, supersededCount } = await db.$transaction(async (tx) => {
+    // Supersede any earlier open request of the same kind (draft/submitted/approved).
+    const superseded = await tx.infrastructureChangeRequest.updateMany({
+      where: { organizationId, kind, status: { in: [...OPEN_STATUSES] } },
+      data: { status: 'superseded', supersededByRequestNo: requestNo, supersededAt: new Date() },
+    });
+
+    const request = await tx.infrastructureChangeRequest.create({
+      data: {
+        organizationId,
+        kind,
+        requestNo,
+        status: 'submitted',
+        configJson,
+        dbPasswordEncrypted: kind === 'DATABASE' && password ? encryptSecret(password) : null,
+        storageKeyEncrypted: kind === 'STORAGE' && storageKey ? encryptSecret(storageKey) : null,
+        lastTestStatus: testStatus ?? null,
+        lastTestMessage: testMessage ?? null,
+        lastTestedAt: testStatus ? (testedAt ?? new Date()) : null,
+        lastTestConfigFingerprint: testFingerprint ?? null,
+        requestedById: actor.id,
+        requestedByEmail: actor.email,
+      },
+    });
+
+    return { request, supersededCount: superseded.count };
   });
 
-  const request = await db.infrastructureChangeRequest.create({
-    data: {
-      organizationId,
-      kind,
-      requestNo,
-      status: 'submitted',
-      configJson,
-      dbPasswordEncrypted: kind === 'DATABASE' && password ? encryptSecret(password) : null,
-      storageKeyEncrypted: kind === 'STORAGE' && storageKey ? encryptSecret(storageKey) : null,
-      lastTestStatus: testStatus ?? null,
-      lastTestMessage: testMessage ?? null,
-      lastTestedAt: testStatus ? new Date() : null,
-      lastTestConfigFingerprint: testFingerprint ?? null,
-      requestedById: actor.id,
-      requestedByEmail: actor.email,
-    },
-  });
-
-  return { request, superseded: superseded.count };
+  return { request, superseded: supersededCount };
 }
 
 /**

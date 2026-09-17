@@ -637,6 +637,21 @@ test('FCO-07: STORAGE cutover with an in-process Supabase mock — objects migra
         res.end(body);
       };
       try {
+        // REGRESSION GUARD (forensic fix cmu4xgqad002tfinw5o9p6qr2): a real
+        // Supabase Storage project authenticates every API call through the
+        // `apikey` header — an Authorization-only request carrying an opaque
+        // sb_secret_ key is rejected with 403 "Invalid Compact JWS". The mock
+        // once ignored headers entirely, which let the driver's Authorization-
+        // only presentation pass invisibly in CI while failing in production.
+        // Enforce the same contract so a driver regression fails HERE.
+        if (!req.headers['apikey']) {
+          return send(403, JSON.stringify({
+            statusCode: '403',
+            error: 'Unauthorized',
+            message: 'Invalid Compact JWS',
+            code: 'AccessDenied',
+          }));
+        }
         // GET /storage/v1/bucket — the approval + validation probe.
         if (req.method === 'GET' && parts[0] === 'storage' && parts[1] === 'v1' && parts[2] === 'bucket') {
           const ids = new Set([...objects.keys()].map((k) => k.split('/')[0]));

@@ -15,6 +15,7 @@ import {
 } from '@/lib/infrastructure';
 import { testDbConnection, sanitizeProbeErrorForLog } from '@/lib/infra-connect';
 import { buildRequestTestEvidence } from '@/lib/infrastructure-state';
+import { loadPendingTestEvidence, selectBindablePendingEvidence } from '@/lib/infrastructure-pending-test';
 
 /** buildRequestTestEvidence returns failed evidence too — a submit may only proceed on success. */
 function probeStatus(evidence: { lastTestStatus: string | null }): boolean {
@@ -56,18 +57,6 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ orgI
   }
   const { config } = validation;
 
-  // Verify the config was tested before allowing submission.
-  // (Phase 2, R-1) The client-sent fingerprint is only a fast-path equality
-  // hint: a config-changed-after-test mismatch is still rejected immediately.
-  // The AUTHORITATIVE evidence is re-derived SERVER-SIDE below via a live
-  // probe of the submitted config (which also re-runs the SSRF gate and the
-  // DDL capability check), so a client can never assert an untested success.
-  const submittedFingerprint = typeof body.configFingerprint === 'string' ? body.configFingerprint : null;
-  const expectedFingerprint = await configFingerprint(dbConfigFingerprintInput(config));
-  if (submittedFingerprint && submittedFingerprint !== expectedFingerprint) {
-    return apiError('The configuration has changed since the last connection test. Please test the connection again before submitting.', 422);
-  }
-
   const disabling = !config.host && !config.name && !config.user;
   if (disabling) {
     const conflict = await ensureNoOpen();
@@ -93,6 +82,32 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ orgI
     Boolean(settings.dbSsl) === config.ssl;
   if (sameAsActive) {
     return apiSuccess({ request: null, unchanged: true, message: 'The dedicated analytics DB is already configured exactly like this — no change request needed' });
+  }
+
+  // (Hardening 1) Enable requests MUST present the configFingerprint of the
+  // exact non-secret configuration being submitted — the same value the Test
+  // endpoint returns for this config. Missing/mismatched → 422 BEFORE the
+  // probe; the live probe below remains the authoritative evidence (which
+  // also re-runs the SSRF gate and the DDL capability check), so a client can
+  // never assert an untested success. The disable path above intentionally
+  // requires no destination test/fingerprint.
+  //
+  // (RC-1) A successful Test Connection that ran BEFORE this request existed is
+  // persisted as org-scoped PENDING evidence (see infrastructure-pending-test).
+  // When the client cannot supply the fingerprint (e.g. the page was reloaded
+  // between Test and Submit), that server-side evidence stands in for it — but
+  // only if it is a SUCCESS for THIS exact config and still fresh. The live
+  // probe below still runs and must succeed; nothing here bypasses it.
+  const submittedFingerprint = typeof body.configFingerprint === 'string' ? body.configFingerprint : '';
+  const expectedFingerprint = await configFingerprint(dbConfigFingerprintInput(config));
+  const boundPending = submittedFingerprint
+    ? null
+    : selectBindablePendingEvidence(await loadPendingTestEvidence(orgId, 'DATABASE'), expectedFingerprint);
+  if (!submittedFingerprint && !boundPending) {
+    return apiError('Test the destination database connection first — the fingerprint from a successful test is required before submitting a transfer request.', 422);
+  }
+  if (submittedFingerprint && submittedFingerprint !== expectedFingerprint) {
+    return apiError('The configuration has changed since the last connection test. Please test the connection again before submitting.', 422);
   }
 
   // Secret handling for the requested config.
@@ -137,9 +152,13 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ orgI
     actor: { id: auth.userId, email: auth.email },
     configJson: JSON.stringify({ useOwnDb: true, host: config.host, port: config.port, name: config.name, user: config.user, ssl: config.ssl }),
     password: effectivePassword,
-    testStatus: testEvidence.lastTestStatus,
-    testMessage: testEvidence.lastTestMessage,
-    testFingerprint: testEvidence.lastTestConfigFingerprint,
+    // When a bound pending test authorized this submit, carry ITS fingerprint
+    // and timestamp (the evidence that was actually verified); otherwise the
+    // fresh submit-time probe evidence.
+    testStatus: 'success',
+    testMessage: boundPending ? boundPending.lastTestMessage : testEvidence.lastTestMessage,
+    testFingerprint: boundPending ? boundPending.lastTestConfigFingerprint : testEvidence.lastTestConfigFingerprint,
+    testedAt: boundPending?.lastTestedAt ? new Date(boundPending.lastTestedAt) : null,
   });
 
   await auditSubmit(auth.userId, auth.email, orgId, request.id, 'enable', request.requestNo);

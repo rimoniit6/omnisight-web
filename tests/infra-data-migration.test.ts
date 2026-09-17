@@ -32,6 +32,7 @@ import { req } from './helpers/request';
 const PG_TEST_BASE = process.env.PG_TEST_BASE_URL || 'postgresql://postgres:123456@localhost:5432';
 const TEST_DB_NAME = 'workai_test_db_data_migration';
 const DEST_DB_NAME = 'workai_test_db_data_migration_dest';
+const LEGACY_UPGRADE_DB = `${DEST_DB_NAME}_legacy_upgrade`;
 
 process.env.DATABASE_URL = `${PG_TEST_BASE}/${TEST_DB_NAME}?schema=public`;
 process.env.DIRECT_URL = process.env.DATABASE_URL;
@@ -68,6 +69,7 @@ const params = (p: Record<string, string>) => ({ params: Promise.resolve(p) });
 let db: import('../src/lib/db').Db['db'];
 let orgId: string;
 let orgBId: string;
+let orgCId: string;
 let adminToken: string;
 let viewerToken: string;
 let superAdminToken: string;
@@ -87,6 +89,8 @@ before(async () => {
   orgId = org.id;
   const orgB = await db.organization.create({ data: { name: 'Mig Org B', slug: 'mig-org-b' } });
   orgBId = orgB.id;
+  const orgC = await db.organization.create({ data: { name: 'Mig Org C', slug: 'mig-org-c' } });
+  orgCId = orgC.id;
 
   const admin = await db.appUser.create({
     data: { email: 'admin@inframig.test', name: 'Admin A', password: 'x', role: 'admin', organizationId: orgId },
@@ -97,11 +101,15 @@ before(async () => {
   const otherAdmin = await db.appUser.create({
     data: { email: 'admin-b@inframig.test', name: 'Admin B', password: 'x', role: 'admin', organizationId: orgBId },
   });
+  const adminC = await db.appUser.create({
+    data: { email: 'admin-c@inframig.test', name: 'Admin C', password: 'x', role: 'admin', organizationId: orgCId },
+  });
   await db.organizationMembership.createMany({
     data: [
       { userId: admin.id, organizationId: orgId, role: 'admin', status: 'ACTIVE' },
       { userId: viewer.id, organizationId: orgId, role: 'viewer', status: 'ACTIVE' },
       { userId: otherAdmin.id, organizationId: orgBId, role: 'admin', status: 'ACTIVE' },
+      { userId: adminC.id, organizationId: orgCId, role: 'admin', status: 'ACTIVE' },
     ],
   });
 
@@ -133,12 +141,21 @@ before(async () => {
   await db.audioRecording.create({
     data: { organizationId: orgId, employeeId: empA.id, fileName: 'rec-1.mp3', filePath: `audio/${orgId}/rec-1.mp3`, fileSize: 2048, mimeType: 'audio/mpeg' },
   });
+
+  // Org C: dedicated to the LEGACY-upgrade tests (LEG-*) so their requests
+  // never collide with Org B's open-request state.
+  const deptC = await db.department.create({ data: { name: 'Eng C', organizationId: orgCId } });
+  const empC = await db.employee.create({
+    data: { employeeId: 'EMP-C1', firstName: 'Cy', lastName: 'C', email: 'cy@c.test', phone: '', organizationId: orgCId, departmentId: deptC.id },
+  });
+  const devC = await db.device.create({ data: { name: 'Dev C1', organizationId: orgCId, employeeId: empC.id } });
+  await db.activity.create({ data: { type: 'application', duration: 45, employeeId: empC.id, organizationId: orgCId, deviceId: devC.id } });
 });
 
 after(async () => {
   const mod = await import('../src/lib/db');
   await mod.db.$disconnect();
-  for (const name of [TEST_DB_NAME, DEST_DB_NAME]) {
+  for (const name of [TEST_DB_NAME, DEST_DB_NAME, LEGACY_UPGRADE_DB]) {
     try {
       execSync(`node scripts/pg-test-db.mjs drop ${name}`, {
         env: { ...process.env, PG_TEST_BASE_URL: PG_TEST_BASE },
@@ -613,7 +630,9 @@ test('IDM-13: every org-scoped model is planned or on the documented control-pla
   const { MIGRATION_TABLES } = await import('../src/lib/migration/plan');
   const plannedModels = new Set(MIGRATION_TABLES.map((t) => t.model));
   // Deliberate control-plane exclusions (identity/auth, agent credentials,
-  // SaaS billing, key-value settings, and the migration bookkeeping itself).
+  // SaaS billing, key-value settings, the infrastructure lifecycle bookkeeping,
+  // and the org-scoped PENDING connection-test cache — which describes a
+  // proposed/transient platform-side probe, never org data to copy).
   // Anything org-scoped outside these sets is a coverage GAP → fail.
   const controlPlane = new Set([
     'appUser', 'organizationMembership', 'userSession',
@@ -622,6 +641,7 @@ test('IDM-13: every org-scoped model is planned or on the documented control-pla
     'organizationSetting',
     'organizationSettings', 'organization', 'organizationBranding',
     'infrastructureChangeRequest', 'infrastructureMigration',
+    'infrastructurePendingTest',
   ]);
   const schema = readFileSync(new URL('../prisma/schema.prisma', import.meta.url), 'utf-8');
   const modelBodies = [...schema.matchAll(/^model (\w+) \{([\s\S]*?)^\}/gm)];
@@ -746,9 +766,9 @@ test('IDM-16: resume re-run over already-complete tables reports recordsDone ===
   });
 
   // Fresh tiny org: seed exactly ONE org row so the run is fast and auditable.
-  const orgC = await db.organization.create({ data: { name: 'Mig Org C', slug: 'mig-org-c' } });
+  const orgC = await db.organization.create({ data: { name: 'Mig Org Resume', slug: 'mig-org-resume' } });
   await db.employee.create({
-    data: { employeeId: 'EMP-C1', firstName: 'Cee', lastName: 'C', email: 'cee@c.test', phone: '', organizationId: orgC.id },
+    data: { employeeId: 'EMP-RESUME-1', firstName: 'Cee', lastName: 'C', email: 'cee-resume@c.test', phone: '', organizationId: orgC.id },
   });
 
   try {
