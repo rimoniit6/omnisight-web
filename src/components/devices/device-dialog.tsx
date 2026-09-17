@@ -8,6 +8,8 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { EmployeeCombobox } from '@/components/employees/employee-combobox';
 import { toast } from 'sonner';
+import { useAuthStore } from '@/lib/store';
+import { getActionPermissionDeniedToast, isOrgAdminRole } from '@/lib/auth-error';
 
 interface Device {
   id: string;
@@ -32,6 +34,7 @@ interface DeviceDialogProps {
 
 export function DeviceDialog({ open, onOpenChange, device, onSaved }: DeviceDialogProps) {
   const isEdit = !!device;
+  const currentUser = useAuthStore((s) => s.user);
   const [saving, setSaving] = useState(false);
   const [form, setForm] = useState({
     name: '', hostname: '', operatingSystem: '', osVersion: '', processor: '',
@@ -60,6 +63,11 @@ export function DeviceDialog({ open, onOpenChange, device, onSaved }: DeviceDial
 
   const handleSave = async () => {
     if (!form.name) { toast.error('Name is required'); return; }
+    if (!isOrgAdminRole(currentUser?.role)) {
+      const denied = getActionPermissionDeniedToast(isEdit ? 'Edit device' : 'Add device', 'Organization Admin', currentUser?.role);
+      toast.error(denied.title, { description: denied.description });
+      return;
+    }
     setSaving(true);
     try {
       const url = isEdit ? `/api/devices/${device!.id}` : '/api/devices';

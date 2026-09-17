@@ -27,6 +27,14 @@ import { join } from 'node:path';
 import { NextRequest } from 'next/server';
 
 const PG_TEST_BASE = process.env.PG_TEST_BASE_URL || 'postgresql://postgres:123456@localhost:5432';
+
+// Destination coordinates derived from PG_TEST_BASE_URL so org routing and
+// seeding address the SAME server that hosts the throwaway org DB (Docker
+// maps it on 5433; native on 5432).
+const CSB_HOST = new URL(PG_TEST_BASE).hostname;
+const CSB_PORT = Number(new URL(PG_TEST_BASE).port) || 5432;
+const CSB_USER = decodeURIComponent(new URL(PG_TEST_BASE).username);
+const CSB_PASSWORD = decodeURIComponent(new URL(PG_TEST_BASE).password);
 const TEST_DB_NAME = 'workai_test_db_consent_csb';
 const ORG_DB = 'workai_test_db_consent_csb_org';
 
@@ -36,6 +44,9 @@ process.env.JWT_SECRET = 'test-jwt-secret-csb-0123456789abcdef';
 process.env.SUPER_ADMIN_EMAIL = 'root@csb.local';
 process.env.SUPER_ADMIN_PASSWORD = 'S3cure!Consent2026';
 (process.env as Record<string, string>).NODE_ENV = 'test';
+// These suites probe REAL loopback destinations (throwaway Postgres, mock Supabase).
+// Test-only SSRF relaxation — see src/lib/ssrf.ts. Never set in production.
+(process.env as Record<string, string>).OMNISIGHT_ALLOW_PRIVATE_TARGETS = '1';
 
 const params = (p: Record<string, string>) => ({ params: Promise.resolve(p) });
 
@@ -123,7 +134,7 @@ before(async () => {
   // (useOwnDb=true + complete config) — the exact state the migration runner
   // leaves behind after a successful activation.
   await db.organizationSettings.create({
-    data: { organizationId: orgAId, useOwnDb: true, dbHost: 'localhost', dbPort: 5432, dbName: ORG_DB, dbUser: 'postgres', dbPassword: (await import('../src/lib/crypto')).encryptSecret('123456'), dbSsl: false, dbTestStatus: 'success' },
+    data: { organizationId: orgAId, useOwnDb: true, dbHost: CSB_HOST, dbPort: CSB_PORT, dbName: ORG_DB, dbUser: CSB_USER, dbPassword: (await import('../src/lib/crypto')).encryptSecret(CSB_PASSWORD), dbSsl: false, dbTestStatus: 'success' },
   });
   const { copyOrgToDestination } = await import('../src/lib/migration/db-migrate');
   const copied = await copyOrgToDestination(orgAId, `${PG_TEST_BASE}/${ORG_DB}?schema=public`);

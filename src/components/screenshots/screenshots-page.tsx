@@ -36,6 +36,7 @@ import {
 } from 'lucide-react';
 import { formatDistanceToNow, format } from 'date-fns';
 import { toast } from 'sonner';
+import { getActionPermissionDeniedToast, isOrgAdminRole, PermissionDeniedError, handleDeniedError } from '@/lib/auth-error';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -417,6 +418,11 @@ export function ScreenshotsPage() {
 
   const handleAnalyze = async () => {
     if (!selectedId) return;
+    if (!isOrgAdminRole(currentUser?.role)) {
+      const denied = getActionPermissionDeniedToast('Analyze screenshot', 'Organization Admin', currentUser?.role);
+      toast.error(denied.title, { description: denied.description });
+      return;
+    }
     setAnalyzing(true);
     try {
       const res = await fetch(`/api/screenshots/${selectedId}/analyze`, { method: 'POST' });
@@ -434,6 +440,11 @@ export function ScreenshotsPage() {
 
   const handleFlag = async () => {
     if (!selectedId || !flagReasonInput.trim()) return;
+    if (!isOrgAdminRole(currentUser?.role)) {
+      const denied = getActionPermissionDeniedToast('Flag screenshot', 'Organization Admin', currentUser?.role);
+      toast.error(denied.title, { description: denied.description });
+      return;
+    }
     try {
       const res = await fetch(`/api/screenshots/${selectedId}`, {
         method: 'PUT',
@@ -454,6 +465,9 @@ export function ScreenshotsPage() {
 
   const deleteMutation = useMutation({
     mutationFn: async (id: string) => {
+      if (!isOrgAdminRole(currentUser?.role)) {
+        throw new PermissionDeniedError('Delete screenshot', 'Organization Admin', currentUser?.role);
+      }
       const res = await fetch(`/api/screenshots/${id}`, { method: 'DELETE' });
       if (!res.ok) throw new Error('Delete failed');
     },
@@ -465,7 +479,8 @@ export function ScreenshotsPage() {
       queryClient.invalidateQueries({ queryKey: ['screenshots'] });
       queryClient.invalidateQueries({ queryKey: ['screenshot-stats'] });
     },
-    onError: () => {
+    onError: (err) => {
+      if (handleDeniedError(err)) return;
       toast.error('Failed to delete screenshot');
     },
   });
@@ -477,6 +492,11 @@ export function ScreenshotsPage() {
   // Batch analyze handler
   const handleBatchAnalyze = async () => {
     if (selectedForBatch.size === 0) return;
+    if (!isOrgAdminRole(currentUser?.role)) {
+      const denied = getActionPermissionDeniedToast('Analyze screenshots', 'Organization Admin', currentUser?.role);
+      toast.error(denied.title, { description: denied.description });
+      return;
+    }
     setBatchAnalyzing(true);
     try {
       const res = await fetch('/api/screenshots/batch-analyze', {

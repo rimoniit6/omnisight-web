@@ -829,6 +829,10 @@ model InfrastructureChangeRequest {
   lastTestStatus  String? // "success", "failed", "not-run"
   lastTestMessage String?
   lastTestedAt    DateTime?
+  // Server-computed fingerprint of the EXACT config the last test probed
+  // (same hash the test response returns). The transfer gate requires this to
+  // match the request snapshot, proving the tested config is the migrated one.
+  lastTestConfigFingerprint String?
 
   // Requestor + approval trail (email snapshots kept so audit history survives
   // user deletion; these are NOT foreign keys.)

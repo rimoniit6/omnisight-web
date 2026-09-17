@@ -51,6 +51,9 @@ process.env.JWT_SECRET = 'test-jwt-secret-routing-0123456789abcdef';
 process.env.SUPER_ADMIN_EMAIL = 'root@routing.local';
 process.env.SUPER_ADMIN_PASSWORD = 'S3cure!Routing2026';
 (process.env as Record<string, string>).NODE_ENV = 'test';
+// These suites probe REAL loopback destinations (throwaway Postgres, mock Supabase).
+// Test-only SSRF relaxation — see src/lib/ssrf.ts. Never set in production.
+(process.env as Record<string, string>).OMNISIGHT_ALLOW_PRIVATE_TARGETS = '1';
 
 const params = (p: Record<string, string>) => ({ params: Promise.resolve(p) });
 
@@ -183,6 +186,14 @@ async function startStorageMock(): Promise<MockState> {
   return { objects, server, port, url: `http://127.0.0.1:${port}` };
 }
 
+// Destination coordinates derived from PG_TEST_BASE_URL so org routing,
+// seeding and the runtime client all address the SAME server that hosts the
+// throwaway org DBs (Docker maps it on 5433; native on 5432).
+const RT_HOST = new URL(PG_TEST_BASE).hostname;
+const RT_PORT = Number(new URL(PG_TEST_BASE).port) || 5432;
+const RT_USER = decodeURIComponent(new URL(PG_TEST_BASE).username);
+const RT_PASSWORD = decodeURIComponent(new URL(PG_TEST_BASE).password);
+
 // ─── Setup ───────────────────────────────────────────────────────────────────
 
 before(() => {
@@ -259,10 +270,10 @@ before(async () => {
   // (useOwnDb=true + complete config) — the exact state the runner leaves
   // behind after a successful migration. Pre-seed each org DB with the
   // identity anchor + the org's Employee/Device copies so relations resolve.
-  const orgSpec = (dbName: string) => JSON.stringify({ host: 'localhost', port: 5432, name: dbName, user: 'postgres', ssl: false, useOwnDb: true });
+  const orgSpec = (dbName: string) => JSON.stringify({ host: RT_HOST, port: RT_PORT, name: dbName, user: RT_USER, ssl: false, useOwnDb: true });
   for (const [orgId, dbName] of [[orgAId, ORG_A_DB], [orgBId, ORG_B_DB]] as const) {
     await db.organizationSettings.create({
-      data: { organizationId: orgId, useOwnDb: true, dbHost: 'localhost', dbPort: 5432, dbName, dbUser: 'postgres', dbPassword: (await import('../src/lib/crypto')).encryptSecret('123456'), dbSsl: false, dbTestStatus: 'success' },
+      data: { organizationId: orgId, useOwnDb: true, dbHost: RT_HOST, dbPort: RT_PORT, dbName, dbUser: RT_USER, dbPassword: (await import('../src/lib/crypto')).encryptSecret(RT_PASSWORD), dbSsl: false, dbTestStatus: 'success' },
     });
   }
 
@@ -812,7 +823,7 @@ test('RT-17: retention audio purge deletes through the ORG storage driver', asyn
 test('RT-18: org DB unavailable → controlled failure, NO platform fallback', async () => {
   // Create the config but NOT the physical database: connection must fail.
   await db.organizationSettings.create({
-    data: { organizationId: orgNId, useOwnDb: true, dbHost: 'localhost', dbPort: 5432, dbName: 'workai_test_db_routing_nonexistent', dbUser: 'postgres', dbPassword: (await import('../src/lib/crypto')).encryptSecret('123456'), dbSsl: false, dbTestStatus: 'success' },
+    data: { organizationId: orgNId, useOwnDb: true, dbHost: RT_HOST, dbPort: RT_PORT, dbName: 'workai_test_db_routing_nonexistent', dbUser: RT_USER, dbPassword: (await import('../src/lib/crypto')).encryptSecret(RT_PASSWORD), dbSsl: false, dbTestStatus: 'success' },
   });
   const { getPrismaForOrg } = await import('../src/lib/org-db');
   const res = await getPrismaForOrg(orgNId);

@@ -22,6 +22,8 @@ import { QuickStats, type QuickStat } from '@/components/ui/quick-stats';
 import { EmptyState } from '@/components/ui/empty-state';
 import { motion, AnimatePresence } from 'framer-motion';
 import { toast } from 'sonner';
+import { useAuthStore } from '@/lib/store';
+import { getActionPermissionDeniedToast, isOrgAdminRole } from '@/lib/auth-error';
 
 interface AlertItem {
   id: string;
@@ -121,6 +123,7 @@ function SeverityPathIndicator({ severity }: { severity: string }) {
 }
 
 export function AlertsPage() {
+  const currentUser = useAuthStore((s) => s.user);
   const [statusFilter, setStatusFilter] = useState('');
   const [viewMode, setViewMode] = useState<'card' | 'timeline'>('card');
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -145,6 +148,11 @@ export function AlertsPage() {
   });
 
   const updateStatus = async (id: string, status: string) => {
+    if (!isOrgAdminRole(currentUser?.role)) {
+      const denied = getActionPermissionDeniedToast('Update alert status', 'Organization Admin', currentUser?.role);
+      toast.error(denied.title, { description: denied.description });
+      return;
+    }
     try {
       const res = await fetch('/api/alerts', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id, status }) });
       if (!res.ok) throw new Error(`Failed to update alert`);
@@ -158,6 +166,11 @@ export function AlertsPage() {
   const escalateAlert = async (alert: AlertItem) => {
     const next = getNextSeverity(alert.severity);
     if (!next) return;
+    if (!isOrgAdminRole(currentUser?.role)) {
+      const denied = getActionPermissionDeniedToast('Escalate alert', 'Organization Admin', currentUser?.role);
+      toast.error(denied.title, { description: denied.description });
+      return;
+    }
     try {
       const res = await fetch('/api/alerts', {
         method: 'PUT',
@@ -216,6 +229,11 @@ export function AlertsPage() {
   };
 
   const handleBulkResolve = useCallback(async () => {
+    if (!isOrgAdminRole(currentUser?.role)) {
+      const denied = getActionPermissionDeniedToast('Resolve alerts', 'Organization Admin', currentUser?.role);
+      toast.error(denied.title, { description: denied.description });
+      return;
+    }
     try {
       const ids = Array.from(selectedIds);
       const results = await Promise.allSettled(
@@ -239,9 +257,14 @@ export function AlertsPage() {
     } catch {
       toast.error('Failed to resolve alerts');
     }
-  }, [selectedIds, queryClient]);
+  }, [selectedIds, queryClient, currentUser]);
 
   const handleBulkAcknowledge = useCallback(async () => {
+    if (!isOrgAdminRole(currentUser?.role)) {
+      const denied = getActionPermissionDeniedToast('Acknowledge alerts', 'Organization Admin', currentUser?.role);
+      toast.error(denied.title, { description: denied.description });
+      return;
+    }
     try {
       const ids = Array.from(selectedIds);
       const results = await Promise.allSettled(
@@ -265,7 +288,7 @@ export function AlertsPage() {
     } catch {
       toast.error('Failed to acknowledge alerts');
     }
-  }, [selectedIds, queryClient]);
+  }, [selectedIds, queryClient, currentUser]);
 
   const canEscalate = (alert: AlertItem) => {
     return (alert.status === 'pending' || alert.status === 'acknowledged') && getNextSeverity(alert.severity) !== null;

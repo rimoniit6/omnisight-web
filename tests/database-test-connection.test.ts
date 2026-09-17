@@ -38,6 +38,9 @@ process.env.JWT_SECRET = 'test-jwt-secret-dbtest-0123456789abcdef';
 process.env.SUPER_ADMIN_EMAIL = 'root@dbtest.local';
 process.env.SUPER_ADMIN_PASSWORD = 'S3cure!DbTest2026x';
 (process.env as Record<string, string>).NODE_ENV = 'test';
+// These suites probe REAL loopback destinations (throwaway Postgres, mock Supabase).
+// Test-only SSRF relaxation — see src/lib/ssrf.ts. Never set in production.
+(process.env as Record<string, string>).OMNISIGHT_ALLOW_PRIVATE_TARGETS = '1';
 
 before(() => {
   execSync(`node scripts/pg-test-db.mjs ensure ${TEST_DB_NAME}`, {
@@ -108,13 +111,21 @@ async function postTest(token: string | null, body: Record<string, unknown>) {
   );
 }
 
+// Destination coordinates derived from PG_TEST_BASE_URL so the probe hits the
+// SAME server that hosts the throwaway DBs (Docker maps it on 5433, a native
+// server on 5432). Tests target a real, reachable destination.
+const PROBE_HOST = new URL(PG_TEST_BASE).hostname;
+const PROBE_PORT = Number(new URL(PG_TEST_BASE).port) || 5432;
+const PROBE_USER = decodeURIComponent(new URL(PG_TEST_BASE).username);
+const PROBE_PASSWORD = decodeURIComponent(new URL(PG_TEST_BASE).password);
+
 const GOOD = {
   useOwnDb: true,
-  dbHost: 'localhost',
-  dbPort: 5432,
+  dbHost: PROBE_HOST,
+  dbPort: PROBE_PORT,
   dbName: CUSTOMER_DB,
-  dbUser: 'postgres',
-  dbPassword: '123456',
+  dbUser: PROBE_USER,
+  dbPassword: PROBE_PASSWORD,
   dbSsl: false,
 };
 

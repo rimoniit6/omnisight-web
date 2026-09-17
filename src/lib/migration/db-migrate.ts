@@ -102,36 +102,475 @@ export function buildDestinationConnectionString(spec: DestinationConnectionSpec
   return `postgresql://${encodeURIComponent(spec.user)}:${encodeURIComponent(spec.password ?? '')}@${spec.host}:${spec.port ?? 5432}/${spec.name}${qs}`;
 }
 
+// ─── Schema-sync diagnostics (verified forensic finding RC-2) ────────────────
+// The Prisma CLI writes INFORMATIONAL lines — notably
+// "Environment variables loaded from .env" — to STDERR on every invocation
+// (via @prisma/debug's console.warn logger). The old implementation rejected
+// on `String(stderr)` and took the first non-empty line, so the banner was
+// always surfaced as the failure reason and the REAL error (which Prisma puts
+// on stdout + the final stderr lines) was invisible.
+
+/** Bound for the schema-sync child process. Named constant (Phase 8) — the
+ *  push must complete within a minute on a healthy network; a longer budget
+ *  would leave a hung CLI blocking the runner lease. Documented, single place. */
+export const SCHEMA_SYNC_TIMEOUT_MS = 120_000;
+
+/** Informational Prisma/Node CLI lines that must NEVER be shown as the error. */
+const SCHEMA_SYNC_INFO_LINE_PATTERNS: RegExp[] = [
+  /^Environment variables loaded from \./,
+  /^Environment variables loaded$/,
+  /^prisma:tryLoadEnv/,
+  /^\s*$/, // blank lines
+];
+
 /**
- * STEP 1 — Destination SCHEMA sync (before any data moves).
- *
- * Reuses the project's existing Prisma schema infrastructure: `prisma db push`
- * applies the FULL application schema (every model — not a hardcoded subset)
- * to the approved destination, exactly as it would to any fresh environment.
- * It is idempotent (already-in-sync destinations are left untouched) and must
- * succeed before org data is copied. An empty/legacy destination is brought up
- * to date automatically. It runs WITHOUT --accept-data-loss: push may only
- * CREATE/ADD — if the destination schema has diverged such that a push would
- * DROP or rewrite existing structures (i.e. destination data), the push
- * REFUSES and the migration fails safely with the old infrastructure still
- * active. Existing destination data can never be silently destroyed here.
+ * Extract the MEANINGFUL failure text from a failed schema-sync run.
+ * (Phase 7/9) Combines stdout + stderr, drops informational banners, and
+ * redacts anything that could carry credentials. Never returns the `.env`
+ * banner. Priority, best → last:
+ *   1. the schema-DRIFT refusal block — the "require data loss" OBJECT LIST
+ *      (which tables/columns/enums a forced sync would drop) PLUS its
+ *      actionable `Error:` tail, kept verbatim so the operator sees exactly
+ *      what would be destroyed;
+ *   2. the Prisma `Error code: Pxxxx` marker (like userSafeError);
+ *   3. a PostgreSQL text error / P-code line;
+ *   4. the final non-empty line;
+ *   5. the provided fallback.
  */
-export async function syncDestinationSchema(spec: DestinationConnectionSpec): Promise<{ ok: true } | { ok: false; error: string }> {
-  const schemaPath = path.join(process.cwd(), 'prisma', 'schema.prisma');
-  const cliPath = path.join(process.cwd(), 'node_modules', 'prisma', 'build', 'index.js');
-  const url = buildDestinationConnectionString(spec);
+export function extractSchemaSyncError(parts: { stdout: string; stderr: string; fallback?: string }): string {
+  const meaningful = (stream: string): string[] =>
+    stream
+      .split(/\r?\n/)
+      .filter((line) => !SCHEMA_SYNC_INFO_LINE_PATTERNS.some((re) => re.test(line)))
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0);
+  // Prisma writes the failure banner + real error to stdout; the invocation
+  // context (command, snippet) can land on either stream. Search stdout first
+  // — stderr holds the informational banner.
+  const candidates = [...meaningful(parts.stdout), ...meaningful(parts.stderr)];
+  const joined = candidates.join('\n');
+  let chosen: string;
+
+  // Priority 1 — schema-drift refusal. `prisma db push` (or any diff) that
+  // would rewrite existing structures prints "The following changes require
+  // data loss:" followed by the per-object bullet list, then the actionable
+  // `Error:` tail. Keep the OBJECT LIST (the operator-facing diagnosis) and
+  // append the tail so the message stays actionable. Bounded so a pathological
+  // payload can never flood the status card.
+  const driftIdx = candidates.findIndex((l) => /\bdata loss\b/i.test(l));
+  if (driftIdx >= 0) {
+    const tailStart = candidates.slice(driftIdx).findIndex((l) => l.startsWith('Error:'));
+    const blockLines =
+      (tailStart >= 0 ? candidates.slice(driftIdx, driftIdx + tailStart) : candidates.slice(driftIdx)).slice(0, 30).join(' ');
+    const errorTail =
+      tailStart >= 0 ? candidates.slice(driftIdx + tailStart, driftIdx + tailStart + 2).join(' ') : '';
+    chosen = errorTail ? `${blockLines} — ${errorTail}` : blockLines;
+  } else {
+    const codeIdx = joined.lastIndexOf('Error code:');
+    if (codeIdx >= 0) {
+      const head = candidates.filter((l) => l.indexOf('Error code:') < 0 && l !== joined.slice(codeIdx).split('\n')[0]).slice(-1)[0] ?? '';
+      chosen = `${head} — ${joined.slice(codeIdx, codeIdx + 120)}`.trim();
+    } else {
+      // Prefer a real error line over a Prisma status line.
+      chosen =
+        candidates.find((l) => /\bP[1-5]\d{3}\b/.test(l)) ??
+        candidates.find((l) => /error|failed|denied|timed? ?out|refused|does not exist|drift|data loss/i.test(l)) ??
+        candidates[candidates.length - 1] ??
+        '';
+    }
+  }
+  if (!chosen) return parts.fallback?.trim() || 'The schema synchronization failed without a diagnosable error message.';
+
+  // The drift CRITICAL block is already line-count-bounded (max 30 + 2 lines),
+  // so the 300-char cap of sanitizeProbeErrorForLog would truncate a long
+  // object list before its actionable `Error:` tail — redact-only here keeps
+  // the whole diagnosis while still scrubbing any connection URL.
+  const sanitized =
+    driftIdx >= 0
+      ? chosen.replace(/postgres(?:ql)?:\/\/[^\s'"]+/gi, '[REDACTED_URL]')
+      : sanitizeProbeErrorForLog({ message: chosen });
+  return sanitized.length > 0 ? sanitized : 'The schema synchronization failed without a diagnosable error message.';
+}
+
+/** Classify an execFile-level failure (spawn error / timeout / signal). */
+function describeExecFailure(err: NodeJS.ErrnoException & { killed?: boolean; signal?: string }): string | null {
+  if (err.killed) {
+    return `Destination schema synchronization timed out after ${Math.round(SCHEMA_SYNC_TIMEOUT_MS / 1000)} seconds.`;
+  }
+  if (err.signal) return `The schema synchronization process was terminated by signal ${err.signal}.`;
+  if (err.code && typeof err.code === 'string' && /^E[A-Z]+$/.test(err.code)) {
+    return `The schema synchronization process could not be started (${err.code}).`;
+  }
+  return null;
+}
+// ─────────────────────────────────────────────────────────────────────────────
+// STEP 1 — Destination SCHEMA preparation (classify → additive creation only).
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// REPLACES the old `prisma db push` of the FULL schema (the root cause of the
+// surfaced production error). Pushing the whole schema — including tables the
+// customer DB must not carry — onto an EARLIER-generation destination always
+// produced a data-loss diff and push (correctly, never run with
+// --accept-data-loss) REFUSED with:
+//   "Error: Use the --accept-data-loss flag to ignore the data loss warnings"
+//
+// The destination schema is now CLASSIFIED first, then handled per class:
+//   • EMPTY              → create ONLY the migration-plan tables plus the
+//                          reduced Organization ANCHOR (never the full
+//                          platform model set), derived statement-by-statement
+//                          from the real Prisma schema via `prisma migrate
+//                          diff` — no DROP/ALTER/truncate anywhere.
+//   • CURRENT_OMNISIGHT  → no-op success. A destination that already carries
+//                          the plan schema (a previous run, or a full build
+//                          left over by the old push) is accepted untouched.
+//   • LEGACY_OMNISIGHT   → REFUSED with the conflicting objects NAMED (tables
+//                          / columns / enum values older builds carried and
+//                          the current schema dropped). Nothing is modified,
+//                          no data is deleted, Managed infrastructure stays
+//                          active, and the run is retryable after the operator
+//                          fixes the destination.
+//   • FOREIGN_OR_UNKNOWN → REFUSED (fail closed — there is no policy for a
+//                          non-empty database OmniSight cannot identify).
+//
+// All creation happens inside ONE interactive transaction: a partial failure
+// rolls EVERYTHING back, leaving the destination exactly as empty as before so
+// the run stays retryable. Nothing in this step can destroy existing data.
+
+/** The project's own Prisma schema — the single source of truth for DDL. */
+const DESTINATION_SCHEMA_PATH = path.join(process.cwd(), 'prisma', 'schema.prisma');
+/** Prisma CLI entrypoint (used for the offline `migrate diff` compiler). */
+const PRISMA_CLI_PATH = path.join(process.cwd(), 'node_modules', 'prisma', 'build', 'index.js');
+
+/** The Organization identity columns the destination is permitted to carry —
+ *  the migration's ANCHOR, never the platform control-plane fields (logo,
+ *  subscription, license, plan, deployment mode, …). Must match
+ *  ensureDestinationOrgAnchor exactly. */
+export const ORGANIZATION_ANCHOR_COLUMNS = [
+  'id', 'name', 'slug', 'status', 'timezone', 'language', 'currency', 'createdAt', 'updatedAt',
+] as const;
+
+/** Legacy-object fingerprints: things EARLIER OmniSight generations created
+ *  that the current schema dropped. Their presence marks the destination as an
+ *  older build that a forced sync would have to destructively change. */
+const LEGACY_OMNISIGHT_TABLES = ['Guest', 'AgentRegistration', 'AgentBuild', 'LicenseKey'];
+const LEGACY_OMNISIGHT_COLUMNS: ReadonlyArray<[table: string, column: string, context: string]> = [
+  ['Employee', 'guestId', 'guest tracking was removed from employees'],
+  ['Organization', 'licenseKeyId', 'self-hosted license keys were removed'],
+  ['Plan', 'isSelfHosted', 'the self-hosted plan flag was removed'],
+];
+
+export type DestinationSchemaClass =
+  | { kind: 'EMPTY' }
+  | { kind: 'CURRENT_OMNISIGHT' }
+  | { kind: 'LEGACY_OMNISIGHT'; conflicts: string[] }
+  | { kind: 'FOREIGN_OR_UNKNOWN'; reason: string };
+
+interface SchemaInventory {
+  /** BASE TABLE names in the destination's `public` schema. */
+  tables: Set<string>;
+  /** table → column names. */
+  columns: Map<string, Set<string>>;
+  /** Values of the `DeploymentMode` enum if it exists. */
+  deploymentModeValues: Set<string>;
+}
+
+/** Read-only report of the destination's PUBLIC schema (BASE TABLEs, their
+ *  columns, and the DeploymentMode enum labels). No statement mutates anything. */
+async function inventoryDestinationSchema(destination: PrismaClient): Promise<SchemaInventory> {
+  const tables = await destination.$queryRaw<Array<{ table_name: string }>>`
+    SELECT table_name FROM information_schema.tables
+    WHERE table_schema = 'public' AND table_type = 'BASE TABLE'`;
+  const allColumns = await destination.$queryRaw<Array<{ table_name: string; column_name: string }>>`
+    SELECT table_name, column_name FROM information_schema.columns
+    WHERE table_schema = 'public'`;
+  const enumValues = await destination.$queryRaw<Array<{ enumlabel: string }>>`
+    SELECT e.enumlabel FROM pg_catalog.pg_enum e
+    JOIN pg_catalog.pg_type t ON t.oid = e.enumtypid
+    WHERE t.typname = 'DeploymentMode'`;
+  const columns = new Map<string, Set<string>>();
+  for (const c of allColumns) {
+    const set = columns.get(c.table_name) ?? new Set<string>();
+    set.add(c.column_name);
+    columns.set(c.table_name, set);
+  }
+  return {
+    tables: new Set(tables.map((t) => String(t.table_name))),
+    columns,
+    deploymentModeValues: new Set(enumValues.map((e) => String(e.enumlabel))),
+  };
+}
+
+/**
+ * Classify the destination's existing schema (read-only) into one of four
+ * buckets. The ordering is deliberate: legacy fingerprints are checked BEFORE
+ * completeness so an older build is never mistaken for "current".
+ */
+export async function classifyDestinationSchema(destination: PrismaClient): Promise<DestinationSchemaClass> {
+  const inventory = await inventoryDestinationSchema(destination);
+  if (inventory.tables.size === 0) return { kind: 'EMPTY' };
+
+  const conflicts: string[] = [];
+  for (const table of LEGACY_OMNISIGHT_TABLES) {
+    if (inventory.tables.has(table)) conflicts.push(`table "${table}" (removed in the current schema)`);
+  }
+  for (const [table, column, context] of LEGACY_OMNISIGHT_COLUMNS) {
+    if (inventory.columns.get(table)?.has(column)) conflicts.push(`column "${table}.${column}" (${context})`);
+  }
+  if (inventory.deploymentModeValues.has('PRIVATE')) {
+    conflicts.push(`enum value "DeploymentMode" = 'PRIVATE' (self-hosted mode was removed)`);
+  }
+  if (conflicts.length > 0) return { kind: 'LEGACY_OMNISIGHT', conflicts };
+
+  const expected = new Set<string>([...MIGRATION_TABLES.map((t) => t.table), 'Organization']);
+  const missing = [...expected].filter((t) => !inventory.tables.has(t));
+  if (missing.length > 0) {
+    const list = missing.slice(0, 6).join(', ');
+    return {
+      kind: 'FOREIGN_OR_UNKNOWN',
+      reason: `not an empty database, not the current OmniSight schema, and not a recognizable older OmniSight build — expected tables missing: ${list}${missing.length > 6 ? '…' : ''}`,
+    };
+  }
+  const missingAnchor = ORGANIZATION_ANCHOR_COLUMNS.filter((c) => !inventory.columns.get('Organization')?.has(c));
+  if (missingAnchor.length > 0) {
+    return {
+      kind: 'FOREIGN_OR_UNKNOWN',
+      reason: `the Organization table is incompatible — missing anchor columns: ${missingAnchor.join(', ')}`,
+    };
+  }
+  return { kind: 'CURRENT_OMNISIGHT' };
+}
+
+// ── Additive schema-script generation (pure — derived from the real schema) ──
+
+interface SchemaStatement {
+  kind: 'enum' | 'table' | 'index' | 'fk';
+  /** CREATE TYPE name / CREATE TABLE name / INDEX ON table / FK ALTER TABLE target. */
+  subject: string;
+  /** FK REFERENCES table (fk statements only). */
+  referenced?: string;
+  /** Trimmed CREATE TABLE body lines (table statements only). */
+  body: string[];
+  /** The original statement text (without the diff's `--` header comment). */
+  sql: string;
+}
+
+/** Parse `prisma migrate diff` output into typed statements. Unrecognized
+ *  sections (e.g. `-- CreateSchema`) are dropped. */
+export function parseDiffScript(script: string): SchemaStatement[] {
+  const statements: SchemaStatement[] = [];
+  let header: 'CreateEnum' | 'CreateTable' | 'CreateIndex' | 'CreateUniqueIndex' | 'AddForeignKey' | null = null;
+  const buffer: string[] = [];
+  const flush = (): void => {
+    if (header && buffer.length > 0) {
+      const sql = buffer.join('\n').trim();
+      if (header === 'CreateEnum') {
+        const m = sql.match(/CREATE TYPE "([^"]+)" AS ENUM/);
+        if (m) statements.push({ kind: 'enum', subject: m[1], body: [], sql });
+      } else if (header === 'CreateTable') {
+        const m = sql.match(/CREATE TABLE "([^"]+)"/);
+        if (m) statements.push({ kind: 'table', subject: m[1], body: buffer.map((l) => l.trim()), sql });
+      } else if (header === 'CreateIndex' || header === 'CreateUniqueIndex') {
+        const m = sql.match(/ON "([^"]+)"/);
+        if (m) statements.push({ kind: 'index', subject: m[1], body: [], sql });
+      } else if (header === 'AddForeignKey') {
+        const target = sql.match(/ALTER TABLE "([^"]+)" ADD CONSTRAINT/);
+        const referenced = sql.match(/REFERENCES "([^"]+)"/);
+        if (target && referenced) {
+          statements.push({ kind: 'fk', subject: target[1], referenced: referenced[1], body: [], sql });
+        }
+      }
+    }
+    buffer.length = 0;
+    header = null;
+  };
+  for (const line of script.split(/\r?\n/)) {
+    const section = line.match(/^-- (CreateSchema|CreateEnum|CreateTable|CreateIndex|CreateUniqueIndex|AddForeignKey)\s*$/);
+    if (section) {
+      flush();
+      if (section[1] !== 'CreateSchema') header = section[1] as Exclude<typeof header, null>;
+      continue;
+    }
+    if (header) buffer.push(line);
+  }
+  flush();
+  return statements;
+}
+
+/** Keep only the anchor columns (ORGANIZATION_ANCHOR_COLUMNS) plus the primary
+ *  key from the real full-model CREATE TABLE — the destination gets the
+ *  identity anchor built directly from the Prisma schema definition, with no
+ *  control-plane columns or defaults. */
+export function reduceOrganizationTable(stmt: SchemaStatement): string {
+  const lines = ['CREATE TABLE "Organization" ('];
+  const seen = new Set<string>();
+  const allowed = ORGANIZATION_ANCHOR_COLUMNS as readonly string[];
+  for (const line of stmt.body) {
+    const column = line.match(/^"([A-Za-z][A-Za-z0-9]*)"/)?.[1];
+    if (column) {
+      if (allowed.includes(column) && !seen.has(column)) {
+        lines.push(line.endsWith(',') ? line : `${line},`);
+        seen.add(column);
+      }
+    } else if (/^CONSTRAINT "Organization_pkey"/.test(line)) {
+      lines.push(line);
+    }
+  }
+  lines.push(');');
+  return lines.join('\n');
+}
+
+/**
+ * Reduce a full `prisma migrate diff` script to EXACTLY what the destination
+ * needs: CREATE TABLE for every migration-plan table plus a reduced
+ * Organization anchor, the indexes and foreign keys that stay INSIDE that set,
+ * and only the enums those tables actually use. Everything else (platform /
+ * control-plane tables, their FKs, their enums) is dropped. Pure — no I/O. */
+export function subsetDestinationSchemaSql(script: string): string {
+  const allowed = new Set<string>([...MIGRATION_TABLES.map((t) => t.table), 'Organization']);
+  const statements = parseDiffScript(script);
+
+  // Enum subset: only the enums referenced by a KEPT table's columns.
+  // The reduced Organization body is scanned (not the full model) so an enum
+  // used ONLY by a dropped control-plane column (e.g. deploymentMode) is not
+  // carried over.
+  const usedEnums = new Set<string>();
+  for (const stmt of statements) {
+    if (stmt.kind !== 'table' || !allowed.has(stmt.subject)) continue;
+    const body =
+      stmt.subject === 'Organization' ? reduceOrganizationTable(stmt).split(/\r?\n/) : stmt.body;
+    for (const line of body) {
+      const m = line.match(/^"[^"]+" "([^"]+)" (NOT )?NULL/);
+      if (m) usedEnums.add(m[1]);
+    }
+  }
+
+  const parts: string[] = [];
+  for (const stmt of statements) {
+    if (stmt.kind === 'enum') {
+      if (usedEnums.has(stmt.subject)) parts.push(stmt.sql);
+    } else if (stmt.kind === 'table') {
+      if (stmt.subject === 'Organization') parts.push(reduceOrganizationTable(stmt));
+      else if (allowed.has(stmt.subject)) parts.push(stmt.sql);
+    } else if (stmt.kind === 'index') {
+      if (!allowed.has(stmt.subject)) continue;
+      // Organization indexes are kept only when they reference ANCHOR columns —
+      // the reduced table no longer carries e.g. `subscriptionId`, so an index
+      // on it would fail to apply.
+      if (stmt.subject === 'Organization') {
+        const m = stmt.sql.match(/ON "Organization"\(([^)]*)\)/);
+        const cols = m
+          ? m[1].split(',').map((c) => c.trim().replace(/^"|"$/g, ''))
+          : [];
+        if (cols.every((c) => (ORGANIZATION_ANCHOR_COLUMNS as readonly string[]).includes(c))) {
+          parts.push(stmt.sql);
+        }
+      } else {
+        parts.push(stmt.sql);
+      }
+    } else if (stmt.kind === 'fk') {
+      // Keep a foreign key only when BOTH ends are created here (org-internal
+      // references). Any reference to a platform table is dropped.
+      if (allowed.has(stmt.subject) && stmt.referenced !== undefined && allowed.has(stmt.referenced)) {
+        parts.push(stmt.sql);
+      }
+    }
+  }
+  return parts.join('\n\n');
+}
+
+/** Run the offline `prisma migrate diff` compiler against the project's own
+ *  Prisma schema (single source of truth — never a hand-maintained copy). No
+ *  database connection is made, so no destination credentials are involved. */
+export async function runMigrateDiffScript(): Promise<string> {
+  return new Promise<string>((resolve, reject) => {
+    execFile(
+      process.execPath,
+      [PRISMA_CLI_PATH, 'migrate', 'diff', '--from-empty', '--to-schema-datamodel', DESTINATION_SCHEMA_PATH, '--script'],
+      { timeout: SCHEMA_SYNC_TIMEOUT_MS },
+      (err, stdout, stderr) => {
+        if (!err) {
+          resolve(String(stdout ?? ''));
+          return;
+        }
+        const execErr = err as NodeJS.ErrnoException & { killed?: boolean; signal?: NodeJS.Signals };
+        const description = describeExecFailure(execErr) ?? `The destination schema compiler failed (${String(execErr.code ?? 'unknown')}).`;
+        log.error('migration.schema.diff.failed', {
+          exitCode: typeof execErr.code === 'number' ? execErr.code : null,
+          error: extractSchemaSyncError({ stdout: String(stdout ?? ''), stderr: String(stderr ?? ''), fallback: description }),
+        });
+        reject(new Error(description));
+      }
+    );
+  });
+}
+
+/** Generate the additive destination-schema script (see subsetDestinationSchemaSql). */
+export async function generateDestinationSchemaSql(): Promise<string> {
+  return subsetDestinationSchemaSql(await runMigrateDiffScript());
+}
+
+/** Break a generated script into its individual `;`-terminated statements. */
+export function splitSqlStatements(sql: string): string[] {
+  const out: string[] = [];
+  let current = '';
+  for (const line of sql.split(/\r?\n/)) {
+    current += line;
+    if (line.trimEnd().endsWith(';')) {
+      if (current.trim().length > 0) out.push(current);
+      current = '';
+    } else {
+      current += '\n';
+    }
+  }
+  if (current.trim().length > 0) out.push(current);
+  return out;
+}
+
+/** Apply the generated DDL to the destination inside ONE interactive
+ *  transaction: any failure rolls EVERYTHING back, so a failed creation leaves
+ *  the destination exactly as empty as before and the run stays retryable. */
+export async function applyDestinationSchema(destination: PrismaClient, sql: string): Promise<void> {
+  const statements = splitSqlStatements(sql);
+  await destination.$transaction(
+    async (tx) => {
+      for (const statement of statements) {
+        await tx.$executeRawUnsafe(statement);
+      }
+    },
+    { maxWait: 60_000, timeout: SCHEMA_SYNC_TIMEOUT_MS },
+  );
+}
+
+/**
+ * STEP 1 — Prepare the destination schema for the data copy:
+ *   • EMPTY  → create the plan tables + Organization anchor (additive, atomic);
+ *   • CURRENT → success, nothing modified;
+ *   • LEGACY / FOREIGN → REFUSED, nothing modified, the conflicting objects
+ *     named so an operator can act.
+ * Only ADD is ever performed — existing objects are never dropped or altered,
+ * and no destination data is ever destroyed.
+ */
+export async function prepareDestinationSchema(destination: PrismaClient): Promise<{ ok: true } | { ok: false; error: string }> {
   try {
-    await new Promise<void>((resolve, reject) => {
-      execFile(
-        process.execPath,
-        [cliPath, 'db', 'push', '--schema', schemaPath, '--skip-generate'],
-        { env: { ...process.env, DATABASE_URL: url, DIRECT_URL: url }, timeout: 120_000 },
-        (err, _stdout, stderr) => (err ? reject(new Error(String(stderr || err.message))) : resolve())
-      );
-    });
-    return { ok: true };
+    const cls = await classifyDestinationSchema(destination);
+    if (cls.kind === 'CURRENT_OMNISIGHT') return { ok: true };
+    if (cls.kind === 'EMPTY') {
+      const script = await generateDestinationSchemaSql();
+      await applyDestinationSchema(destination, script);
+      return { ok: true };
+    }
+    if (cls.kind === 'LEGACY_OMNISIGHT') {
+      return {
+        ok: false,
+        error: `Destination database is an EARLIER OmniSight generation that the current schema cannot adopt without data loss. Conflicting objects: ${cls.conflicts.join('; ')}. Refusing — nothing was modified and the existing data is intact. Use a fresh empty database, or advance the existing database with the standard platform schema migrations first.`,
+      };
+    }
+    return {
+      ok: false,
+      error: `Destination schema could not be classified: ${cls.reason}. Refusing to modify an unrecognized database — nothing was touched.`,
+    };
   } catch (err) {
-    log.error('migration.schema.sync.failed', { error: userSafeError(err) });
+    log.error('migration.schema.prep.failed', { error: userSafeError(err) });
     return { ok: false, error: userSafeError(err) };
   }
 }
@@ -554,10 +993,14 @@ export async function runDatabaseMigration(
   let recordsDone = 0;
 
   try {
-    // STEP 1: bring the destination schema up to date (full Prisma schema).
-    const sync = await syncDestinationSchema(spec);
-    if (!sync.ok) {
-      return { ok: false, errorStage: 'schema', errorMessage: `Destination schema could not be synchronized: ${sync.error}`, recordsDone, recordsTotal, tableProgress, zeroDrift: false };
+    // STEP 1: prepare the destination schema — classify it (empty / current
+    // OmniSight / legacy OmniSight / unknown) and, for an EMPTY destination,
+    // create ONLY the migration-plan tables plus the Organization anchor.
+    // Existing objects are never dropped or altered; legacy/unknown
+    // destinations are refused with the conflicting objects named, untouched.
+    const prepare = await prepareDestinationSchema(destination);
+    if (!prepare.ok) {
+      return { ok: false, errorStage: 'schema', errorMessage: `Destination schema could not be synchronized: ${prepare.error}`, recordsDone, recordsTotal, tableProgress, zeroDrift: false };
     }
     // STEP 2: confirm the synced schema actually matches the migration plan
     // (defence-in-depth: never copy into tables the plan does not recognize).
@@ -657,8 +1100,9 @@ export async function runDatabaseMigration(
  * machine. Used by integration tests to seed an org's own DB before asserting
  * runtime routing through getPrismaForOrg.
  *
- * The destination schema must already be synced (prisma db push) — this
- * function only moves data. Returns true on success, false on failure.
+ * The destination schema must already exist (e.g. created by
+ * prepareDestinationSchema or a full schema push) — this function only moves
+ * data. Returns true on success, false on failure.
  */
 export async function copyOrgToDestination(orgId: string, destinationUrl: string): Promise<boolean> {
   const destination = new PrismaClient({

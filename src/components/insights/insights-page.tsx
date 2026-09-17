@@ -13,6 +13,8 @@ import {
   Clock, Filter, Database, Bot,
 } from 'lucide-react';
 import { toast } from 'sonner';
+import { useAuthStore } from '@/lib/store';
+import { getActionPermissionDeniedToast, isManagerOrHigher } from '@/lib/auth-error';
 import { useState, useMemo } from 'react';
 import { motion } from 'framer-motion';
 
@@ -179,6 +181,7 @@ function findingTypeConfig(type: string): { icon: React.ElementType; color: stri
 
 export function InsightsPage() {
   const queryClient = useQueryClient();
+  const currentUser = useAuthStore((s) => s.user);
   const [generating, setGenerating] = useState(false);
   const [analysisRequested, setAnalysisRequested] = useState(false);
   const [categoryFilter, setCategoryFilter] = useState('all');
@@ -268,6 +271,11 @@ export function InsightsPage() {
   }, [data, categoryFilter]);
 
   const generateInsight = async () => {
+    if (!isManagerOrHigher(currentUser?.role)) {
+      const denied = getActionPermissionDeniedToast('Generate AI insight', 'Manager or Higher', currentUser?.role);
+      toast.error(denied.title, { description: denied.description });
+      return;
+    }
     setGenerating(true);
     try {
       const res = await fetch('/api/insights', {

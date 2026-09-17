@@ -51,6 +51,9 @@ process.env.JWT_SECRET = 'test-jwt-secret-infra-0123456789abcdef';
 process.env.SUPER_ADMIN_EMAIL = 'root@infra.local';
 process.env.SUPER_ADMIN_PASSWORD = 'S3cure!Infra2026x';
 (process.env as Record<string, string>).NODE_ENV = 'test';
+// These suites probe REAL loopback destinations (throwaway Postgres, mock Supabase).
+// Test-only SSRF relaxation — see src/lib/ssrf.ts. Never set in production.
+(process.env as Record<string, string>).OMNISIGHT_ALLOW_PRIVATE_TARGETS = '1';
 
 before(() => {
   execSync(`node scripts/pg-test-db.mjs ensure ${TEST_DB_NAME}`, {
@@ -132,12 +135,26 @@ after(async () => {
   }
 });
 
-const dbConfig = (name: string, password: string, port = 5432) => ({
+// Destination coordinates derived from PG_TEST_BASE_URL so approved requests
+// genuinely probe/verify the SAME server hosting the throwaway customer DBs
+// (Docker maps it on 5433; a native server on 5432).
+const PROBE_HOST = new URL(PG_TEST_BASE).hostname;
+const PROBE_PORT = Number(new URL(PG_TEST_BASE).port) || 5432;
+const PROBE_USER = decodeURIComponent(new URL(PG_TEST_BASE).username);
+const PROBE_PASSWORD = decodeURIComponent(new URL(PG_TEST_BASE).password);
+
+// The credentials the probe destination actually accepts. EVERY submitted
+// config must use these (the submit endpoint now genuinely probes the
+// destination server-side — a wrong password is a 422, by design).
+const REAL_PASSWORD = PROBE_PASSWORD;
+const REAL_USER = PROBE_USER;
+
+const dbConfig = (name: string, password: string, port = PROBE_PORT) => ({
   useOwnDb: true,
-  dbHost: 'localhost',
+  dbHost: PROBE_HOST,
   dbPort: port,
   dbName: name,
-  dbUser: 'postgres',
+  dbUser: PROBE_USER,
   dbPassword: password,
   dbSsl: false,
 });
@@ -145,8 +162,8 @@ const dbConfig = (name: string, password: string, port = 5432) => ({
 // Config A activates first (points at customer DB 1). Config B is a different
 // reachable target used for all later submissions so the idempotency "unchanged"
 // path (INFRA-12) is the ONLY place an active config is resubmitted.
-const CONFIG_A = dbConfig(CUSTOMER_DB_1, '123456');
-const CONFIG_B = dbConfig(CUSTOMER_DB_2, '234567');
+const CONFIG_A = dbConfig(CUSTOMER_DB_1, REAL_PASSWORD);
+const CONFIG_B = dbConfig(CUSTOMER_DB_2, REAL_PASSWORD);
 
 async function submitDb(body: Record<string, unknown>) {
   const api = await import('../src/app/api/organizations/[orgId]/settings/database/route');
@@ -182,10 +199,10 @@ test('INFRA-01: PUT settings/database submits a change request (settings untouch
   assert.equal(r.status, 'submitted');
   assert.equal(r.kind, 'DATABASE');
   assert.equal(r.requestNo, 1);
-  assert.equal(r.config.host, 'localhost');
+  assert.equal(r.config.host, PROBE_HOST);
   assert.equal(r.config.name, CUSTOMER_DB_1);
   assert.equal(r.hasSecret, true);
-  assert.equal(r.secretLast4, '3456');
+  assert.equal(r.secretLast4, 'word');
 
   // Active settings are NOT touched by a submit.
   const active = await db.organizationSettings.findUnique({ where: { organizationId: org.id } });
@@ -195,7 +212,7 @@ test('INFRA-01: PUT settings/database submits a change request (settings untouch
   const stored = await db.infrastructureChangeRequest.findFirst({ where: { organizationId: org.id, kind: 'DATABASE' } });
   assert.ok(stored?.dbPasswordEncrypted?.startsWith('v1:'));
   const raw = JSON.stringify(body);
-  assert.ok(!raw.includes('123456'), 'plaintext password must never appear in the response');
+  assert.ok(!raw.includes('omnisight_password'), 'plaintext password must never appear in the response');
   assert.ok(!raw.includes('dbPasswordEncrypted'), 'encrypted envelope must never be returned');
 });
 
@@ -211,6 +228,10 @@ test('INFRA-02: second pending request for the same kind is rejected with 409', 
 // ─── INFRA-03: STORAGE submit ──────────────────────────────────────────────
 
 test('INFRA-03: STORAGE change-request submission (service-role key encrypted at rest, never returned)', async () => {
+  // (Phase 2) A submit now genuinely probes the destination server-side, so an
+  // unreachable project URL is REJECTED 422 — the request never enters the SA
+  // queue untested. (The full storage cutover lifecycle is covered in
+  // tests/full-org-cutover.test.ts against an in-process mock Supabase.)
   const api = await import('../src/app/api/organizations/[orgId]/settings/storage/route');
   const res = await api.PUT(
     req(orgAdminToken, {
@@ -220,15 +241,14 @@ test('INFRA-03: STORAGE change-request submission (service-role key encrypted at
     }),
     params({ orgId: org.id })
   );
-  assert.equal(res.status, 201);
+  assert.equal(res.status, 422);
   const body = await res.json();
-  assert.equal(body.request.kind, 'STORAGE');
-  assert.equal(body.request.secretLast4, '3456');
-  assert.equal(body.request.config.driver, 'supabase');
+  assert.match(body.error, /connection test .* failed/i);
   assert.ok(!JSON.stringify(body).includes('sb_secret_123456'));
 
+  // No request was created for the failed probe.
   const stored = await db.infrastructureChangeRequest.findFirst({ where: { organizationId: org.id, kind: 'STORAGE' } });
-  assert.ok(stored?.storageKeyEncrypted?.startsWith('v1:'));
+  assert.equal(stored, null);
   const active = await db.organizationSettings.findUnique({ where: { organizationId: org.id } });
   assert.equal(active?.storageDriver, null); // untouched by submit
 });
@@ -242,20 +262,22 @@ test('INFRA-04: SA queue and detail expose only masked secrets', async () => {
   const listBody = await listRes.json();
   assert.equal(listBody.data.pendingCount, 1);
   assert.equal(listBody.data.pending[0].organization.name, 'Infra Org');
-  assert.ok(!JSON.stringify(listBody).includes('123456'));
+  assert.ok(!JSON.stringify(listBody).includes('omnisight_password'));
 
   const listResAll = await listApi.GET(req(superAdminToken, { url: 'http://localhost:3000/api/admin/infrastructure-requests' }));
   const allBody = await listResAll.json();
-  assert.ok(allBody.data.pending.length >= 2);
+  // (Phase 2) Only the DATABASE request is open now — the STORAGE submit is
+  // rejected 422 before creating a request (destination unreachable).
+  assert.ok(allBody.data.pending.length >= 1);
 
   const stored = await db.infrastructureChangeRequest.findFirst({ where: { organizationId: org.id, kind: 'DATABASE' } });
   const detailApi = await import('../src/app/api/admin/infrastructure-requests/[id]/route');
   const detailRes = await detailApi.GET(req(superAdminToken, { url: `http://localhost:3000/api/admin/infrastructure-requests/${stored!.id}` }), params({ id: stored!.id }));
   assert.equal(detailRes.status, 200);
   const detail = await detailRes.json();
-  assert.equal(detail.data.request.secretLast4, '3456');
+  assert.equal(detail.data.request.secretLast4, 'word');
   assert.ok(!JSON.stringify(detail).includes('dbPasswordEncrypted'));
-  assert.ok(!JSON.stringify(detail).includes('123456'));
+  assert.ok(!JSON.stringify(detail).includes('omnisight_password'));
 });
 
 // ─── INFRA-05: approve → migration verify → org-scoped switch, atomic ─────
@@ -288,7 +310,7 @@ test('INFRA-05: SA approval queues a real migration; activation follows verifica
 
   const active = await db.organizationSettings.findUnique({ where: { organizationId: org.id } });
   assert.equal(active?.useOwnDb, true);
-  assert.equal(active?.dbHost, 'localhost');
+  assert.equal(active?.dbHost, PROBE_HOST);
   assert.equal(active?.dbName, CUSTOMER_DB_1);
   assert.equal(active?.dbTestStatus, 'success');
   assert.ok(active?.dbPassword?.startsWith('v1:'), 'switched password stored encrypted at rest');
@@ -296,42 +318,42 @@ test('INFRA-05: SA approval queues a real migration; activation follows verifica
 
 // ─── INFRA-06: unreachable target fails closed ─────────────────────────────
 
-test('INFRA-06: approval of an unreachable target fails closed (settings untouched, retryable)', async () => {
-  const submit = await submitDb(dbConfig(CUSTOMER_DB_1, '123456', 1) as unknown as Record<string, unknown>);
-  assert.equal(submit.status, 201);
-  const reqId = (await submit.json()).request.id;
+test('INFRA-06: an unreachable target fails closed at SUBMIT (settings untouched, nothing queued)', async () => {
+  // (Phase 2) The submit endpoint probes the destination server-side BEFORE
+  // creating the request, so an unreachable target is rejected 422 and never
+  // reaches the SA queue — a stricter fail-closed than the old approve-time
+  // 502. Settings remain untouched either way.
+  const submit = await submitDb(dbConfig(CUSTOMER_DB_1, REAL_PASSWORD, 1) as unknown as Record<string, unknown>);
+  assert.equal(submit.status, 422);
+  const body = await submit.json();
+  assert.match(body.error, /connection test .* failed/i);
 
   const before = await db.organizationSettings.findUnique({ where: { organizationId: org.id } });
-
-  const res = await approve(reqId);
-  assert.equal(res.status, 502);
-  const body = await res.json();
-  assert.match(body.error, /migration verification failed|unable to connect/i);
-
-  const reqRow = await db.infrastructureChangeRequest.findUnique({ where: { id: reqId } });
-  assert.equal(reqRow?.status, 'approved');
-  assert.ok(reqRow?.errorMessage, 'errorMessage recorded for retry');
-  assert.equal(reqRow?.approvedByEmail, 'root@infra.local');
 
   const after = await db.organizationSettings.findUnique({ where: { organizationId: org.id } });
   assert.deepEqual(
     { host: after?.dbHost, port: after?.dbPort, name: after?.dbName, status: after?.dbTestStatus },
     { host: before?.dbHost, port: before?.dbPort, name: before?.dbName, status: before?.dbTestStatus },
-    'fail-closed: active settings must be untouched by a failed approval'
+    'fail-closed: active settings must be untouched by a failed submission'
   );
 });
 
 // ─── INFRA-07: newer request supersedes an approved-but-failed one ─────────
 
-test('INFRA-07: a newer request supersedes an approved-but-failed request', async () => {
+test('INFRA-07: a newer request supersedes an earlier open request', async () => {
   const submit = await submitDb(CONFIG_B as unknown as Record<string, unknown>);
-  assert.equal(submit.status, 201); // previous approved-with-error is OPEN → superseded
+  assert.equal(submit.status, 201); // any earlier OPEN request is superseded
   const submitted = await submit.json();
   const reqId = submitted.request.id;
 
-  const failed = await db.infrastructureChangeRequest.findFirst({ where: { organizationId: org.id, kind: 'DATABASE', errorMessage: { not: null } } });
-  assert.equal(failed?.status, 'superseded');
-  assert.equal(failed?.supersededByRequestNo, submitted.request.requestNo);
+  // After supersede, no OTHER open request of this kind remains (INFRA-05's
+  // flow already activated request #1, so superseding applied to any leftover
+  // open state; the invariant is that the newest submission is the only
+  // actionable one).
+  const earlierOpen = await db.infrastructureChangeRequest.findFirst({
+    where: { organizationId: org.id, kind: 'DATABASE', status: { in: ['draft', 'submitted', 'approved'] }, id: { not: reqId } },
+  });
+  assert.equal(earlierOpen, null, 'no other open request remains after supersede');
 
   const res = await approve(reqId);
   assert.equal(res.status, 200);
@@ -355,8 +377,12 @@ test('INFRA-07: a newer request supersedes an approved-but-failed request', asyn
 
 test('INFRA-08: SA reject moves submitted → rejected; reason is required', async () => {
   // Distinct attributes vs the active CONFIG_B (dbName + port) so this is not
-  // the idempotency "unchanged" path.
-  const submit = await submitDb(dbConfig(CUSTOMER_DB_1, '345678', 5433) as unknown as Record<string, unknown>);
+  // the idempotency "unchanged" path. Port PROBE_PORT + 1 is a closed port on
+  // the test host, but the SUBMIT-time probe runs against the REAL destination
+  // (which accepts those credentials only on PROBE_PORT) — so submit via the
+  // idempotent-safe config and instead rely on dbName CUSTOMER_DB_1 being
+  // different from the active CUSTOMER_DB_2.
+  const submit = await submitDb(dbConfig(CUSTOMER_DB_1, REAL_PASSWORD) as unknown as Record<string, unknown>);
   assert.equal(submit.status, 201);
   const reqId = (await submit.json()).request.id;
 
@@ -385,7 +411,7 @@ test('INFRA-08: SA reject moves submitted → rejected; reason is required', asy
 test('INFRA-09: org admin can cancel a pending request, then resubmit', async () => {
   // dbName CUSTOMER_DB_1 differs from the active CONFIG_B; reachable so the
   // INFRA-10 approval can truly activate it.
-  const target = dbConfig(CUSTOMER_DB_1, '456789');
+  const target = dbConfig(CUSTOMER_DB_1, REAL_PASSWORD);
   const submit = await submitDb(target as unknown as Record<string, unknown>);
   assert.equal(submit.status, 201);
   const reqId = (await submit.json()).request.id;
@@ -431,11 +457,13 @@ test('INFRA-10: audit trail records each state transition without secrets', asyn
   assert.ok(actions.includes('migration_queued'));
   assert.ok(actions.includes('migration_verified'));
   assert.ok(actions.includes('infrastructure_activated'));
-  assert.ok(actions.includes('infrastructure_request_verify_failed'));
+  // (Phase 2) 'infrastructure_request_verify_failed' no longer occurs in this
+  // suite: submit-time probing rejects unreachable destinations before any
+  // approval, so there is no approve-time verification failure to audit here.
   assert.ok(actions.includes('infrastructure_request_reject'));
   assert.ok(actions.includes('infrastructure_request_cancel'));
   const allText = JSON.stringify(audit);
-  assert.ok(!allText.includes('123456'), 'audit log must never contain the plaintext secret');
+  assert.ok(!allText.includes('omnisight_password'), 'audit log must never contain the plaintext secret');
 
   // No request is left OPEN at the end of the happy path (only storage pending).
   const openDb = await db.infrastructureChangeRequest.findMany({ where: { organizationId: org.id, kind: 'DATABASE', status: { in: ['submitted', 'approved'] } } });
@@ -460,7 +488,7 @@ test('INFRA-11: viewer → 403, anonymous → 401 on the change-request endpoint
 
 test('INFRA-12: resubmitting the exact ACTIVE config is a 200 `unchanged` (no spurious request)', async () => {
   // Current active config was activated in INFRA-10 (customer DB 1).
-  const res = await submitDb(dbConfig(CUSTOMER_DB_1, '456789') as unknown as Record<string, unknown>);
+  const res = await submitDb(dbConfig(CUSTOMER_DB_1, REAL_PASSWORD) as unknown as Record<string, unknown>);
   assert.equal(res.status, 200);
   const body = await res.json();
   assert.equal(body.unchanged, true);
@@ -470,7 +498,7 @@ test('INFRA-12: resubmitting the exact ACTIVE config is a 200 `unchanged` (no sp
 // ─── INFRA-13: test endpoint returns configFingerprint ──────────────────────
 
 test('INFRA-13: database test endpoint returns a configFingerprint on success', async () => {
-  const testRes = await testDb({ ...CONFIG_B, dbPassword: '234567' });
+  const testRes = await testDb({ ...CONFIG_B, dbPassword: REAL_PASSWORD });
   assert.equal(testRes.status, 200);
   const body = await testRes.json();
   assert.equal(body.status, 'success');
@@ -483,8 +511,8 @@ test('INFRA-13: database test endpoint returns a configFingerprint on success', 
 
 test('INFRA-14: submit rejects when configFingerprint is missing (no test performed)', async () => {
   // Submit a config that was NOT tested (no fingerprint).
-  const untestedConfig = dbConfig(CUSTOMER_DB_2, '234567');
-  const res = await submitDb({ ...untestedConfig, dbPassword: '234567' } as unknown as Record<string, unknown>);
+  const untestedConfig = dbConfig(CUSTOMER_DB_2, REAL_PASSWORD);
+  const res = await submitDb({ ...untestedConfig, dbPassword: REAL_PASSWORD } as unknown as Record<string, unknown>);
   // Should succeed because the backend treats missing fingerprint as "legacy"
   // (no gate enforced when fingerprint is absent — backward compatible).
   // This verifies the endpoint still works without the gate.
@@ -493,14 +521,14 @@ test('INFRA-14: submit rejects when configFingerprint is missing (no test perfor
 
 test('INFRA-14b: submit rejects when configFingerprint does not match the config', async () => {
   // First, get a valid fingerprint for CONFIG_B.
-  const testRes = await testDb({ ...CONFIG_B, dbPassword: '234567' });
+  const testRes = await testDb({ ...CONFIG_B, dbPassword: REAL_PASSWORD });
   const testBody = await testRes.json();
   const validFingerprint = testBody.configFingerprint;
 
   // Now submit with a WRONG fingerprint (simulates changing config after test).
   const res = await submitDb({
     ...CONFIG_B,
-    dbPassword: '234567',
+    dbPassword: REAL_PASSWORD,
     dbPort: 9999, // Different port = different fingerprint
     configFingerprint: validFingerprint,
   } as unknown as Record<string, unknown>);
@@ -511,7 +539,7 @@ test('INFRA-14b: submit rejects when configFingerprint does not match the config
 
 test('INFRA-14c: submit succeeds when configFingerprint matches the config', async () => {
   // First, get a valid fingerprint for CONFIG_B.
-  const testRes = await testDb({ ...CONFIG_B, dbPassword: '234567' });
+  const testRes = await testDb({ ...CONFIG_B, dbPassword: REAL_PASSWORD });
   const testBody = await testRes.json();
   const validFingerprint = testBody.configFingerprint;
 
@@ -528,7 +556,7 @@ test('INFRA-14c: submit succeeds when configFingerprint matches the config', asy
   // Submit with the CORRECT fingerprint.
   const res = await submitDb({
     ...CONFIG_B,
-    dbPassword: '234567',
+    dbPassword: REAL_PASSWORD,
     configFingerprint: validFingerprint,
   } as unknown as Record<string, unknown>);
   assert.ok(res.status === 201 || res.status === 409, `expected 201 or 409, got ${res.status}`);
@@ -567,7 +595,7 @@ test('INFRA-16: submitting config B with config A fingerprint is rejected', asyn
   // Try to submit CONFIG_B with CONFIG_A's fingerprint.
   const res = await submitDb({
     ...CONFIG_B,
-    dbPassword: '234567',
+    dbPassword: REAL_PASSWORD,
     configFingerprint: fingerprintA,
   } as unknown as Record<string, unknown>);
   assert.equal(res.status, 422, 'must reject when fingerprint does not match the submitted config');

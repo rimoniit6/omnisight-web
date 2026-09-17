@@ -19,6 +19,17 @@ export function ensureCacheInvalidationListener(): void {
   if (initialized) return;
   initialized = true;
 
+  // LONG-LIVED PROCESSES ONLY. The listener is a permanent Postgres LISTEN
+  // connection: it keeps the event loop alive, which is correct for the Next.js
+  // server (it must receive cross-process invalidations while idle) but hangs
+  // short-lived processes (test runners, CLI scripts) that would otherwise exit
+  // after their work — node --test never terminates because the socket never
+  // closes. Next.js sets NEXT_RUNTIME=nodejs only inside its server runtime,
+  // so that is the discriminator: everywhere else (tests, scripts) the
+  // listener is skipped entirely — those caches are per-process and their
+  // lifetime is too short to go stale.
+  if (process.env.NEXT_RUNTIME !== 'nodejs') return;
+
   startCacheInvalidationListener(async (msg: CacheInvalidationMessage) => {
     const { invalidateOrgDbCache } = await import('@/lib/org-db');
     const { invalidateOrgStorageCache } = await import('@/lib/org-storage');

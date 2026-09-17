@@ -14,6 +14,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { PaginationControls } from '@/components/ui/pagination-controls';
 import { toast } from 'sonner';
 import { QuickStats, type QuickStat } from '@/components/ui/quick-stats';
+import { useAuthStore } from '@/lib/store';
+import { getActionPermissionDeniedToast, isOrgAdminRole } from '@/lib/auth-error';
 import { useLiveUpdates } from '@/hooks/use-live-updates';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, Legend } from 'recharts';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
@@ -47,6 +49,7 @@ export function DevicesPage() {
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const lastUpdatedRef = useRef<number | null>(null);
   const queryClient = useQueryClient();
+  const currentUser = useAuthStore((s) => s.user);
 
   const { isConnected } = useLiveUpdates();
 
@@ -113,6 +116,11 @@ export function DevicesPage() {
 
   const handleDelete = async (id: string) => {
     setDeleteDialogId(null);
+    if (!isOrgAdminRole(currentUser?.role)) {
+      const denied = getActionPermissionDeniedToast('Delete device', 'Organization Admin', currentUser?.role);
+      toast.error(denied.title, { description: denied.description });
+      return;
+    }
     setDeletingId(id);
     try {
       const res = await fetch(`/api/devices/${id}`, { method: 'DELETE' });

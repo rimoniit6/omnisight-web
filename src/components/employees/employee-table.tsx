@@ -13,6 +13,8 @@ import {
 import { useIsMobile } from '@/hooks/use-mobile';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
+import { useAuthStore } from '@/lib/store';
+import { getActionPermissionDeniedToast, isOrgAdminRole } from '@/lib/auth-error';
 import { EmployeeStatusBadge } from './employee-status-badge';
 import { PresenceDot } from '@/components/ui/presence-dot';
 import { isHeartbeatFresh } from '@/lib/presence';
@@ -71,6 +73,7 @@ export function EmployeeTable({
   const allSelected = employees.length > 0 && employees.every((e) => selectedIds.has(e.id));
   const tableRef = useRef<HTMLDivElement>(null);
   const isMobile = useIsMobile();
+  const currentUser = useAuthStore((s) => s.user);
 
   const toggleAll = () => {
     if (allSelected) {
@@ -99,6 +102,11 @@ export function EmployeeTable({
   };
 
   const handleStatusChange = async (emp: EmployeeRow, newStatus: string) => {
+    if (!isOrgAdminRole(currentUser?.role)) {
+      const denied = getActionPermissionDeniedToast('Change employee status', 'Organization Admin', currentUser?.role);
+      toast.error(denied.title, { description: denied.description });
+      return;
+    }
     try {
       const res = await fetch(`/api/employees/${emp.id}`, {
         method: 'PUT',

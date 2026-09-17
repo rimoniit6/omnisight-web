@@ -9,6 +9,8 @@ import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { EmployeeCombobox } from '@/components/employees/employee-combobox';
 import { toast } from 'sonner';
+import { useAuthStore } from '@/lib/store';
+import { getActionPermissionDeniedToast, isOrgAdminRole } from '@/lib/auth-error';
 
 interface Department {
   id: string;
@@ -27,6 +29,7 @@ interface DepartmentDialogProps {
 
 export function DepartmentDialog({ open, onOpenChange, department, onSaved }: DepartmentDialogProps) {
   const isEdit = !!department;
+  const currentUser = useAuthStore((s) => s.user);
   const [saving, setSaving] = useState(false);
   const [form, setForm] = useState({ name: '', description: '', status: 'active', managerId: '' });
 
@@ -47,6 +50,11 @@ export function DepartmentDialog({ open, onOpenChange, department, onSaved }: De
 
   const handleSave = async () => {
     if (!form.name) { toast.error('Name is required'); return; }
+    if (!isOrgAdminRole(currentUser?.role)) {
+      const denied = getActionPermissionDeniedToast(isEdit ? 'Edit department' : 'Add department', 'Organization Admin', currentUser?.role);
+      toast.error(denied.title, { description: denied.description });
+      return;
+    }
     setSaving(true);
     try {
       const url = isEdit ? `/api/departments/${department!.id}` : '/api/departments';

@@ -26,9 +26,10 @@
  *           platform files survive.
  *   FCO-08  Cutover FAILURE at the boundary drains → rollback: 502, migration
  *           failed/errorStage=cutover, request stays approved with the rollback
- *           error, settings reverted (useOwnDb=false, dbTestStatus=failed) but
- *           the destination config KEPT, infrastructure_cutover_rolled_back
- *           audit row written.
+ *           error, settings reverted (useOwnDb=false; the CONNECTION-test
+ *           status is NOT clobbered — a failed MIGRATION is not a failed
+ *           CONNECTION, Phase 10/R-1) but the destination config KEPT,
+ *           infrastructure_cutover_rolled_back audit row written.
  *   FCO-09  Misconfigured org (useOwnDb without config) FAILS CLOSED — no
  *           silent fallback — and the cross-org device scan skips it.
  *   FCO-10  FULL COMPLETENESS: every org-owned table ≥ the source's rows at the
@@ -56,6 +57,9 @@ process.env.JWT_SECRET = 'test-jwt-secret-fullcutover-0123456789abcdef';
 process.env.SUPER_ADMIN_EMAIL = 'root@fullcutover.local';
 process.env.SUPER_ADMIN_PASSWORD = 'S3cure!FullCutover2026';
 (process.env as Record<string, string>).NODE_ENV = 'test';
+// These suites probe REAL loopback destinations (throwaway Postgres, mock Supabase).
+// Test-only SSRF relaxation — see src/lib/ssrf.ts. Never set in production.
+(process.env as Record<string, string>).OMNISIGHT_ALLOW_PRIVATE_TARGETS = '1';
 
 const params = (p: Record<string, string>) => ({ params: Promise.resolve(p) });
 
@@ -64,11 +68,19 @@ const params = (p: Record<string, string>) => ({ params: Promise.resolve(p) });
  * the destination prismas. All post-copy verification re-reads the
  * destination through a fresh raw PrismaClient (never the cached org client).
  */
+// Destination coordinates derived from PG_TEST_BASE_URL so the approve-time
+// probe, the migration engine and the destination all address the SAME server
+// that hosts the throwaway DBs (Docker maps it on 5433; native on 5432).
+const FCO_HOST = new URL(PG_TEST_BASE).hostname;
+const FCO_PORT = Number(new URL(PG_TEST_BASE).port) || 5432;
+const FCO_USER = decodeURIComponent(new URL(PG_TEST_BASE).username);
+const FCO_PASSWORD = decodeURIComponent(new URL(PG_TEST_BASE).password);
+
 const DEST_SPEC = {
-  host: 'localhost',
-  port: 5432,
+  host: FCO_HOST,
+  port: FCO_PORT,
   name: DEST_DB_NAME,
-  user: 'postgres',
+  user: FCO_USER,
   ssl: false,
   useOwnDb: true,
 };
@@ -332,7 +344,7 @@ test('FCO-01: DATABASE cutover captures pre-boundary AND in-flight rows at cutov
     kind: 'DATABASE',
     actor: { id: 'test-admin', email: 'admin@fco.test' },
     configJson: JSON.stringify(DEST_SPEC),
-    password: '123456',
+    password: FCO_PASSWORD,
   });
   requestAId = request.id;
 
@@ -462,7 +474,7 @@ test('FCO-02: org-facing status API shows active infrastructure plus real counte
   assert.equal(orgSettings?.dbTestStatus, 'success');
 
   const raw = JSON.stringify(body);
-  assert.ok(!raw.includes('123456'), 'no password in the status payload');
+  assert.ok(!raw.includes(FCO_PASSWORD), 'no password in the status payload');
   assert.ok(!raw.includes('postgresql://'), 'no connection URL in the status payload');
 });
 
@@ -767,7 +779,7 @@ test('FCO-08: cutover failure at the boundary drains → 502 + rollback (config 
     kind: 'DATABASE',
     actor: { id: 'test-admin-r', email: 'admin@fco.test' },
     configJson: JSON.stringify(rollbackSpec),
-    password: '123456',
+    password: FCO_PASSWORD,
   });
   requestRId = request.id;
 
@@ -811,9 +823,13 @@ test('FCO-08: cutover failure at the boundary drains → 502 + rollback (config 
 
   const settings = await db.organizationSettings.findUnique({ where: { organizationId: orgRId } });
   assert.equal(settings?.useOwnDb, false, 'routing flipped BACK to the platform DB');
-  assert.equal(settings?.dbTestStatus, 'failed');
+  // (Phase 10 / R-1) A failed MIGRATION must not masquerade as a failed
+  // CONNECTION: dbTestStatus keeps whatever the connection tests last said
+  // (null here — never activated/tested) instead of being overwritten 'failed'
+  // by the rollback, which used to block the retry behind a needless re-test.
+  assert.notEqual(settings?.dbTestStatus, 'failed', 'rollback must not write a failed connection status');
   assert.equal(settings?.dbName, ROLLBACK_DB_NAME, 'the destination config is KEPT for a retry');
-  assert.equal(settings?.dbHost, 'localhost');
+  assert.equal(settings?.dbHost, FCO_HOST);
 
   const rollbackAudit = await db.auditLog.count({
     where: { organizationId: orgRId, action: 'infrastructure_cutover_rolled_back', resourceId: migrationRId },
@@ -853,7 +869,7 @@ test('FCO-09: misconfigured org FAILS CLOSED — no silent fallback; device scan
   // Heal Org N: a complete config produces a WORKING org client (no fallback).
   await db.organizationSettings.update({
     where: { organizationId: orgNId },
-    data: { dbName: DEST_DB_NAME, dbUser: 'postgres', dbPassword: encryptSecret('123456'), dbPort: 5432, dbSsl: false },
+    data: { dbName: DEST_DB_NAME, dbUser: FCO_USER, dbPassword: encryptSecret(FCO_PASSWORD), dbPort: FCO_PORT, dbSsl: false },
   });
   const ownN = await getPrismaForOrg(orgNId);
   assert.equal(ownN.mode, 'own', 'complete config resolves to the org DB, not the platform');

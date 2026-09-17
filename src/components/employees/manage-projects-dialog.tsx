@@ -9,6 +9,8 @@ import { Badge } from '@/components/ui/badge';
 import { Check, Loader2, Search } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
+import { useAuthStore } from '@/lib/store';
+import { getActionPermissionDeniedToast, isOrgAdminRole } from '@/lib/auth-error';
 
 interface ProjectOption {
   id: string;
@@ -40,6 +42,7 @@ const projectStatusClass: Record<string, string> = {
 };
 
 export function ManageProjectsDialog({ employeeId, employeeName, open, onOpenChange, onSaved }: ManageProjectsDialogProps) {
+  const currentUser = useAuthStore((s) => s.user);
   const [query, setQuery] = React.useState('');
   const [results, setResults] = React.useState<ProjectOption[]>([]);
   const [total, setTotal] = React.useState(0);
@@ -154,6 +157,11 @@ export function ManageProjectsDialog({ employeeId, employeeName, open, onOpenCha
   };
 
   const handleSave = async () => {
+    if (!isOrgAdminRole(currentUser?.role)) {
+      const denied = getActionPermissionDeniedToast('Update project assignments', 'Organization Admin', currentUser?.role);
+      toast.error(denied.title, { description: denied.description });
+      return;
+    }
     setSaving(true);
     try {
       const res = await fetch(`/api/employees/${employeeId}/projects`, {

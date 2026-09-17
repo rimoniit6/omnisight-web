@@ -62,6 +62,8 @@ import { AUTO_DETECTED_TYPES } from '@/lib/anomalies/constants';
 import { useAppStore } from '@/lib/store';
 import type { DateRange } from 'react-day-picker';
 import { toast } from 'sonner';
+import { useAuthStore } from '@/lib/store';
+import { PermissionDeniedError, handleDeniedError, isManagerOrHigher } from '@/lib/auth-error';
 
 // ==================== Types ====================
 
@@ -154,6 +156,7 @@ async function request(url: string, opts: RequestInit) {
 
 function AnomalyDetailDialog({ anomalyId, open, onClose }: { anomalyId: string | null; open: boolean; onClose: () => void }) {
   const queryClient = useQueryClient();
+  const currentUser = useAuthStore((s) => s.user);
   const [newStatus, setNewStatus] = useState('');
 
   // The dialog fetches its own record by id (authoritative) — it never renders
@@ -169,12 +172,16 @@ function AnomalyDetailDialog({ anomalyId, open, onClose }: { anomalyId: string |
   const parsedMetadata = anomaly?.metadata ? (() => { try { return JSON.parse(anomaly.metadata); } catch { return null; } })() : null;
 
   const updateMutation = useMutation({
-    mutationFn: async (status: string) =>
-      request(`/api/anomalies/${anomalyId}`, {
+    mutationFn: async (status: string) => {
+      if (!isManagerOrHigher(currentUser?.role)) {
+        throw new PermissionDeniedError('Update anomaly status', 'Manager or Higher', currentUser?.role);
+      }
+      return request(`/api/anomalies/${anomalyId}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ status }),
-      }) as Promise<AnomalyItem>,
+      }) as Promise<AnomalyItem>;
+    },
     onSuccess: (updated) => {
       // Merge the server-confirmed record into the open dialog AND every
       // cached list entry so the UI reflects it instantly (dialog stays open).
@@ -190,6 +197,7 @@ function AnomalyDetailDialog({ anomalyId, open, onClose }: { anomalyId: string |
       setNewStatus('');
     },
     onError: (err) => {
+      if (handleDeniedError(err)) return;
       const status = (err as { status?: number }).status;
       if (status === 401) toast.error('Your session expired. Please sign in again.');
       else if (status === 403) toast.error("You're not authorized to update this anomaly.");
@@ -485,6 +493,7 @@ function AnomalyCard({ anomaly, index, selected, onSelect, onViewDetail }: {
 
 export function AnomaliesPage() {
   const queryClient = useQueryClient();
+  const currentUser = useAuthStore((s) => s.user);
   const [typeFilter, setTypeFilter] = useState('');
   const [severityFilter, setSeverityFilter] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
@@ -556,6 +565,9 @@ export function AnomaliesPage() {
   // Batch resolve
   const batchMutation = useMutation({
     mutationFn: async (status: string) => {
+      if (!isManagerOrHigher(currentUser?.role)) {
+        throw new PermissionDeniedError('Update anomaly statuses', 'Manager or Higher', currentUser?.role);
+      }
       const ids = Array.from(selectedIds);
       const res = await fetch('/api/anomalies/batch', {
         method: 'POST',
@@ -579,22 +591,30 @@ export function AnomaliesPage() {
       );
       setSelectedIds(new Set());
     },
-    onError: () => toast.error('Batch update failed'),
+    onError: (err) => {
+      if (handleDeniedError(err)) return;
+      toast.error('Batch update failed');
+    },
   });
 
   // Run detection
   const detectMutation = useMutation({
-    mutationFn: async () =>
-      request('/api/anomalies/detect', {
+    mutationFn: async () => {
+      if (!isManagerOrHigher(currentUser?.role)) {
+        throw new PermissionDeniedError('Run anomaly detection', 'Manager or Higher', currentUser?.role);
+      }
+      return request('/api/anomalies/detect', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({}),
-      }),
+      });
+    },
     onSuccess: (result) => {
       queryClient.invalidateQueries({ queryKey: ['anomalies'] });
       toast.success(`Detection complete: ${result.detected} new anomalies found`);
     },
     onError: (err) => {
+      if (handleDeniedError(err)) return;
       const status = (err as { status?: number }).status;
       if (status === 403) toast.error('Anomaly detection is disabled for this organization.');
       else if (status === 401) toast.error('Your session expired. Please sign in again.');

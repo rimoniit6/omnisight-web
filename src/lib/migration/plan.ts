@@ -72,6 +72,10 @@ export const MIGRATION_TABLES: MigrationTable[] = [
   { model: 'keyboardActivity', table: 'KeyboardActivity', nullableFks: ['deviceId'] },
   { model: 'locationEvent', table: 'LocationEvent', nullableFks: ['deviceId'] },
   { model: 'screenshot', table: 'Screenshot', nullableFks: ['deviceId'] },
+  // Live-updates analytics event: employeeId is a plain column by design
+  // (no FK, see schema comment) — the referenced Employee row is copied
+  // earlier, so ordering remains FK-safe.
+  { model: 'realtimeScreenshotEvent', table: 'RealtimeScreenshotEvent', nullableFks: [] },
   { model: 'workDaySummary', table: 'WorkDaySummary', nullableFks: [] },
   { model: 'breakSession', table: 'BreakSession', nullableFks: ['deviceId'] },
   { model: 'webcamSession', table: 'WebcamSession', nullableFks: [] },

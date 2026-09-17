@@ -73,9 +73,10 @@ import {
   UserMinus,
 } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
-import { useAppStore } from '@/lib/store';
+import { useAppStore, useAuthStore } from '@/lib/store';
 import { toast } from 'sonner';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
+import { getActionPermissionDeniedToast, isOrgAdminRole } from '@/lib/auth-error';
 import { motion } from 'framer-motion';
 import { useTheme } from 'next-themes';
 import { PdfDownloadButton } from '@/components/reports/pdf-download-button';
@@ -199,6 +200,7 @@ export function EmployeeDetailsPage() {
   const pageContext = useAppStore((s) => s.pageContext);
   const setCurrentPage = useAppStore((s) => s.setCurrentPage);
   const setPageContextLabel = useAppStore((s) => s.setPageContextLabel);
+  const currentUser = useAuthStore((s) => s.user);
   const { resolvedTheme } = useTheme();
   const isDark = resolvedTheme === 'dark';
   const queryClient = useQueryClient();
@@ -434,6 +436,11 @@ export function EmployeeDetailsPage() {
   const handleArchive = async () => {
     setArchiveDialogOpen(false);
     if (!emp || archiving) return;
+    if (!isOrgAdminRole(currentUser?.role)) {
+      const denied = getActionPermissionDeniedToast('Archive employee', 'Organization Admin', currentUser?.role);
+      toast.error(denied.title, { description: denied.description });
+      return;
+    }
     setArchiving(true);
     try {
       const res = await fetch(`/api/employees/${emp.id}`, { method: 'DELETE' });

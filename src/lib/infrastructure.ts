@@ -341,8 +341,10 @@ export async function submitChangeRequest(params: {
   storageKey?: string;
   testStatus?: string | null;
   testMessage?: string | null;
+  /** Server-recomputed fingerprint of the config the server itself probed. */
+  testFingerprint?: string | null;
 }): Promise<{ request: Awaited<ReturnType<typeof db.infrastructureChangeRequest.create>>; superseded: number }> {
-  const { organizationId, kind, actor, configJson, password, storageKey, testStatus, testMessage } = params;
+  const { organizationId, kind, actor, configJson, password, storageKey, testStatus, testMessage, testFingerprint } = params;
 
   const requestNo = await nextRequestNo(organizationId, kind);
 
@@ -364,6 +366,7 @@ export async function submitChangeRequest(params: {
       lastTestStatus: testStatus ?? null,
       lastTestMessage: testMessage ?? null,
       lastTestedAt: testStatus ? new Date() : null,
+      lastTestConfigFingerprint: testFingerprint ?? null,
       requestedById: actor.id,
       requestedByEmail: actor.email,
     },

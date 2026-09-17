@@ -26,6 +26,9 @@ const TEST_DB_NAME = 'workai_test_cache_consistency';
 process.env.DATABASE_URL = `${PG_TEST_BASE}/${TEST_DB_NAME}?schema=public`;
 process.env.DIRECT_URL = process.env.DATABASE_URL;
 (process.env as Record<string, string>).NODE_ENV = 'test';
+// These suites probe REAL loopback destinations (throwaway Postgres, mock Supabase).
+// Test-only SSRF relaxation — see src/lib/ssrf.ts. Never set in production.
+(process.env as Record<string, string>).OMNISIGHT_ALLOW_PRIVATE_TARGETS = '1';
 
 let db: import('../src/lib/db').Db['db'];
 let orgId: string;

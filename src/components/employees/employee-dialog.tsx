@@ -13,6 +13,7 @@ import {
 import { Badge } from '@/components/ui/badge';
 import { toast } from 'sonner';
 import { useAuthStore } from '@/lib/store';
+import { getActionPermissionDeniedToast, isOrgAdminRole } from '@/lib/auth-error';
 
 interface Employee {
   id: string;
@@ -47,6 +48,7 @@ export function EmployeeDialog({ open, onOpenChange, employee, onSaved }: Employ
     employeeId: '', departmentId: '', joinDate: '', status: 'active',
   });
   const authOrg = useAuthStore((s) => s.organization);
+  const currentUser = useAuthStore((s) => s.user);
 
   const { data: departments } = useQuery<Array<{ id: string; name: string; manager?: { id: string } | null }>>({
     queryKey: ['departments'],
@@ -101,6 +103,11 @@ export function EmployeeDialog({ open, onOpenChange, employee, onSaved }: Employ
     }
     if (!isEdit && !form.employeeId.trim()) {
       toast.error('Employee ID is required');
+      return;
+    }
+    if (!isOrgAdminRole(currentUser?.role)) {
+      const denied = getActionPermissionDeniedToast(isEdit ? 'Edit employee' : 'Add employee', 'Organization Admin', currentUser?.role);
+      toast.error(denied.title, { description: denied.description });
       return;
     }
     setSaving(true);

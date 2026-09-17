@@ -13,6 +13,13 @@ import {
   configFingerprint,
   dbConfigFingerprintInput,
 } from '@/lib/infrastructure';
+import { testDbConnection, sanitizeProbeErrorForLog } from '@/lib/infra-connect';
+import { buildRequestTestEvidence } from '@/lib/infrastructure-state';
+
+/** buildRequestTestEvidence returns failed evidence too — a submit may only proceed on success. */
+function probeStatus(evidence: { lastTestStatus: string | null }): boolean {
+  return evidence.lastTestStatus === 'success';
+}
 
 // PUT /api/organizations/[orgId]/settings/database
 //
@@ -50,8 +57,11 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ orgI
   const { config } = validation;
 
   // Verify the config was tested before allowing submission.
-  // The frontend sends a configFingerprint from the test response; we recompute
-  // it from the submitted config and reject if they don't match.
+  // (Phase 2, R-1) The client-sent fingerprint is only a fast-path equality
+  // hint: a config-changed-after-test mismatch is still rejected immediately.
+  // The AUTHORITATIVE evidence is re-derived SERVER-SIDE below via a live
+  // probe of the submitted config (which also re-runs the SSRF gate and the
+  // DDL capability check), so a client can never assert an untested success.
   const submittedFingerprint = typeof body.configFingerprint === 'string' ? body.configFingerprint : null;
   const expectedFingerprint = await configFingerprint(dbConfigFingerprintInput(config));
   if (submittedFingerprint && submittedFingerprint !== expectedFingerprint) {
@@ -101,12 +111,35 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ orgI
   const conflict = await ensureNoOpen();
   if (conflict) return conflict;
 
+  // (Phase 2, R-1) Server-side test at SUBMIT time: probe the exact config
+  // being submitted (with the password the admin just provided) so the new
+  // request is born with fingerprint-bound, fresh test evidence. The probe is
+  // the SAME authoritative test the Test button uses (SSRF gate + DDL probe
+  // included). A submission whose destination fails is rejected 422 — the
+  // request never enters the SA queue untested.
+  let testEvidence: Awaited<ReturnType<typeof buildRequestTestEvidence>>;
+  try {
+    const probe = await testDbConnection({ ...config, password: effectivePassword });
+    testEvidence = await buildRequestTestEvidence(probe, {
+      kind: 'DATABASE', host: config.host, port: config.port, name: config.name, user: config.user, ssl: config.ssl, useOwnDb: true,
+    });
+  } catch (err) {
+    log.error('api.organizations.settings.database.submit.probe', { error: sanitizeProbeErrorForLog(err) }, requestContext(req));
+    return apiError('The connection test could not be completed. Please test the connection and try again.', 422);
+  }
+  if (!probeStatus(testEvidence)) {
+    return apiError(`The connection test for the submitted configuration failed: ${testEvidence.lastTestMessage ?? 'connection test failed'}. Test the connection and submit a working configuration.`, 422);
+  }
+
   const { request } = await submitChangeRequest({
     organizationId: orgId,
     kind: 'DATABASE',
     actor: { id: auth.userId, email: auth.email },
     configJson: JSON.stringify({ useOwnDb: true, host: config.host, port: config.port, name: config.name, user: config.user, ssl: config.ssl }),
     password: effectivePassword,
+    testStatus: testEvidence.lastTestStatus,
+    testMessage: testEvidence.lastTestMessage,
+    testFingerprint: testEvidence.lastTestConfigFingerprint,
   });
 
   await auditSubmit(auth.userId, auth.email, orgId, request.id, 'enable', request.requestNo);

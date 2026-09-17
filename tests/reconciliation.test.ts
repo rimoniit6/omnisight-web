@@ -27,12 +27,23 @@ process.env.JWT_SECRET = 'test-jwt-secret-recon-0123456789abcdef';
 process.env.SUPER_ADMIN_EMAIL = 'root@recon.local';
 process.env.SUPER_ADMIN_PASSWORD = 'S3cure!Recon2026';
 (process.env as Record<string, string>).NODE_ENV = 'test';
+// These suites probe REAL loopback destinations (throwaway Postgres, mock Supabase).
+// Test-only SSRF relaxation — see src/lib/ssrf.ts. Never set in production.
+(process.env as Record<string, string>).OMNISIGHT_ALLOW_PRIVATE_TARGETS = '1';
+
+// Destination coordinates derived from PG_TEST_BASE_URL so approve/probe,
+// the migration engine and the destination all address the SAME server that
+// hosts the throwaway DBs (Docker maps it on 5433; native on 5432).
+const REC_HOST = new URL(PG_TEST_BASE).hostname;
+const REC_PORT = Number(new URL(PG_TEST_BASE).port) || 5432;
+const REC_USER = decodeURIComponent(new URL(PG_TEST_BASE).username);
+const REC_PASSWORD = decodeURIComponent(new URL(PG_TEST_BASE).password);
 
 const DEST_SPEC = {
-  host: 'localhost',
-  port: 5432,
+  host: REC_HOST,
+  port: REC_PORT,
   name: DEST_DB_NAME,
-  user: 'postgres',
+  user: REC_USER,
   ssl: false,
   useOwnDb: true,
 };
@@ -186,7 +197,7 @@ test('REC-01: 100 initial records + 10 arriving during migration → 110 at dest
     kind: 'DATABASE',
     actor: { id: 'test-admin', email: 'admin@rec.test' },
     configJson: JSON.stringify(DEST_SPEC),
-    password: '123456',
+    password: REC_PASSWORD,
   });
   requestId = request.id;
 
@@ -324,7 +335,7 @@ test('REC-05: org DB unavailable after activation → controlled failure', async
   // Corrupt the org DB config (point to a non-existent host)
   await db.organizationSettings.update({
     where: { organizationId: orgId },
-    data: { dbHost: 'nonexistent-host.invalid', dbUser: 'postgres', dbPassword: encryptSecret('123456'), dbPort: 5432 },
+    data: { dbHost: 'nonexistent-host.invalid', dbUser: REC_USER, dbPassword: encryptSecret(REC_PASSWORD), dbPort: REC_PORT },
   });
 
   // Invalidate cache so the next getPrismaForOrg rebuilds the client
@@ -349,7 +360,7 @@ test('REC-05: org DB unavailable after activation → controlled failure', async
   // Restore valid config for other tests
   await db.organizationSettings.update({
     where: { organizationId: orgId },
-    data: { dbHost: 'localhost', dbName: DEST_DB_NAME, dbUser: 'postgres', dbPassword: encryptSecret('123456'), dbPort: 5432 },
+    data: { dbHost: REC_HOST, dbName: DEST_DB_NAME, dbUser: REC_USER, dbPassword: encryptSecret(REC_PASSWORD), dbPort: REC_PORT },
   });
   await invalidateOrgDbCache(orgId);
 });

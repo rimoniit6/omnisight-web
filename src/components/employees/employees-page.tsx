@@ -21,6 +21,7 @@ import { exportToCSV } from '@/lib/csv-export';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { QuickStats, type QuickStat } from '@/components/ui/quick-stats';
 import { useAppStore, useAuthStore } from '@/lib/store';
+import { getActionPermissionDeniedToast, isOrgAdminRole } from '@/lib/auth-error';
 import { motion, AnimatePresence } from 'framer-motion';
 
 export function EmployeesPage() {
@@ -138,6 +139,11 @@ export function EmployeesPage() {
 
   const handleArchive = async (id: string) => {
     setArchiveDialogId(null);
+    if (!isOrgAdminRole(currentUser?.role)) {
+      const denied = getActionPermissionDeniedToast('Archive employee', 'Organization Admin', currentUser?.role);
+      toast.error(denied.title, { description: denied.description });
+      return;
+    }
     setArchivingId(id);
     try {
       const res = await fetch(`/api/employees/${id}`, { method: 'DELETE' });
@@ -181,6 +187,11 @@ export function EmployeesPage() {
 
   const handleBulkArchive = useCallback(async () => {
     if (bulkArchiving) return; // prevent double-submit
+    if (!isOrgAdminRole(currentUser?.role)) {
+      const denied = getActionPermissionDeniedToast('Archive employees', 'Organization Admin', currentUser?.role);
+      toast.error(denied.title, { description: denied.description });
+      return;
+    }
     setBulkArchiving(true);
     try {
       const res = await fetch('/api/employees/bulk', {
@@ -208,7 +219,7 @@ export function EmployeesPage() {
     } finally {
       setBulkArchiving(false);
     }
-  }, [selectedIds, queryClient, bulkArchiving]);
+  }, [selectedIds, queryClient, bulkArchiving, currentUser]);
 
   const handleBulkExport = useCallback(() => {
     const employees = data?.data || [];

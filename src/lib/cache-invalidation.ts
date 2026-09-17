@@ -61,6 +61,16 @@ export async function broadcastCacheInvalidation(
 export function startCacheInvalidationListener(handler: InvalidationHandler): void {
   listenHandler = handler;
 
+  // LONG-LIVED PROCESSES ONLY. The LISTEN connection is a permanent socket
+  // that keeps the event loop alive — required for the Next.js server, which
+  // must receive cross-process invalidations while idle, but fatal for
+  // short-lived processes (test runners, CLI scripts): `node --test` never
+  // terminates because the socket never closes. Next.js sets NEXT_RUNTIME
+  // only inside its server runtime, so that is the discriminator — outside
+  // it, listeners are skipped; per-process caches there cannot go stale
+  // within their lifetime, and local invalidation still applies.
+  if (process.env.NEXT_RUNTIME !== 'nodejs') return;
+
   // If already connected with a handler, just update the handler reference.
   if (listenClient) return;
 

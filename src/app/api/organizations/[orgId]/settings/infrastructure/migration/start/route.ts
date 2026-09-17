@@ -4,6 +4,7 @@ import { requireOrgAdmin, apiSuccess, apiError } from '@/lib/api';
 import { log, requestContext } from '@/lib/logger';
 import { queueMigrationForRequest, retryMigration } from '@/lib/migration/runner';
 import { userSafeError } from '@/lib/migration/db-migrate';
+import { checkRequestTestEvidence, checkMigrationPreconditions, type RequestPreconditionInput } from '@/lib/migration/preconditions';
 
 // POST /api/organizations/[orgId]/settings/infrastructure/migration/start
 //
@@ -22,11 +23,24 @@ import { userSafeError } from '@/lib/migration/db-migrate';
 //      before a catch-up migration may run.
 //
 // Semantics (all idempotent):
-//   • no open/active request, or connections not validated → 409/422
+//   • no open/active request → 409
 //   • request still 'submitted' (awaiting SA)              → 409 with guidance
 //   • migration queued/running/ready/activated             → 200 alreadyQueued
 //   • migration 'failed'                                   → retry (server-gated)
 //   • migration 'cancelled' before start                   → re-queued
+//
+// PRECONDITIONS (verified forensic fix RC-1 + Phases 1–4):
+// The old gate read OrganizationSettings.dbTestStatus / storageTestStatus —
+// fields that only become 'success' at CUTOVER time — so a freshly configured
+// org could NEVER pass while the UI showed "Connection verified". The gate now
+// checks the authoritative test evidence bound to the change request itself:
+//   1. Evidence gate (DB-only, cheap): the request carries a SUCCESSFUL test
+//      result, bound by fingerprint to the EXACT config in its snapshot,
+//      recorded within the evidence TTL (see src/lib/infrastructure-state.ts).
+//   2. Live revalidation: the destination is probed AGAIN server-side with the
+//      request's decrypted secret before any copy starts.
+// The client can never assert success — everything derives from persisted,
+// server-generated evidence.
 //
 // SECURITY: requireOrgAdmin — an org admin can only ever touch their OWN
 // organization's request/migration (all queries predicate on organizationId).
@@ -46,16 +60,6 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ org
   if (!kind) return apiError('kind must be DATABASE or STORAGE', 422);
 
   try {
-    // Both personalized connections must be validated before a transfer can
-    // run — connection success is the entry gate to the migration.
-    const settings = await db.organizationSettings.findUnique({ where: { organizationId: orgId } });
-    if (!settings) return apiError('Organization settings not found', 404);
-    const dbConnected = settings.useOwnDb === true && Boolean(settings.dbHost) && settings.dbTestStatus === 'success';
-    const storageConnected = settings.storageDriver === 'supabase' && settings.storageTestStatus === 'success';
-    if (!dbConnected || !storageConnected) {
-      return apiError('Both the personalized database and storage connections must be successfully tested before transferring organization data.', 422);
-    }
-
     // 1) The OPEN request for this kind (submitted or approved).
     let request = await db.infrastructureChangeRequest.findFirst({
       where: { organizationId: orgId, kind, status: { in: ['submitted', 'approved'] } },
@@ -84,6 +88,36 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ org
 
     if (!request) {
       return apiError('There is no infrastructure change to transfer data for.', 409);
+    }
+
+    // ── PRECONDITIONS (Phases 1–4) — per-request, evidence-based ──
+    // Both kinds must independently pass: this kind's evidence gate + live
+    // revalidation, AND the OTHER kind's evidence gate (the original product
+    // rule: BOTH personalized connections must be tested before ANY transfer).
+    const preconditionInput = (r: {
+      id: string; kind: string; status: string; requestNo: number; configJson: string;
+      dbPasswordEncrypted: string | null; storageKeyEncrypted: string | null;
+      lastTestStatus: string | null; lastTestMessage: string | null; lastTestedAt: Date | null; lastTestConfigFingerprint: string | null;
+    }): RequestPreconditionInput => r;
+
+    const kindPrecondition = await checkMigrationPreconditions(preconditionInput(request));
+    if (!kindPrecondition.ok) {
+      return apiError(kindPrecondition.error, kindPrecondition.status);
+    }
+
+    const otherKind = kind === 'DATABASE' ? 'STORAGE' : 'DATABASE';
+    const otherRequest = await db.infrastructureChangeRequest.findFirst({
+      where: { organizationId: orgId, kind: otherKind, status: { in: ['submitted', 'approved', 'active'] } },
+      orderBy: { requestNo: 'desc' },
+    });
+    if (otherRequest) {
+      const otherEvidence = await checkRequestTestEvidence(preconditionInput(otherRequest));
+      if (!otherEvidence.ok) {
+        return apiError(
+          `The ${otherKind === 'DATABASE' ? 'database' : 'storage'} connection is not ready: ${otherEvidence.error}`,
+          otherEvidence.status
+        );
+      }
     }
 
     const existing = await db.infrastructureMigration.findUnique({ where: { requestId: request.id } });

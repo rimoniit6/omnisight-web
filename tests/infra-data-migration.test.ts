@@ -39,6 +39,9 @@ process.env.JWT_SECRET = 'test-jwt-secret-inframig-0123456789';
 process.env.SUPER_ADMIN_EMAIL = 'root@inframig.local';
 process.env.SUPER_ADMIN_PASSWORD = 'S3cure!InfraMig2026';
 (process.env as Record<string, string>).NODE_ENV = 'test';
+// These suites probe REAL loopback destinations (throwaway Postgres, mock Supabase).
+// Test-only SSRF relaxation — see src/lib/ssrf.ts. Never set in production.
+(process.env as Record<string, string>).OMNISIGHT_ALLOW_PRIVATE_TARGETS = '1';
 
 before(() => {
   execSync(`node scripts/pg-test-db.mjs ensure ${TEST_DB_NAME}`, {
@@ -149,11 +152,19 @@ after(async () => {
 
 // ── helpers ────────────────────────────────────────────────────────────────
 
+// Destination coordinates derived from PG_TEST_BASE_URL so the approve-time
+// probe, the migration engine and the destination all address the SAME server
+// that hosts the throwaway DBs (Docker maps it on 5433; native on 5432).
+const IDM_HOST = new URL(PG_TEST_BASE).hostname;
+const IDM_PORT = Number(new URL(PG_TEST_BASE).port) || 5432;
+const IDM_USER = decodeURIComponent(new URL(PG_TEST_BASE).username);
+const IDM_PASSWORD = decodeURIComponent(new URL(PG_TEST_BASE).password);
+
 const DEST_SPEC = {
-  host: 'localhost',
-  port: 5432,
+  host: IDM_HOST,
+  port: IDM_PORT,
   name: DEST_DB_NAME,
-  user: 'postgres',
+  user: IDM_USER,
   ssl: false,
   useOwnDb: true,
 };
@@ -193,7 +204,7 @@ test('IDM-01: approve → request approved, migration queued, settings NOT switc
     kind: 'DATABASE',
     actor: { id: 'test-admin', email: 'admin@inframig.test' },
     configJson: JSON.stringify(DEST_SPEC),
-    password: '123456',
+    password: IDM_PASSWORD,
   });
   requestId = request.id;
 
@@ -285,9 +296,18 @@ test('IDM-03: failed migration retries and re-runs without duplicating rows', as
 // ── IDM-04: destination schema is synced FIRST, then data migrates ─────
 test('IDM-04: empty destination → schema auto-synced → Org B data migrated, ready to activate', async () => {
   // Destination DB EXISTS (the approval probe passes) but carries NO schema.
-  // The engine must sync the FULL Prisma schema first, then copy — exactly the
+  // The engine must prepare the migration-plan schema first, then copy — exactly the
   // required order: schema ready → data → verify → ready_to_activate.
   const EMPTY_DB = `${DEST_DB_NAME}_empty`;
+  // Drop-then-ensure: a leftover _empty DB from an interrupted earlier run
+  // (with a different org's rows + an older Organization id) would break the
+  // "empty" premise and the copy. Start from a clean, known state.
+  try {
+    execSync(`node scripts/pg-test-db.mjs drop ${EMPTY_DB}`, {
+      env: { ...process.env, PG_TEST_BASE_URL: PG_TEST_BASE },
+      stdio: 'pipe',
+    });
+  } catch { /* best-effort pre-clean */ }
   execSync(`node scripts/pg-test-db.mjs ensure ${EMPTY_DB}`, {
     env: { ...process.env, PG_TEST_BASE_URL: PG_TEST_BASE },
     stdio: 'pipe',
@@ -299,7 +319,7 @@ test('IDM-04: empty destination → schema auto-synced → Org B data migrated, 
     kind: 'DATABASE',
     actor: { id: 'test-admin-b', email: 'admin-b@inframig.test' },
     configJson: JSON.stringify({ ...DEST_SPEC, name: EMPTY_DB }),
-    password: '123456',
+    password: IDM_PASSWORD,
   });
   const approveApi = await import('../src/app/api/admin/infrastructure-requests/[id]/approve/route');
   const approveRes = await approveApi.POST(
@@ -320,7 +340,7 @@ test('IDM-04: empty destination → schema auto-synced → Org B data migrated, 
   try {
     const tables = await destDb.$queryRaw<Array<{ table_name: string }>>`SELECT table_name FROM information_schema.tables WHERE table_schema='public' AND table_type='BASE TABLE'`;
     const present = new Set(tables.map((t) => String(t.table_name)));
-    assert.ok(present.has('Employee') && present.has('Activity') && present.has('Screenshot'), 'destination has the full schema after sync');
+    assert.ok(present.has('Employee') && present.has('Activity') && present.has('Screenshot'), 'destination has the migration-plan tables after schema prep');
     const bRows = await destDb.$queryRaw<Array<{ c: bigint }>>`SELECT COUNT(*)::bigint AS c FROM "Employee"`;
     assert.ok(Number(bRows[0].c) >= 1, 'Org B employee copied after schema sync');
   } finally {
@@ -350,6 +370,18 @@ test('IDM-04b: destination with conflicting table → sync refuses to destroy da
     env: { ...process.env, PG_TEST_BASE_URL: PG_TEST_BASE },
     stdio: 'pipe',
   });
+  try {
+    // Drop any leftover conflict DB from a previously interrupted run so the
+    // CREATE TABLE below starts from a clean, known state.
+    execSync(`node scripts/pg-test-db.mjs drop ${CONFLICT_DB}`, {
+      env: { ...process.env, PG_TEST_BASE_URL: PG_TEST_BASE },
+      stdio: 'pipe',
+    });
+    execSync(`node scripts/pg-test-db.mjs ensure ${CONFLICT_DB}`, {
+      env: { ...process.env, PG_TEST_BASE_URL: PG_TEST_BASE },
+      stdio: 'pipe',
+    });
+  } catch { /* best-effort pre-clean */ }
   const { PrismaClient } = await import('@prisma/client');
   const conflictDb = new PrismaClient({ datasources: { db: { url: `${PG_TEST_BASE}/${CONFLICT_DB}?schema=public` } } });
   try {
@@ -367,7 +399,7 @@ test('IDM-04b: destination with conflicting table → sync refuses to destroy da
     kind: 'DATABASE',
     actor: { id: 'test-admin-b', email: 'admin-b@inframig.test' },
     configJson: JSON.stringify({ ...DEST_SPEC, name: CONFLICT_DB }),
-    password: '123456',
+    password: IDM_PASSWORD,
   });
   const approveApi = await import('../src/app/api/admin/infrastructure-requests/[id]/approve/route');
   const approveRes = await approveApi.POST(
@@ -478,7 +510,7 @@ test('IDM-09: cancelOpenChangeRequest cancels queued migration', async () => {
     kind: 'DATABASE',
     actor: { id: 'test-admin-b', email: 'admin-b@inframig.test' },
     configJson: JSON.stringify(DEST_SPEC),
-    password: '123456',
+    password: IDM_PASSWORD,
   });
   // Approve to create the queued migration for Org B…
   const approveApi = await import('../src/app/api/admin/infrastructure-requests/[id]/approve/route');
@@ -563,7 +595,7 @@ test('IDM-12: approval response never contains password or connection URL', asyn
     kind: 'DATABASE',
     actor: { id: 'test-admin-b', email: 'admin-b@inframig.test' },
     configJson: JSON.stringify(DEST_SPEC),
-    password: 'S3cret-PW-9911',
+    password: IDM_PASSWORD,
   });
   const approveApi = await import('../src/app/api/admin/infrastructure-requests/[id]/approve/route');
   const res = await approveApi.POST(
@@ -572,7 +604,7 @@ test('IDM-12: approval response never contains password or connection URL', asyn
   );
   assert.equal(res.status, 200);
   const raw = JSON.stringify(await res.json());
-  assert.ok(!raw.includes('S3cret-PW-9911'), 'password must never appear');
+  assert.ok(!raw.includes(IDM_PASSWORD), 'plaintext password must never appear');
   assert.ok(!raw.includes('postgresql://'), 'connection URL must never appear');
 });
 
@@ -638,7 +670,7 @@ test('IDM-15: losing create in a double-start race recovers the winner row (P200
     kind: 'DATABASE',
     actor: { id: 'test-admin', email: 'admin@inframig.test' },
     configJson: JSON.stringify(DEST_SPEC),
-    password: '123456',
+    password: IDM_PASSWORD,
   });
   assert.equal(
     await db.infrastructureMigration.count({ where: { requestId: request.id } }),
@@ -725,7 +757,7 @@ test('IDM-16: resume re-run over already-complete tables reports recordsDone ===
       kind: 'DATABASE',
       actor: { id: 'test-admin', email: 'admin@inframig.test' },
       configJson: JSON.stringify({ ...DEST_SPEC, name: RESUME_DB }),
-      password: '123456',
+      password: IDM_PASSWORD,
     });
     const approveApi = await import('../src/app/api/admin/infrastructure-requests/[id]/approve/route');
     const res = await approveApi.POST(
@@ -799,7 +831,7 @@ test('IDM-17: stale ready_to_activate + complete destination → reconcile backf
       kind: 'DATABASE',
       actor: { id: 'test-admin', email: 'admin@inframig.test' },
       configJson: JSON.stringify({ ...DEST_SPEC, name: RECON_DB }),
-      password: '123456',
+      password: IDM_PASSWORD,
     });
     const approveApi = await import('../src/app/api/admin/infrastructure-requests/[id]/approve/route');
     const res = await approveApi.POST(
@@ -885,7 +917,7 @@ test('IDM-18: genuinely missing destination rows → ready revoked to failed; no
       kind: 'DATABASE',
       actor: { id: 'test-admin', email: 'admin@inframig.test' },
       configJson: JSON.stringify({ ...DEST_SPEC, name: RECON2_DB }),
-      password: '123456',
+      password: IDM_PASSWORD,
     });
     const approveApi = await import('../src/app/api/admin/infrastructure-requests/[id]/approve/route');
     const res = await approveApi.POST(
@@ -955,4 +987,142 @@ test('IDM-18: genuinely missing destination rows → ready revoked to failed; no
       execSync(`node scripts/pg-test-db.mjs drop ${RECON2_DB}`, { env: { ...process.env, PG_TEST_BASE_URL: PG_TEST_BASE }, stdio: 'pipe' });
     } catch { /* best-effort cleanup */ }
   }
+});
+
+// ── IDM-19: LEGACY destination (earlier OmniSight generation) → refused, the
+// conflicting objects NAMED, nothing modified, data intact ────────────────
+// The replacement for `prisma db push` must NOT try to adopt an older build
+// (that diff is inherently destructive). Classifying it LEGACY and refusing
+// must leave every legacy object and row untouched and keep Managed infra
+// active — fail closed, retryable after the operator fixes the destination.
+test('IDM-19: earlier-generation destination → refused with objects named, data intact, settings untouched', async () => {
+  const { PrismaClient } = await import('@prisma/client');
+  const { submitChangeRequest } = await import('../src/lib/infrastructure');
+  const { runDueMigrations, cancelQueuedMigration } = await import('../src/lib/migration/runner');
+
+  const stray = await db.infrastructureMigration.findMany({ where: { status: 'queued' }, select: { id: true, requestId: true } });
+  for (const s of stray) await cancelQueuedMigration(s.requestId, 'IDM-19: cleanup');
+  assert.equal(await db.infrastructureMigration.count({ where: { status: 'queued' } }), 0, 'queue empty before IDM-19');
+
+  const LEGACY_DB = `${DEST_DB_NAME}_legacy`;
+  execSync(`node scripts/pg-test-db.mjs ensure ${LEGACY_DB}`, { env: { ...process.env, PG_TEST_BASE_URL: PG_TEST_BASE }, stdio: 'pipe' });
+  // A clean, known starting state for the legacy-shape CREATEs below.
+  try { execSync(`node scripts/pg-test-db.mjs drop ${LEGACY_DB}`, { env: { ...process.env, PG_TEST_BASE_URL: PG_TEST_BASE }, stdio: 'pipe' }); } catch { /* best-effort */ }
+  execSync(`node scripts/pg-test-db.mjs ensure ${LEGACY_DB}`, { env: { ...process.env, PG_TEST_BASE_URL: PG_TEST_BASE }, stdio: 'pipe' });
+
+  const legacyDb = new PrismaClient({ datasources: { db: { url: `${PG_TEST_BASE}/${LEGACY_DB}?schema=public` } }, log: ['error'] });
+  try {
+    // Earlier-generation fingerprints: a dropped table, a dropped column on
+    // Organization, and a dropped enum value.
+    await legacyDb.$executeRawUnsafe(`CREATE TABLE "Guest" ("id" TEXT PRIMARY KEY, "organizationId" TEXT)`);
+    await legacyDb.$executeRawUnsafe(`INSERT INTO "Guest" ("id", "organizationId") VALUES ('guest-1', 'some-org')`);
+    await legacyDb.$executeRawUnsafe(`CREATE TABLE "Organization" ("id" TEXT PRIMARY KEY, "licenseKeyId" TEXT)`);
+    await legacyDb.$executeRawUnsafe(`CREATE TYPE "DeploymentMode" AS ENUM ('MANAGED', 'CUSTOMER_DB', 'PRIVATE')`);
+  } finally {
+    await legacyDb.$disconnect();
+  }
+
+  const { request } = await submitChangeRequest({
+    organizationId: orgBId,
+    kind: 'DATABASE',
+    actor: { id: 'test-admin-b', email: 'admin-b@inframig.test' },
+    configJson: JSON.stringify({ ...DEST_SPEC, name: LEGACY_DB }),
+    password: IDM_PASSWORD,
+  });
+  const approveApi = await import('../src/app/api/admin/infrastructure-requests/[id]/approve/route');
+  const approveRes = await approveApi.POST(
+    req(superAdminToken, { method: 'POST', body: {}, url: `http://localhost:3000/api/admin/infrastructure-requests/${request.id}/approve` }),
+    params({ id: request.id })
+  );
+  assert.equal(approveRes.status, 200, 'probe passes — the DB exists');
+
+  const result = await runDueMigrations();
+  assert.equal(result.outcome, 'failed', 'legacy destination must fail closed');
+  const m = await db.infrastructureMigration.findUnique({ where: { requestId: request.id } });
+  assert.equal(m?.status, 'failed');
+  assert.equal(m?.errorStage, 'schema');
+  assert.match(m?.errorMessage ?? '', /schema/i);
+  assert.match(m?.errorMessage ?? '', /Guest/, 'the conflicting table is NAMED');
+  assert.match(m?.errorMessage ?? '', /licenseKeyId/, 'the conflicting column is NAMED');
+  assert.match(m?.errorMessage ?? '', /DeploymentMode/, 'the conflicting enum is NAMED');
+
+  const verify = new PrismaClient({ datasources: { db: { url: `${PG_TEST_BASE}/${LEGACY_DB}?schema=public` } }, log: ['error'] });
+  try {
+    const guestRows = await verify.$queryRawUnsafe<Array<{ c: bigint }>>(`SELECT COUNT(*)::bigint AS c FROM "Guest"`);
+    assert.equal(Number(guestRows[0].c), 1, 'existing legacy data must survive the refusal');
+    // No plan tables were created anywhere — the destination is untouched.
+    const planTables = await verify.$queryRawUnsafe<Array<{ table_name: string }>>(
+      `SELECT table_name FROM information_schema.tables WHERE table_schema='public' AND table_type='BASE TABLE' AND table_name IN ('Employee','Department','ConsentPolicy','Screenshot')`
+    );
+    assert.equal(planTables.length, 0, 'no migration-plan tables may be created on a refused destination');
+  } finally {
+    await verify.$disconnect();
+  }
+
+  await db.organizationSettings.upsert({ where: { organizationId: orgBId }, create: { organizationId: orgBId }, update: {} });
+  const afterSettings = await db.organizationSettings.findUnique({ where: { organizationId: orgBId } });
+  assert.notEqual(afterSettings?.useOwnDb, true, 'old infrastructure must remain active');
+
+  try { execSync(`node scripts/pg-test-db.mjs drop ${LEGACY_DB}`, { env: { ...process.env, PG_TEST_BASE_URL: PG_TEST_BASE }, stdio: 'pipe' }); } catch { /* best-effort cleanup */ }
+});
+
+// ── IDM-20: FOREIGN / unidentified destination → refused (fail closed) ────
+// A non-empty database that is neither the current schema nor a recognizable
+// older build gets NO policy: refuse, touch nothing, let an operator decide.
+test('IDM-20: unrecognized non-empty destination → refused, schema untouched', async () => {
+  const { PrismaClient } = await import('@prisma/client');
+  const { submitChangeRequest } = await import('../src/lib/infrastructure');
+  const { runDueMigrations, cancelQueuedMigration } = await import('../src/lib/migration/runner');
+
+  const stray = await db.infrastructureMigration.findMany({ where: { status: 'queued' }, select: { id: true, requestId: true } });
+  for (const s of stray) await cancelQueuedMigration(s.requestId, 'IDM-20: cleanup');
+  assert.equal(await db.infrastructureMigration.count({ where: { status: 'queued' } }), 0, 'queue empty before IDM-20');
+
+  const FOREIGN_DB = `${DEST_DB_NAME}_foreign`;
+  execSync(`node scripts/pg-test-db.mjs ensure ${FOREIGN_DB}`, { env: { ...process.env, PG_TEST_BASE_URL: PG_TEST_BASE }, stdio: 'pipe' });
+  try { execSync(`node scripts/pg-test-db.mjs drop ${FOREIGN_DB}`, { env: { ...process.env, PG_TEST_BASE_URL: PG_TEST_BASE }, stdio: 'pipe' }); } catch { /* best-effort */ }
+  execSync(`node scripts/pg-test-db.mjs ensure ${FOREIGN_DB}`, { env: { ...process.env, PG_TEST_BASE_URL: PG_TEST_BASE }, stdio: 'pipe' });
+
+  const foreignDb = new PrismaClient({ datasources: { db: { url: `${PG_TEST_BASE}/${FOREIGN_DB}?schema=public` } }, log: ['error'] });
+  try {
+    await foreignDb.$executeRawUnsafe(`CREATE TABLE "customer_events" ("id" TEXT PRIMARY KEY, "payload" TEXT)`);
+    await foreignDb.$executeRawUnsafe(`INSERT INTO "customer_events" ("id", "payload") VALUES ('ev-1', 'whatever')`);
+  } finally {
+    await foreignDb.$disconnect();
+  }
+
+  const { request } = await submitChangeRequest({
+    organizationId: orgBId,
+    kind: 'DATABASE',
+    actor: { id: 'test-admin-b', email: 'admin-b@inframig.test' },
+    configJson: JSON.stringify({ ...DEST_SPEC, name: FOREIGN_DB }),
+    password: IDM_PASSWORD,
+  });
+  const approveApi = await import('../src/app/api/admin/infrastructure-requests/[id]/approve/route');
+  const approveRes = await approveApi.POST(
+    req(superAdminToken, { method: 'POST', body: {}, url: `http://localhost:3000/api/admin/infrastructure-requests/${request.id}/approve` }),
+    params({ id: request.id })
+  );
+  assert.equal(approveRes.status, 200, 'probe passes — the DB exists');
+
+  const result = await runDueMigrations();
+  assert.equal(result.outcome, 'failed', 'foreign destination must fail closed');
+  const m = await db.infrastructureMigration.findUnique({ where: { requestId: request.id } });
+  assert.equal(m?.status, 'failed');
+  assert.match(m?.errorMessage ?? '', /schema/i);
+  assert.match(m?.errorMessage ?? '', /classif|expected tables missing|unrecognized/i, 'the refusal explains why');
+
+  const verify = new PrismaClient({ datasources: { db: { url: `${PG_TEST_BASE}/${FOREIGN_DB}?schema=public` } }, log: ['error'] });
+  try {
+    const events = await verify.$queryRawUnsafe<Array<{ c: bigint }>>(`SELECT COUNT(*)::bigint AS c FROM "customer_events"`);
+    assert.equal(Number(events[0].c), 1, 'the foreign table + its rows are untouched');
+    const allTables = await verify.$queryRawUnsafe<Array<{ table_name: string }>>(
+      `SELECT table_name FROM information_schema.tables WHERE table_schema='public' AND table_type='BASE TABLE'`
+    );
+    assert.equal(allTables.length, 1, 'exactly the foreign table remains — nothing was created or dropped');
+  } finally {
+    await verify.$disconnect();
+  }
+
+  try { execSync(`node scripts/pg-test-db.mjs drop ${FOREIGN_DB}`, { env: { ...process.env, PG_TEST_BASE_URL: PG_TEST_BASE }, stdio: 'pipe' }); } catch { /* best-effort cleanup */ }
 });

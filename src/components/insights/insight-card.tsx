@@ -8,6 +8,8 @@ import { CheckCircle2, XCircle, Lightbulb, TrendingUp, AlertTriangle, BarChart3,
 import { formatDistanceToNow } from 'date-fns';
 import { motion, AnimatePresence } from 'framer-motion';
 import { toast } from 'sonner';
+import { useAuthStore } from '@/lib/store';
+import { getActionPermissionDeniedToast, isOrgAdminRole } from '@/lib/auth-error';
 
 const typeConfig: Record<string, { icon: React.ElementType; color: string; bg: string; badgeClass: string }> = {
   productivity: { icon: TrendingUp, color: 'text-emerald-600', bg: 'bg-emerald-50', badgeClass: 'bg-emerald-100 text-emerald-700 hover:bg-emerald-100' },
@@ -82,6 +84,7 @@ function parseMetadata(raw: string | null | undefined): {
 
 export function InsightCard({ insight, onUpdate, index }: InsightCardProps) {
   const [expanded, setExpanded] = useState(false);
+  const currentUser = useAuthStore((s) => s.user);
   const config = typeConfig[insight.type] || typeConfig.recommendation;
   const Icon = config.icon;
   const priority = getPriority(insight.type, insight.confidence);
@@ -245,6 +248,11 @@ export function InsightCard({ insight, onUpdate, index }: InsightCardProps) {
                       variant="ghost"
                       className="h-7 text-[11px] text-amber-600 hover:text-amber-700 hover:bg-amber-500/10 px-2"
                       onClick={async () => {
+                        if (!isOrgAdminRole(currentUser?.role)) {
+                          const denied = getActionPermissionDeniedToast('Create alert for insight', 'Organization Admin', currentUser?.role);
+                          toast.error(denied.title, { description: denied.description });
+                          return;
+                        }
                         try {
                           const res = await fetch('/api/alerts', {
                             method: 'POST',

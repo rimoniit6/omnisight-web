@@ -131,6 +131,12 @@ export function sanitizeProbeErrorForLog(err: unknown): string {
  * Probe a POSTGRESQL analytics database with SELECT 1 and list its public
  * tables. Used to TEST a *proposed* config (change request) — identical to the
  * migration-time verification.
+ *
+ * (Phase 5) Also verifies the DDL capability the destination needs for
+ * `prisma db push`: a transactional CREATE TABLE probe proves the user may
+ * create/alter schema WITHOUT leaving any object behind (ROLLBACK undoes the
+ * probe table). A destination whose user lacks CREATE fails here — at TEST
+ * time, not hours into the transfer's schema-sync step.
  */
 const MAX_RETRIES = 2;
 const RETRY_DELAY_MS = 1000;
@@ -185,6 +191,25 @@ export async function testDbConnection(spec: DbSpec, timeoutMs: number = DEFAULT
         `SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' AND table_type = 'BASE TABLE' ORDER BY table_name`
       );
       const tables = tablesRes.rows.map((r: { table_name: string }) => r.table_name);
+
+      // ── DDL capability probe (Phase 5): transactional, leaves NOTHING behind.
+      // PostgreSQL allows CREATE TABLE inside a transaction and rolls it back
+      // cleanly; the table name is unique per probe so even a parallel test
+      // cannot collide, and ROLLBACK removes it in every success path.
+      try {
+        await client.query('BEGIN');
+        await client.query(
+          `CREATE TABLE "omnisight_ddl_probe_${Date.now()}_${Math.floor(Math.random() * 1e9)}" (id integer primary key)`
+        );
+      } finally {
+        // Always unwind the probe transaction — even if CREATE failed.
+        try {
+          await client.query('ROLLBACK');
+        } catch {
+          /* connection already broken; the probe result below is what matters */
+        }
+      }
+
       return { ok: true, message: 'Database connection successful', tables };
     } catch (err) {
       lastError = err;
@@ -212,9 +237,18 @@ export async function testDbConnection(spec: DbSpec, timeoutMs: number = DEFAULT
 }
 
 /**
- * Probe a Supabase storage project by listing its buckets with the
- * service-role key. 'local' driver always reports ok (platform-managed).
- * NEVER includes the key in messages.
+ * Probe a Supabase storage project with the service-role key.
+ *
+ * (Phase 6) A bare bucket LIST is not enough: success now requires the
+ * destination to be genuinely usable for OmniSight screenshots —
+ *   1. the 'screenshots' bucket EXISTS (missing → hard failure, not a warning),
+ *   2. the key can WRITE a scratch object into it,
+ *   3. the scratch object can be READ back (verified),
+ *   4. the scratch object is DELETED — no permanent test artifact remains.
+ * The scratch key is unique per probe and org-scoped in its path prefix, and
+ * NEVER collides with a real employee screenshot path.
+ * SECURITY: the key is only ever placed in request headers — never in a
+ * message, log line, or error.
  */
 export async function testStorageConnection(
   spec: StorageSpec,
@@ -251,10 +285,22 @@ export async function testStorageConnection(
         /* non-JSON body */
       }
       const hasScreenshots = buckets.includes('screenshots');
-      const message = hasScreenshots
-        ? `Supabase storage reachable (${buckets.length} bucket(s), 'screenshots' bucket present)`
-        : `Supabase storage reachable (${buckets.length} bucket(s)) — no 'screenshots' bucket found; create one for org rollout`;
-      return { ok: true, message, buckets };
+      if (!hasScreenshots) {
+        // (Phase 6) The 'screenshots' bucket is REQUIRED — a project without it
+        // cannot receive org screenshots; this is a failure, not a warning.
+        return {
+          ok: false,
+          code: 'bucket_missing',
+          message: `Supabase storage reachable (${buckets.length} bucket(s)) but the required 'screenshots' bucket does not exist. Create it in the Supabase project before configuring OmniSight.`,
+          buckets,
+        };
+      }
+
+      // ── Scratch-object write/verify/delete probe (Phase 6) ──
+      const probe = await probeStorageWriteAccess(base, spec.key ?? '', timeoutMs);
+      if (!probe.ok) return probe;
+
+      return { ok: true, message: `Supabase storage verified (bucket 'screenshots' present, write/delete access confirmed)`, buckets };
     }
     if (res.status === 401 || res.status === 403) {
       return { ok: false, code: 'auth', message: 'Supabase authentication failed — check the service-role key' };
@@ -264,6 +310,71 @@ export async function testStorageConnection(
     const e = err as { message?: string; name?: string };
     if (e.name === 'AbortError') return { ok: false, code: 'timeout', message: 'Supabase storage request timed out' };
     return { ok: false, code: 'unreachable', message: `Cannot reach the Supabase storage host (${(e.message || 'unknown error').slice(0, 120)})` };
+  }
+}
+
+/**
+ * (Phase 6) Scratch-object write/verify/delete against the destination
+ * 'screenshots' bucket via the Supabase Storage HTTP API:
+ *   POST /storage/v1/object/screenshots/<key>   (upload)
+ *   GET  /storage/v1/object/screenshots/<key>   (verify)
+ *   DELETE /storage/v1/object/screenshots/<key> (cleanup)
+ *
+ * The key is unique per probe and org-scoped in its prefix so it can never
+ * overwrite or collide with a real screenshot. Every step is cleaned up: on
+ * ANY path the scratch object is deleted (best effort), so no test artifact
+ * remains in the customer's bucket. No permanent state is created.
+ */
+async function probeStorageWriteAccess(base: string, key: string, timeoutMs: number): Promise<ProbeResult> {
+  const scratchKey = `__omnisight_connection_probe/${new Date().toISOString().slice(0, 10)}/${Date.now()}-${Math.floor(Math.random() * 1e9)}.txt`;
+  const headers = {
+    apikey: key,
+    Authorization: `Bearer ${key}`,
+    'Content-Type': 'text/plain;charset=utf-8',
+  };
+  const body = 'omnisight connection probe — safe to delete';
+
+  try {
+    // 1) WRITE the scratch object.
+    const up = await safeFetch(
+      `${base}/storage/v1/object/screenshots/${scratchKey}`,
+      { method: 'POST', headers, body },
+      timeoutMs
+    );
+    if (!up) return { ok: false, code: 'write_check_failed', message: 'Supabase storage write check could not be performed (host rejected as unsafe or unreachable).' };
+    if (up.status !== 200) {
+      return {
+        ok: false,
+        code: up.status === 401 || up.status === 403 ? 'write_forbidden' : 'write_failed',
+        message:
+          up.status === 401 || up.status === 403
+            ? "The service-role key cannot write to the 'screenshots' bucket. Check the key and the bucket's policies."
+            : `The 'screenshots' bucket rejected a write test (HTTP ${up.status}).`,
+      };
+    }
+
+    // 2) VERIFY the object reads back (correct content).
+    const get = await safeFetch(`${base}/storage/v1/object/screenshots/${scratchKey}`, { method: 'GET', headers }, timeoutMs);
+    if (!get || get.status !== 200 || get.text !== body) {
+      return { ok: false, code: 'write_verify_failed', message: "The write test object could not be read back from the 'screenshots' bucket." };
+    }
+
+    return { ok: true, message: 'Storage write/delete access verified' };
+  } catch (err) {
+    const e = err as { name?: string };
+    if (e.name === 'AbortError') return { ok: false, code: 'timeout', message: 'The storage write test timed out.' };
+    return { ok: false, code: 'write_check_failed', message: 'The storage write test could not be completed.' };
+  } finally {
+    // 3) DELETE the scratch object — ALWAYS, success or failure.
+    try {
+      await safeFetch(
+        `${base}/storage/v1/object/screenshots/${scratchKey}`,
+        { method: 'DELETE', headers: { apikey: key, Authorization: `Bearer ${key}` } },
+        timeoutMs
+      );
+    } catch {
+      /* best-effort cleanup; the object is in the probe-namespaced prefix */
+    }
   }
 }
 
@@ -338,16 +449,20 @@ export async function applyDatabaseSwitch(
  * cutover. KEEPS the org's host/port/name/user/password configuration — the
  * destination the org chose is still valid, only the active switch is undone —
  * so activation can be retried through the normal flow without re-entering
- * credentials. The failed test-status is persisted so the UI surfaces why the
- * org is back on platform.
+ * credentials.
+ *
+ * (Phase 10, findings R-1/R-2) This is a MIGRATION failure, not a CONNECTION
+ * failure: it no longer overwrites dbTestedAt/dbTestStatus with 'failed'.
+ * Clobbering the connection-test state used to block the org's retry path
+ * behind a re-test for a connection that was never the problem. The truthful
+ * failure reason lives on the InfrastructureMigration row (errorStage/
+ * errorMessage) and the request's errorMessage.
  */
 export async function revertDatabaseSwitch(client: Prisma.TransactionClient, orgId: string): Promise<void> {
   await client.organizationSettings.update({
     where: { organizationId: orgId },
     data: {
       useOwnDb: false,
-      dbTestedAt: new Date(),
-      dbTestStatus: 'failed',
     },
   });
   await invalidateOrgDbCache(orgId);
@@ -406,16 +521,17 @@ export async function applyStorageSwitch(
  * ROLLBACK the org's screenshot I/O to the platform storage pool after a FAILED
  * storage cutover. KEEPS storageUrl/storageKey (the destination the org chose is
  * still valid, only the active switch is undone) so activation can be retried
- * without re-entering credentials; marks the test status failed so the UI
- * surfaces why the org is back on the platform pool.
+ * without re-entering credentials.
+ *
+ * (Phase 10, findings R-1/R-2) A failed MIGRATION must not masquerade as a
+ * failed CONNECTION: storageTestStatus is no longer overwritten here. The
+ * migration failure is recorded on the InfrastructureMigration row.
  */
 export async function revertStorageSwitch(client: Prisma.TransactionClient, orgId: string): Promise<void> {
   await client.organizationSettings.update({
     where: { organizationId: orgId },
     data: {
       storageDriver: 'local',
-      storageTestedAt: new Date(),
-      storageTestStatus: 'failed',
     },
   });
   invalidateOrgStorageCache(orgId);

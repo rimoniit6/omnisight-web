@@ -13,6 +13,8 @@ import {
   configFingerprint,
   storageConfigFingerprintInput,
 } from '@/lib/infrastructure';
+import { testStorageConnection, sanitizeProbeErrorForLog } from '@/lib/infra-connect';
+import { buildRequestTestEvidence } from '@/lib/infrastructure-state';
 
 // PUT /api/organizations/[orgId]/settings/storage
 //
@@ -45,11 +47,11 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ orgI
   const { config } = validation;
 
   // Verify the config was tested before allowing submission.
-  const submittedFingerprint = typeof body.configFingerprint === 'string' ? body.configFingerprint : null;
-  const expectedFingerprint = await configFingerprint(storageConfigFingerprintInput(config));
-  if (submittedFingerprint && submittedFingerprint !== expectedFingerprint) {
-    return apiError('The configuration has changed since the last connection test. Please test the connection again before submitting.', 422);
-  }
+  // (Phase 2, R-3) The client-sent fingerprint is a fast-path equality hint:
+  // a config-changed-after-test mismatch is still rejected immediately. The
+  // AUTHORITATIVE evidence is re-derived SERVER-SIDE below via a live probe
+  // of the submitted config (bucket + scratch write/verify/delete), so a
+  // client can never assert an untested success.
 
   const submittingLocal = config.driver === 'local';
   if (submittingLocal) {
@@ -86,12 +88,31 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ orgI
   const conflict = await ensureNoOpen();
   if (conflict) return conflict;
 
+  // (Phase 2, R-3) Server-side test at SUBMIT time with the key the admin
+  // just provided — the SAME authoritative probe as the Test button (bucket
+  // existence + scratch write/verify/delete). The new request is born with
+  // fingerprint-bound, fresh evidence; a broken destination is rejected 422.
+  let testEvidence: Awaited<ReturnType<typeof buildRequestTestEvidence>>;
+  try {
+    const probe = await testStorageConnection({ driver: 'supabase', url: config.url, key: effectiveKey });
+    testEvidence = await buildRequestTestEvidence(probe, { kind: 'STORAGE', driver: 'supabase', url: config.url });
+  } catch (err) {
+    log.error('api.organizations.settings.storage.submit.probe', { error: sanitizeProbeErrorForLog(err) }, requestContext(req));
+    return apiError('The connection test could not be completed. Please test the connection and try again.', 422);
+  }
+  if (testEvidence.lastTestStatus !== 'success') {
+    return apiError(`The connection test for the submitted configuration failed: ${testEvidence.lastTestMessage ?? 'connection test failed'}. Test the connection and submit a working configuration.`, 422);
+  }
+
   const { request } = await submitChangeRequest({
     organizationId: orgId,
     kind: 'STORAGE',
     actor: { id: auth.userId, email: auth.email },
     configJson: JSON.stringify({ driver: 'supabase', url: config.url }),
     storageKey: effectiveKey,
+    testStatus: testEvidence.lastTestStatus,
+    testMessage: testEvidence.lastTestMessage,
+    testFingerprint: testEvidence.lastTestConfigFingerprint,
   });
 
   await audit(userId(auth), auth.email, orgId, request.id, 'supabase', request.requestNo);

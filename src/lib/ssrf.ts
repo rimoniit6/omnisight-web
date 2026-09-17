@@ -14,6 +14,19 @@ import { lookup } from 'node:dns/promises';
 
 const MAX_RESPONSE_BODY = 10 * 1024 * 1024; // 10 MB cap on read bodies
 
+/**
+ * TEST-ONLY escape hatch (never set in production):
+ * the DB-backed integration suites run real PostgreSQL servers on loopback and
+ * mock Supabase endpoints on 127.0.0.1, so the probes must be allowed to reach
+ * private addresses there. Setting OMNISIGHT_ALLOW_PRIVATE_TARGETS=1 disables
+ * ONLY the private-address rejection; every other rule (canonical-IP checks,
+ * protocol allowlist, no-redirect, DNS re-resolution) stays active.
+ * PRODUCTION MUST NOT SET THIS VARIABLE — it disables a core SSRF protection.
+ */
+function allowPrivateTargetsForTests(): boolean {
+  return process.env.OMNISIGHT_ALLOW_PRIVATE_TARGETS === '1';
+}
+
 // ─── Strict canonical IPv4 parsing ──────────────────────────────────────────
 // Returns the dotted-quad octets only for a *canonical* decimal literal.
 // Anything else (octal/hex leading-zero octets, short forms, trailing dots,
@@ -95,6 +108,17 @@ async function resolvePublicAddresses(hostname: string): Promise<string[] | null
   // Literal IPs bypass DNS (also defeats IP-encoding tricks).
   const bare = hostname.replace(/^\[|\]$/g, '');
 
+  // Test-only bypass — still resolve so callers get usable addresses, but skip
+  // every private/reserved rejection (see allowPrivateTargetsForTests()).
+  if (allowPrivateTargetsForTests()) {
+    try {
+      const addresses = await lookup(hostname, { all: true, verbatim: true });
+      return addresses.map((a) => a.address);
+    } catch {
+      return null;
+    }
+  }
+
   if (isPrivateHostname(bare)) return null;
 
   if (bare.includes(':')) {
@@ -156,6 +180,9 @@ export async function isSafeTarget(url: string): Promise<boolean> {
 export async function validateHostIsPublic(
   hostname: string,
 ): Promise<{ ok: true } | { ok: false; reason: string }> {
+  // Test-only bypass — see allowPrivateTargetsForTests().
+  if (allowPrivateTargetsForTests()) return { ok: true };
+
   const bare = hostname.replace(/^\[|\]$/g, '').replace(/\.$/, '');
   if (!bare) return { ok: false, reason: 'Empty hostname' };
 

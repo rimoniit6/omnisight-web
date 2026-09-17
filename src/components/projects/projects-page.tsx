@@ -78,6 +78,7 @@ import { ProjectSentimentTab } from '@/components/projects/project-sentiment-tab
 import { useAppStore } from '@/lib/store';
 import { useAuthStore } from '@/lib/store';
 import { hasRolePermission } from '@/lib/auth';
+import { PermissionDeniedError, handleDeniedError, isOrgAdminRole } from '@/lib/auth-error';
 import { format } from 'date-fns';
 
 // ==================== Types ====================
@@ -167,8 +168,8 @@ export function ProjectsPage() {
   const queryClient = useQueryClient();
   // RBAC parity (UI): project mutations are admin+ at the API — hide the
   // controls for viewers/managers instead of surfacing 403s.
-  const role = useAuthStore((s) => s.user?.role ?? '');
-  const canManageProjects = hasRolePermission(role, 'admin');
+  const currentUserRole = useAuthStore((s) => s.user?.role ?? '');
+  const canManageProjects = hasRolePermission(currentUserRole, 'admin');
   const [viewMode, setViewMode] = useState<'cards' | 'table'>('cards');
   const [search, setSearch] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
@@ -401,6 +402,7 @@ export function ProjectsPage() {
 
   const createProjectMutation = useMutation({
     mutationFn: async (payload: Record<string, unknown>) => {
+      if (!isOrgAdminRole(currentUserRole)) throw new PermissionDeniedError('Create project', 'Organization Admin', currentUserRole);
       const res = await fetch('/api/projects', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -423,12 +425,14 @@ export function ProjectsPage() {
       resetCreateForm();
     },
     onError: (e) => {
+      if (handleDeniedError(e)) return;
       toast.error(e instanceof Error ? e.message : 'Failed to create project');
     },
   });
 
   const addMemberMutation = useMutation({
     mutationFn: async (payload: Record<string, unknown>) => {
+      if (!isOrgAdminRole(currentUserRole)) throw new PermissionDeniedError('Add project member', 'Organization Admin', currentUserRole);
       const res = await fetch(`/api/projects/${selectedProjectId}/members`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -449,13 +453,15 @@ export function ProjectsPage() {
       setMemberRole('member');
       setMemberHoursPerWeek('40');
     },
-    onError: () => {
+    onError: (e) => {
+      if (handleDeniedError(e)) return;
       toast.error('Failed to add member');
     },
   });
 
   const removeMemberMutation = useMutation({
     mutationFn: async (memberId: string) => {
+      if (!isOrgAdminRole(currentUserRole)) throw new PermissionDeniedError('Remove project member', 'Organization Admin', currentUserRole);
       const res = await fetch(`/api/projects/${selectedProjectId}/members/${memberId}`, {
         method: 'DELETE',
       });
@@ -469,7 +475,8 @@ export function ProjectsPage() {
       queryClient.invalidateQueries({ queryKey: ['projects'] });
       queryClient.invalidateQueries({ queryKey: ['employee-projects'] });
     },
-    onError: () => {
+    onError: (e) => {
+      if (handleDeniedError(e)) return;
       toast.error('Failed to remove member');
     },
   });
@@ -479,6 +486,7 @@ export function ProjectsPage() {
   // list refresh without a page reload.
   const setActiveProjectMutation = useMutation({
     mutationFn: async ({ employeeId, projectId }: { employeeId: string; projectId: string | null }) => {
+      if (!isOrgAdminRole(currentUserRole)) throw new PermissionDeniedError('Update active tracking project', 'Organization Admin', currentUserRole);
       const res = await fetch(`/api/employees/${employeeId}/active-project`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
@@ -503,6 +511,7 @@ export function ProjectsPage() {
       setActiveProjectAction(null);
     },
     onError: (e) => {
+      if (handleDeniedError(e)) return;
       toast.error(e instanceof Error ? e.message : 'Failed to update active tracking project');
     },
     onSettled: () => setSettingActiveProject(false),
@@ -510,6 +519,7 @@ export function ProjectsPage() {
 
   const addTimeEntryMutation = useMutation({
     mutationFn: async (payload: Record<string, unknown>) => {
+      if (!isOrgAdminRole(currentUserRole)) throw new PermissionDeniedError('Add time entry', 'Organization Admin', currentUserRole);
       const res = await fetch(`/api/projects/${selectedProjectId}/time-entries`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -535,12 +545,14 @@ export function ProjectsPage() {
       resetTEForm();
     },
     onError: (e) => {
+      if (handleDeniedError(e)) return;
       toast.error(e instanceof Error ? e.message : 'Failed to add time entry');
     },
   });
 
   const updateTimeEntryMutation = useMutation({
     mutationFn: async (payload: Record<string, unknown>) => {
+      if (!isOrgAdminRole(currentUserRole)) throw new PermissionDeniedError('Update time entry', 'Organization Admin', currentUserRole);
       const res = await fetch(`/api/projects/${selectedProjectId}/time-entries/${editingEntry?.id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
@@ -567,6 +579,7 @@ export function ProjectsPage() {
       setEditTEError('');
     },
     onError: (e) => {
+      if (handleDeniedError(e)) return;
       // Keep the dialog open on failure so the user can correct the form.
       setEditTEError(e instanceof Error ? e.message : 'Failed to update time entry');
     },
@@ -575,6 +588,7 @@ export function ProjectsPage() {
 
   const deleteTimeEntryMutation = useMutation({
     mutationFn: async (entryId: string) => {
+      if (!isOrgAdminRole(currentUserRole)) throw new PermissionDeniedError('Delete time entry', 'Organization Admin', currentUserRole);
       const res = await fetch(`/api/projects/${selectedProjectId}/time-entries/${entryId}`, {
         method: 'DELETE',
       });
@@ -590,7 +604,8 @@ export function ProjectsPage() {
       setDeleteEntryDialogOpen(false);
       setEntryToDelete(null);
     },
-    onError: () => {
+    onError: (e) => {
+      if (handleDeniedError(e)) return;
       toast.error('Failed to delete time entry');
     },
     onSettled: () => setDeletingTE(false),
@@ -598,6 +613,7 @@ export function ProjectsPage() {
 
   const restoreProjectMutation = useMutation({
     mutationFn: async () => {
+      if (!isOrgAdminRole(currentUserRole)) throw new PermissionDeniedError('Restore project', 'Organization Admin', currentUserRole);
       const res = await fetch(`/api/projects/${selectedProjectId}/restore`, {
         method: 'POST',
       });
@@ -614,17 +630,19 @@ export function ProjectsPage() {
       setDetailDialogOpen(false);
       setSelectedProjectId(null);
     },
-    onError: () => {
+    onError: (e) => {
+      if (handleDeniedError(e)) return;
       toast.error('Failed to restore project');
     },
   });
 
   const updateMemberRoleMutation = useMutation({
-    mutationFn: async ({ memberId, role }: { memberId: string; role: string }) => {
+    mutationFn: async ({ memberId, role: newRole }: { memberId: string; role: string }) => {
+      if (!isOrgAdminRole(currentUserRole)) throw new PermissionDeniedError('Update member role', 'Organization Admin', currentUserRole);
       const res = await fetch(`/api/projects/${selectedProjectId}/members/${memberId}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ role }),
+        body: JSON.stringify({ role: newRole }),
       });
       if (!res.ok) throw new Error('Failed to update member role');
       return res.json();
@@ -635,7 +653,8 @@ export function ProjectsPage() {
       queryClient.invalidateQueries({ queryKey: ['project-detail', selectedProjectId] });
       queryClient.invalidateQueries({ queryKey: ['projects'] });
     },
-    onError: () => {
+    onError: (e) => {
+      if (handleDeniedError(e)) return;
       toast.error('Failed to update member role');
     },
     onSettled: () => setUpdatingRoleId(null),
@@ -643,6 +662,7 @@ export function ProjectsPage() {
 
   const editProjectMutation = useMutation({
     mutationFn: async (payload: Record<string, unknown>) => {
+      if (!isOrgAdminRole(currentUserRole)) throw new PermissionDeniedError('Edit project', 'Organization Admin', currentUserRole);
       const res = await fetch(`/api/projects/${selectedProjectId}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
@@ -669,6 +689,7 @@ export function ProjectsPage() {
       setEditError('');
     },
     onError: (e) => {
+      if (handleDeniedError(e)) return;
       setEditError(e instanceof Error ? e.message : 'Failed to update project');
     },
     onSettled: () => setSavingEdit(false),
@@ -676,6 +697,7 @@ export function ProjectsPage() {
 
   const archiveProjectMutation = useMutation({
     mutationFn: async () => {
+      if (!isOrgAdminRole(currentUserRole)) throw new PermissionDeniedError('Archive project', 'Organization Admin', currentUserRole);
       const res = await fetch(`/api/projects/${selectedProjectId}`, { method: 'DELETE' });
       if (!res.ok) throw new Error('Failed to archive project');
       return res.json();
@@ -691,7 +713,8 @@ export function ProjectsPage() {
       setDetailDialogOpen(false);
       setSelectedProjectId(null);
     },
-    onError: () => {
+    onError: (e) => {
+      if (handleDeniedError(e)) return;
       toast.error('Failed to archive project');
     },
     onSettled: () => setArchiving(false),
@@ -1155,7 +1178,7 @@ export function ProjectsPage() {
               onImportComplete={() => queryClient.invalidateQueries({ queryKey: ['projects'] })}
             />
           )}
-          {hasRolePermission(role, 'manager') && (
+          {hasRolePermission(currentUserRole, 'manager') && (
             <ExportDialog
               exportType="projects"
               title="Export Projects"

@@ -9,8 +9,9 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Plus, Search, Users, Building2, TrendingUp } from 'lucide-react';
-import { useAppStore } from '@/lib/store';
+import { useAppStore, useAuthStore } from '@/lib/store';
 import { toast } from 'sonner';
+import { getActionPermissionDeniedToast, isOrgAdminRole } from '@/lib/auth-error';
 import { motion } from 'framer-motion';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 
@@ -38,6 +39,7 @@ export function DepartmentsPage() {
   const [searchQuery, setSearchQuery] = useState('');
   const queryClient = useQueryClient();
   const { setCurrentPage, setDepartmentFilter } = useAppStore();
+  const currentUser = useAuthStore((s) => s.user);
 
   const { data, isLoading } = useQuery<Department[]>({
     queryKey: ['departments'],
@@ -71,6 +73,11 @@ export function DepartmentsPage() {
 
   const handleDelete = async (id: string) => {
     setDeleteDialogId(null);
+    if (!isOrgAdminRole(currentUser?.role)) {
+      const denied = getActionPermissionDeniedToast('Delete department', 'Organization Admin', currentUser?.role);
+      toast.error(denied.title, { description: denied.description });
+      return;
+    }
     setDeletingId(id);
     try {
       const res = await fetch(`/api/departments/${id}`, { method: 'DELETE' });

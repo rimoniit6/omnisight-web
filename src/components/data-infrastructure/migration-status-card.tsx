@@ -99,10 +99,15 @@ export function MigrationStatusCard({
   orgId,
   kindFilter,
   transferState = 'none',
+  connectionState,
+  lastTestMessage,
 }: {
   orgId: string;
   kindFilter: 'DATABASE' | 'STORAGE';
   transferState?: TransferState;
+  /** Server-derived connection-test state of the open request (Phase 9). */
+  connectionState?: string;
+  lastTestMessage?: string | null;
 }) {
   const migrationQuery = useQuery<{ migration: MigrationView | null; history: MigrationView[]; preMigration?: { tablesTotal: number; recordsTotal: number; objectsTotal: number } | null }>({
     queryKey: ['infra-migration', orgId],
@@ -156,12 +161,24 @@ export function MigrationStatusCard({
     // "Transfer Organization Data" action — starting the transfer re-queues it.
     if (transferState === 'pending') {
       const noun = kindFilter === 'DATABASE' ? 'data' : 'files and attachments';
+      // (Phase 9) Truthful connection-test badge from the server-derived
+      // connectionState — never a hard-coded "Connection verified". The
+      // Transfer button stays enabled: the start-transfer endpoint performs
+      // the authoritative evidence + revalidation gate and returns a precise
+      // actionable error (re-test required / expired / config changed).
+      const badge =
+        connectionState === 'verified' ? { label: 'Connection verified', className: 'bg-blue-500/15 text-blue-600' }
+        : connectionState === 'test_expired' ? { label: 'Test expired — re-test required', className: 'bg-amber-500/15 text-amber-600' }
+        : connectionState === 'config_changed' ? { label: 'Configuration changed — re-test required', className: 'bg-amber-500/15 text-amber-600' }
+        : connectionState === 'test_failed' ? { label: 'Validation failed', className: 'bg-rose-500/15 text-rose-600' }
+        : connectionState === 'untested' ? { label: 'Connection not tested', className: 'bg-slate-500/15 text-slate-600' }
+        : { label: 'Connection state unknown', className: 'bg-slate-500/15 text-slate-600' };
       return (
         <Card>
           <CardHeader className="pb-3">
             <div className="flex items-center justify-between">
               <CardTitle className="text-base">Transfer Organization Data</CardTitle>
-              <Badge className="bg-blue-500/15 text-blue-600">Connection verified</Badge>
+              <Badge className={badge.className}>{badge.label}</Badge>
             </div>
             <p className="text-sm text-muted-foreground">
               Your organization&apos;s existing {noun} are currently stored in OmniSight-managed infrastructure. Transfer them to your configured {kindFilter === 'DATABASE' ? 'database' : 'storage'} before switching to them.
@@ -170,7 +187,13 @@ export function MigrationStatusCard({
           <CardContent className="space-y-3">
             {/* Step indicator: connection done → transfer → verify → activate. */}
             <ol className="space-y-1.5 text-sm">
-              <li className="flex items-center gap-2 text-emerald-700"><CheckCircle2 className="h-4 w-4" /> Connection successful</li>
+              <li className={`flex items-center gap-2 ${connectionState === 'verified' ? 'text-emerald-700' : 'text-muted-foreground'}`}>
+                {connectionState === 'verified' ? <CheckCircle2 className="h-4 w-4" /> : <Clock className="h-4 w-4" />} Connection test
+                {connectionState === 'verified' ? ' successful' : connectionState === 'test_failed' ? ' failed' : ' not completed'}
+              </li>
+              {connectionState && connectionState !== 'verified' && lastTestMessage && (
+                <li className="pl-6 text-xs text-muted-foreground">{lastTestMessage}</li>
+              )}
               <li className="flex items-center gap-2 text-foreground"><ArrowDown className="h-4 w-4 text-muted-foreground" /></li>
               <li className="flex items-center gap-2 text-muted-foreground"><Clock className="h-4 w-4" /> Transfer organization data</li>
               <li className="flex items-center gap-2 text-muted-foreground"><ArrowDown className="h-4 w-4 text-muted-foreground" /></li>

@@ -37,6 +37,9 @@ interface OpenChangeRequestView {
   id: string;
   kind: string;
   status: string;
+  /** Server-derived connection-test state (same machine the transfer gate enforces). */
+  connectionState?: string;
+  lastTestMessage?: string | null;
 }
 
 /**
@@ -117,7 +120,14 @@ function TransferGate({ orgId, kind }: { orgId: string; kind: 'DATABASE' | 'STOR
   else if (openRequest) transferState = 'pending';
   else if (bothConnected) transferState = 'pending'; // connected but never migrated → migration required
 
-  return <MigrationStatusCard orgId={orgId} kindFilter={kind} transferState={transferState} />;
+  // (Phase 9) The server-derived connection state travels with the card so
+  // the "pending" view renders the TRUTHFUL test state — not a hard-coded
+  // "Connection verified" badge. The start-transfer endpoint re-validates
+  // everything server-side anyway; this keeps the UI honest before that.
+  const connectionState = openRequest?.connectionState;
+  const lastTestMessage = openRequest?.lastTestMessage ?? null;
+
+  return <MigrationStatusCard orgId={orgId} kindFilter={kind} transferState={transferState} connectionState={connectionState} lastTestMessage={lastTestMessage} />;
 }
 
 function DatabaseMigrationGate({ orgId }: { orgId: string }) {
@@ -600,6 +610,10 @@ function DatabaseConfig({ orgId }: { orgId: string }) {
           setConfigFingerprint(fp);
           testedConfigRef.current = JSON.stringify({ useOwnDb, dbHost, dbPort, dbName, dbUser, dbPassword, dbSsl });
         }
+        // (Phase 9) The test route persists fingerprint-bound evidence on the
+        // open request — refresh the requests query so the transfer gate's
+        // badge reflects it immediately instead of staying stale.
+        void requestsQuery.refetch();
         toast.success('Connection successful', { description: 'OmniSight can connect to this database.' });
       } else if (status === 'not_configured') {
         toast.info(message);
@@ -1037,6 +1051,9 @@ function StorageConfig({ orgId }: { orgId: string }) {
           setConfigFingerprint(fp);
           testedConfigRef.current = JSON.stringify({ driver, url, key });
         }
+        // (Phase 9) Refresh requests so the persisted evidence shows in the
+        // transfer gate immediately.
+        void requestsQuery.refetch();
         toast.success('Connection successful', { description: 'OmniSight can connect to this storage.' });
       } else if (status === 'not_configured') {
         toast.info(message);

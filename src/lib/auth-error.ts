@@ -1,6 +1,7 @@
 "use client";
 
 import { useToast } from '@/hooks/use-toast';
+import { toast } from 'sonner';
 import { getPermissionDeniedMessage, getRoleLabelFromPermissions } from '@/lib/permissions';
 
 export interface AuthorizationErrorResponse {
@@ -89,6 +90,75 @@ export function getPermissionDeniedToast(
     description: `Your role: ${userRoleLabel}\nRequired: Unknown\nAction: Unknown`,
     variant: 'destructive',
   };
+}
+
+/**
+ * Whether a role satisfies the server's requireAdminOrg() gate. Org-level
+ * mutation endpoints (employees, devices, departments, project assignments,
+ * ...) reject everyone except org_admin regardless of the client permission
+ * matrix (which grants managers some write permissions they can't exercise).
+ * Includes the legacy role aliases ('admin', 'owner') and super_admin.
+ */
+export function isOrgAdminRole(role?: string | null): boolean {
+  return role === 'org_admin' || role === 'admin' || role === 'owner' || role === 'super_admin';
+}
+
+/**
+ * Build a permission-denied toast for a visible action that requires a higher
+ * authority than the current role. `requiredRoleLabel` reflects the role the
+ * SERVER enforces for the endpoint (e.g. 'Organization Admin' for org_admin
+ * gates — NOT the client permission matrix), and `actionLabel` names the
+ * precise denied action so the message is actionable instead of a generic
+ * "Insufficient permissions".
+ */
+export function getActionPermissionDeniedToast(
+  actionLabel: string,
+  requiredRoleLabel: string,
+  userRole?: string | null
+): { title: string; description: string; variant: 'destructive' } {
+  const userRoleLabel = getRoleLabelFromPermissions(userRole || 'Unknown');
+  return {
+    title: 'Permission Denied',
+    description: `Your role: ${userRoleLabel}\nRequired: ${requiredRoleLabel}\nAction: ${actionLabel}`,
+    variant: 'destructive',
+  };
+}
+
+/**
+ * Whether a role satisfies the server's requireManagerOrg()-style gate
+ * (manager or above: manager, org_admin, legacy admin/owner, super_admin).
+ */
+export function isManagerOrHigher(role?: string | null): boolean {
+  return isOrgAdminRole(role) || role === 'manager';
+}
+
+/**
+ * Thrown by action guards when the current role is below the authority the
+ * server enforces for an endpoint. Carries a prebuilt permission-denied toast
+ * so mutation onError handlers can surface the exact required role + action.
+ */
+export class PermissionDeniedError extends Error {
+  readonly toastOptions: { title: string; description: string; variant: 'destructive' };
+
+  constructor(actionLabel: string, requiredRoleLabel: string, userRole?: string | null) {
+    super('Permission denied');
+    this.name = 'PermissionDeniedError';
+    this.toastOptions = getActionPermissionDeniedToast(actionLabel, requiredRoleLabel, userRole);
+  }
+}
+
+/**
+ * Default permission-denied error handler for mutation onError callbacks.
+ * Returns true when the error conveys a clear authorization denial (message
+ * already shown); false otherwise so callers can fall through to their own
+ * generic error handling.
+ */
+export function handleDeniedError(err: unknown): boolean {
+  if (err instanceof PermissionDeniedError) {
+    toast.error(err.toastOptions.title, { description: err.toastOptions.description });
+    return true;
+  }
+  return false;
 }
 
 /**

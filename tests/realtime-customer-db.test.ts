@@ -29,6 +29,9 @@ process.env.JWT_SECRET = 'test-jwt-secret-rt-cdb-0123456789abcdef';
 process.env.SUPER_ADMIN_EMAIL = 'root@rt-cdb.local';
 process.env.SUPER_ADMIN_PASSWORD = 'S3cure!RealtimeCdb2026';
 (process.env as Record<string, string>).NODE_ENV = 'test';
+// These suites probe REAL loopback destinations (throwaway Postgres, mock Supabase).
+// Test-only SSRF relaxation — see src/lib/ssrf.ts. Never set in production.
+(process.env as Record<string, string>).OMNISIGHT_ALLOW_PRIVATE_TARGETS = '1';
 
 let db: import('../src/lib/db').Db['db'];
 

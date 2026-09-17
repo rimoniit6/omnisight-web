@@ -34,6 +34,8 @@ import { Textarea } from '@/components/ui/textarea';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { EmptyState } from '@/components/ui/empty-state';
 import { toast } from 'sonner';
+import { useAuthStore } from '@/lib/store';
+import { PermissionDeniedError, handleDeniedError, isManagerOrHigher, isOrgAdminRole } from '@/lib/auth-error';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 
 // ==================== Types ====================
@@ -97,11 +99,15 @@ function AddAppDialog({ open, onClose }: { open: boolean; onClose: () => void })
   const [executableName, setExecutableName] = useState('');
   const [listType, setListType] = useState<'whitelist' | 'blacklist'>('whitelist');
   const [reason, setReason] = useState('');
+  const currentUser = useAuthStore((s) => s.user);
 
   const queryClient = useQueryClient();
 
   const addMutation = useMutation({
     mutationFn: async () => {
+      if (!isManagerOrHigher(currentUser?.role)) {
+        throw new PermissionDeniedError('Add app to policy list', 'Manager or Higher', currentUser?.role);
+      }
       const res = await fetch('/api/app-list', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -121,7 +127,8 @@ function AddAppDialog({ open, onClose }: { open: boolean; onClose: () => void })
       setReason('');
       onClose();
     },
-    onError: (err) => {
+    onError: (err: Error) => {
+      if (handleDeniedError(err)) return;
       toast.error(err.message || 'Failed to add app');
     },
   });
@@ -185,6 +192,7 @@ function AppListTab() {
   const [search, setSearch] = useState('');
   const [addOpen, setAddOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<AppEntry | null>(null);
+  const currentUser = useAuthStore((s) => s.user);
   const queryClient = useQueryClient();
 
   const { data, isLoading, isError, refetch } = useQuery({
@@ -208,6 +216,9 @@ function AppListTab() {
 
   const deleteMutation = useMutation({
     mutationFn: async (id: string) => {
+      if (!isOrgAdminRole(currentUser?.role)) {
+        throw new PermissionDeniedError('Remove app from list', 'Organization Admin', currentUser?.role);
+      }
       const res = await fetch(`/api/app-list/${id}`, { method: 'DELETE' });
       if (!res.ok) throw new Error('Failed to remove');
       return res.json();
@@ -216,7 +227,10 @@ function AppListTab() {
       queryClient.invalidateQueries({ queryKey: ['app-list'] });
       toast.success('App removed from list');
     },
-    onError: () => toast.error('Failed to remove app'),
+    onError: (err: Error) => {
+      if (handleDeniedError(err)) return;
+      toast.error('Failed to remove app');
+    },
   });
 
   return (
