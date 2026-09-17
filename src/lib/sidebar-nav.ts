@@ -212,6 +212,7 @@ export const navGroups: NavGroup[] = [
       { page: 'sa-infra-requests', label: 'Infrastructure Requests', icon: ClipboardList },
       { page: 'sa-notifications', label: 'Notifications', icon: Bell },
       { page: 'sa-landing', label: 'Landing Page', icon: Globe },
+      { page: 'branding', label: 'Branding', icon: Palette },
     ],
   },
 ];

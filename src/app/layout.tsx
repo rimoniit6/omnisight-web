@@ -4,6 +4,8 @@ import "./globals.css";
 import { ThemeProvider } from "next-themes";
 import { Toaster } from "sonner";
 import { QueryProvider } from "@/components/providers";
+import { BrandingMeta } from "@/components/branding/branding-meta";
+import { getPlatformBranding } from "@/lib/branding";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -15,52 +17,53 @@ const geistMono = Geist_Mono({
   subsets: ["latin"],
 });
 
-export const metadata: Metadata = {
-  title: {
-    default: "OmniSight - AI-Powered Workforce Intelligence",
-    template: "%s · OmniSight",
-  },
-  description: "Monitor, analyze, and optimize your workforce productivity with AI-driven insights. Real-time activity monitoring, screenshots & OCR, and a Customer Database option for full data control.",
-  keywords: [
-    "workforce intelligence",
-    "employee monitoring",
-    "productivity analytics",
-    "AI insights",
-    "customer database monitoring",
-    "screenshot OCR",
-  ],
-  icons: {
-    // Single canonical favicon configuration:
-    //  - /favicon.svg — tight-crop SVG derivative of the canonical mark
-    //    (crisp in modern Chromium/Firefox/Edge tab UI)
-    //  - /favicon.ico — 16/32/48 raster fallback (legacy/Windows surfaces)
-    //  - /apple-touch-icon.png — 180px raster for iOS home screen
-    // All derived from public/logos/omnisight.svg by
-    // scripts/generate-brand-assets.mjs.
-    icon: [
-      { url: "/favicon.svg", type: "image/svg+xml", sizes: "any" },
-      { url: "/favicon.ico", sizes: "any" },
+export async function generateMetadata(): Promise<Metadata> {
+  const branding = await getPlatformBranding();
+  const title = branding.browserTitle || "OmniSight - AI-Powered Workforce Intelligence";
+  const siteName = branding.brandName || "OmniSight";
+  const logoUrl = branding.logoUrl || "/logos/omnisight.svg";
+  const faviconUrl = branding.faviconUrl || "/favicon.svg";
+
+  return {
+    title: {
+      default: title,
+      template: `%s · ${siteName}`,
+    },
+    description: "Monitor, analyze, and optimize your workforce productivity with AI-driven insights. Real-time activity monitoring, screenshots & OCR, and a Customer Database option for full data control.",
+    keywords: [
+      "workforce intelligence",
+      "employee monitoring",
+      "productivity analytics",
+      "AI insights",
+      "customer database monitoring",
+      "screenshot OCR",
     ],
-    apple: "/apple-touch-icon.png",
-  },
-  openGraph: {
-    type: "website",
-    locale: "en_US",
-    url: "/",
-    siteName: "OmniSight",
-    title: "OmniSight - AI-Powered Workforce Intelligence",
-    description:
-      "Real-time workforce monitoring with AI insights, screenshot & OCR, and a Customer Database option for full data control.",
-    images: [{ url: "/logos/omnisight.svg", width: 512, height: 512, alt: "OmniSight" }],
-  },
-  twitter: {
-    card: "summary_large_image",
-    title: "OmniSight - AI-Powered Workforce Intelligence",
-    description:
-      "Workforce intelligence, built for privacy. Real-time monitoring + Customer Database option.",
-    images: ["/logos/omnisight.svg"],
-  },
-};
+    icons: {
+      icon: [
+        { url: faviconUrl, type: faviconUrl.endsWith(".svg") ? "image/svg+xml" : undefined, sizes: "any" },
+        { url: "/favicon.ico", sizes: "any" },
+      ],
+      apple: "/apple-touch-icon.png",
+    },
+    openGraph: {
+      type: "website",
+      locale: "en_US",
+      url: "/",
+      siteName,
+      title,
+      description:
+        "Real-time workforce monitoring with AI insights, screenshot & OCR, and a Customer Database option for full data control.",
+      images: [{ url: logoUrl, width: 512, height: 512, alt: siteName }],
+    },
+    twitter: {
+      card: "summary_large_image",
+      title,
+      description:
+        "Workforce intelligence, built for privacy. Real-time monitoring + Customer Database option.",
+      images: [logoUrl],
+    },
+  };
+}
 
 export default function RootLayout({
   children,
@@ -79,6 +82,7 @@ export default function RootLayout({
           disableTransitionOnChange
         >
           <QueryProvider>
+            <BrandingMeta />
             {children}
           </QueryProvider>
           <Toaster position="top-right" richColors />

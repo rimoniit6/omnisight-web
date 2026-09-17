@@ -6,14 +6,15 @@ import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { motion, useReducedMotion } from 'framer-motion';
 import { cn } from '@/lib/utils';
+import { useEffectiveBranding } from '@/hooks/use-effective-branding';
 
 // ─── OmniSightLogo ─────────────────────────────────────────────────────────
 // Official brand mark (public/logos/omnisight.svg) + optional wordmark.
-// Always renders the OFFICIAL logo — never a redesign.
+// Renders the effective platform branding logo — respects Super Admin overrides.
 export function OmniSightLogo({
   href = '/',
   className,
-  wordmark = 'OmniSight',
+  wordmark,
   showWordmark = true,
   size = 32,
 }: {
@@ -23,22 +24,36 @@ export function OmniSightLogo({
   showWordmark?: boolean;
   size?: number;
 }) {
+  const branding = useEffectiveBranding();
+  const displayWordmark = wordmark ?? branding.brandName;
+  const logoUrl = branding.logoUrl ?? '/logos/omnisight.svg';
+  const logoType = branding.logoType;
+  const logoSvg = branding.logoSvg;
+
   const content = (
     <span className={cn('inline-flex items-center gap-2.5', className)}>
       <span className="relative inline-block" style={{ width: size, height: size }}>
-        <Image
-          src="/logos/omnisight.svg"
-          alt={`${wordmark} logo`}
-          fill
-          sizes={`${size}px`}
-          className="object-contain drop-shadow-[0_0_12px_rgba(0,212,255,0.35)]"
-          priority
-          unoptimized
-        />
+        {logoType === 'svg' && logoSvg ? (
+          <div
+            style={{ width: size, height: size }}
+            dangerouslySetInnerHTML={{ __html: logoSvg }}
+            className="flex items-center justify-center drop-shadow-[0_0_12px_rgba(0,212,255,0.35)]"
+          />
+        ) : (
+          <Image
+            src={logoUrl}
+            alt={`${displayWordmark} logo`}
+            fill
+            sizes={`${size}px`}
+            className="object-contain drop-shadow-[0_0_12px_rgba(0,212,255,0.35)]"
+            priority
+            unoptimized
+          />
+        )}
       </span>
       {showWordmark && (
         <span className="text-[17px] font-semibold tracking-tight text-white">
-          {wordmark}
+          {displayWordmark}
         </span>
       )}
     </span>
@@ -46,7 +61,7 @@ export function OmniSightLogo({
 
   if (href) {
     return (
-      <Link href={href} aria-label={`${wordmark} home`} className="shrink-0">
+      <Link href={href} aria-label={`${displayWordmark} home`} className="shrink-0">
         {content}
       </Link>
     );

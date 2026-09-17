@@ -126,15 +126,23 @@ export function LoginPage() {
           >
             <div className="flex items-center gap-3">
               <span className="relative inline-block h-11 w-11">
-                <Image
-                  src="/logos/omnisight.svg"
-                  alt={`${brandName} logo`}
-                  fill
-                  sizes="44px"
-                  className="object-contain drop-shadow-[0_0_14px_rgba(0,212,255,0.4)]"
-                  priority
-                  unoptimized
-                />
+                {branding.logoType === 'svg' && branding.logoSvg ? (
+                  <div
+                    style={{ width: 44, height: 44 }}
+                    dangerouslySetInnerHTML={{ __html: branding.logoSvg }}
+                    className="flex items-center justify-center"
+                  />
+                ) : (
+                  <Image
+                    src={branding.logoUrl}
+                    alt={`${brandName} logo`}
+                    fill
+                    sizes="44px"
+                    className="object-contain drop-shadow-[0_0_14px_rgba(0,212,255,0.4)]"
+                    priority
+                    unoptimized
+                  />
+                )}
               </span>
               <span className="text-xl font-semibold tracking-tight text-white">{brandName}</span>
             </div>
@@ -166,15 +174,23 @@ export function LoginPage() {
             {/* Mobile logo */}
             <div className="mb-8 flex items-center gap-3 lg:hidden">
               <span className="relative inline-block h-10 w-10">
-                <Image
-                  src="/logos/omnisight.svg"
-                  alt={`${brandName} logo`}
-                  fill
-                  sizes="40px"
-                  className="object-contain"
-                  priority
-                  unoptimized
-                />
+                {branding.logoType === 'svg' && branding.logoSvg ? (
+                  <div
+                    style={{ width: 40, height: 40 }}
+                    dangerouslySetInnerHTML={{ __html: branding.logoSvg }}
+                    className="flex items-center justify-center"
+                  />
+                ) : (
+                  <Image
+                    src={branding.logoUrl}
+                    alt={`${brandName} logo`}
+                    fill
+                    sizes="40px"
+                    className="object-contain"
+                    priority
+                    unoptimized
+                  />
+                )}
               </span>
               <span className="text-lg font-semibold tracking-tight text-white">{brandName}</span>
             </div>

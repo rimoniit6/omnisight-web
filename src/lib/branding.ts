@@ -77,6 +77,15 @@ export function invalidateBrandingCache(organizationId?: string | null): void {
   if (organizationId) {
     brandingCache.delete(`org:${organizationId}`);
     brandingCache.delete(`org-raw:${organizationId}`);
+  } else {
+    // Platform branding changed — clear all org caches that may inherit
+    // platform values. Org-specific overrides are unaffected (they recompute
+    // on next read with fresh platform data).
+    for (const key of brandingCache.keys()) {
+      if (key.startsWith('org:') || key.startsWith('org-raw:')) {
+        brandingCache.delete(key);
+      }
+    }
   }
   brandingCache.delete('platform');
 }
@@ -132,7 +141,7 @@ export function isValidTagline(tagline: string): boolean {
 
 // ─── Core: Get Platform Branding ────────────────────────────────────────────
 
-async function getPlatformBranding(): Promise<{
+export async function getPlatformBranding(): Promise<{
   brandName?: string | null;
   logoUrl?: string | null;
   faviconUrl?: string | null;
@@ -179,7 +188,7 @@ async function getPlatformBranding(): Promise<{
     };
 
     setCachedBranding('platform', branding);
-    return result;
+    return branding;
   } catch (error) {
     log.error('branding.platform_fetch_failed', { error: String(error) });
     return {};

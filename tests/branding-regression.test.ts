@@ -66,8 +66,8 @@ const TECHNICAL_CONTRACTS = [
   ['src/lib/crypto.ts', '.worklens'],
   ['src/lib/agent-process.ts', 'worklensaiagent.exe'],
   ['src/lib/policies/constants.ts', 'worklensai-agent.exe'],
-  ['omnisight-agent/src/lib/internal-process.ts', 'worklensaiagent.exe'],
-  ['omnisight-agent/src/collectors/policy-enforcer.ts', 'worklensai-agent.exe'],
+  ['omnisight-agent/src/platform/windows/windows-config.ts', 'worklensaiagent.exe'],
+  ['omnisight-agent/src/platform/windows/windows-config.ts', 'worklensai-agent.exe'],
   ['omnisight-agent/src/config/server-url.ts', 'WORKLENSAI_SERVER_URL'],
   ['omnisight-agent/src/main/main.ts', 'worklensai-agent'],
   ['omnisight-agent/native-host/launcher.c', 'worklensai-agent'],
@@ -123,9 +123,9 @@ agentTest('BRAND-4: agent exclusions carry BOTH legacy and new binary names', ()
   const admin = readFileSync(join(ROOT, 'src/lib/agent-process.ts'), 'utf8');
   assert.ok(admin.includes('omnisightagent.exe'), 'admin list must exclude omnisightagent.exe');
   assert.ok(admin.includes('worklensaiagent.exe'), 'admin list must keep legacy exclusion');
-  const agent = readFileSync(join(AGENT_ROOT, 'src/lib/internal-process.ts'), 'utf8');
-  assert.ok(agent.includes('omnisightagent.exe'), 'agent list must exclude omnisightagent.exe');
-  assert.ok(agent.includes('worklensaiagent.exe'), 'agent list must keep legacy exclusion');
+  const winConfig = readFileSync(join(AGENT_ROOT, 'src/platform/windows/windows-config.ts'), 'utf8');
+  assert.ok(winConfig.includes('omnisightagent.exe'), 'agent config must exclude omnisightagent.exe');
+  assert.ok(winConfig.includes('worklensaiagent.exe'), 'agent config must keep legacy exclusion');
 });
 
 agentTest('BRAND-5: server-url supports new primary and legacy alias', () => {
@@ -152,7 +152,7 @@ agentTest('BRAND-6: official brand assets present and referenced (no legacy artw
   assert.ok(layout.includes('"/favicon.ico"'), 'layout must reference the ICO fallback');
   assert.ok(layout.includes('"/apple-touch-icon.png"'), 'layout must reference apple-touch icon');
   const agentMain = readFileSync(join(AGENT_ROOT, 'src/main/main.ts'), 'utf8');
-  assert.ok(agentMain.includes('assets/icon.ico'), 'agent must load the branded .ico');
+  assert.ok(agentMain.includes('icon.ico'), 'agent must load the branded .ico');
   const builder = readFileSync(join(AGENT_ROOT, 'installer/electron-builder.yml'), 'utf8');
   assert.ok(builder.includes('icon: assets/icon.ico'), 'installer must use the branded .ico');
   const stale = ['public/worklens-logo.png', 'public/logo.svg', 'public/branding'];

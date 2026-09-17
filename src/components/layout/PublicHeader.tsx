@@ -5,6 +5,7 @@ import Link from 'next/link';
 import Image from 'next/image';
 import { Menu, X, ShieldCheck } from 'lucide-react';
 import { useAuthStore } from '@/lib/store';
+import { useEffectiveBranding } from '@/hooks/use-effective-branding';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 
@@ -19,9 +20,11 @@ const NAV_LINKS = [
   { href: '/#contact', label: 'Contact' },
 ];
 
-export function PublicHeader({ appName = 'OmniSight' }: PublicHeaderProps) {
+export function PublicHeader({ appName }: PublicHeaderProps) {
   const [mobileOpen, setMobileOpen] = useState(false);
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
+  const branding = useEffectiveBranding();
+  const displayName = appName || branding.brandName;
 
   return (
     <header
@@ -30,19 +33,27 @@ export function PublicHeader({ appName = 'OmniSight' }: PublicHeaderProps) {
     >
       <div className="mx-auto flex h-16 max-w-6xl items-center justify-between px-4 sm:px-6">
         {/* Logo */}
-        <Link href="/" className="flex items-center gap-2.5" aria-label={`${appName} home`}>
+        <Link href="/" className="flex items-center gap-2.5" aria-label={`${displayName} home`}>
           <span className="relative h-8 w-8">
-            <Image
-              src="/logos/omnisight.svg"
-              alt={`${appName} logo`}
-              fill
-              sizes="32px"
-              className="object-contain"
-              priority
-            />
+            {branding.logoType === 'svg' && branding.logoSvg ? (
+              <div
+                style={{ width: 32, height: 32 }}
+                dangerouslySetInnerHTML={{ __html: branding.logoSvg }}
+                className="flex items-center justify-center"
+              />
+            ) : (
+              <Image
+                src={branding.logoUrl}
+                alt={`${displayName} logo`}
+                fill
+                sizes="32px"
+                className="object-contain"
+                priority
+              />
+            )}
           </span>
           <span className="text-lg font-semibold tracking-tight text-foreground">
-            {appName}
+            {displayName}
           </span>
         </Link>
 

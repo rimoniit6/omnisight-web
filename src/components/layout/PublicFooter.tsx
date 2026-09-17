@@ -1,10 +1,7 @@
 import Link from 'next/link';
 import Image from 'next/image';
 import { Linkedin, Twitter, Github } from 'lucide-react';
-
-interface PublicFooterProps {
-  appName?: string;
-}
+import { getPlatformBranding } from '@/lib/branding';
 
 const QUICK_LINKS = [
   { href: '/#features', label: 'Features' },
@@ -19,7 +16,11 @@ const SOCIALS = [
   { href: 'https://github.com/', label: 'GitHub', Icon: Github },
 ];
 
-export function PublicFooter({ appName = 'OmniSight' }: PublicFooterProps) {
+export async function PublicFooter() {
+  const branding = await getPlatformBranding();
+  const appName = branding.brandName || 'OmniSight';
+  const logoUrl = branding.logoUrl || '/logos/omnisight.svg';
+
   return (
     <footer className="border-t border-border/60 bg-muted/30">
       <div className="mx-auto max-w-6xl px-4 py-12 sm:px-6">
@@ -29,7 +30,7 @@ export function PublicFooter({ appName = 'OmniSight' }: PublicFooterProps) {
             <Link href="/" className="flex items-center gap-2.5" aria-label={`${appName} home`}>
               <span className="relative h-8 w-8">
                 <Image
-                  src="/logos/omnisight.svg"
+                  src={logoUrl}
                   alt={`${appName} logo`}
                   fill
                   sizes="32px"

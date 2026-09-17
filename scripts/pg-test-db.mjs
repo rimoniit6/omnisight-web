@@ -23,12 +23,25 @@ if (!['ensure', 'drop'].includes(action) || !dbName || !/^[a-z0-9_]+$/.test(dbNa
 }
 
 const base = process.env.PG_TEST_BASE_URL || 'postgresql://omnisight_user:omnisight_password@127.0.0.1:5433';
+const baseUrl = new URL(base);
 // Connect to the maintenance `postgres` database to run CREATE/DROP DATABASE.
 const maintenanceUrl = (() => {
   const u = new URL(base);
   u.pathname = '/postgres';
   return u.toString();
 })();
+
+/** Explicit libpq env for psql — avoids peer-auth fallback to the OS user on CI. */
+function pgClientEnv() {
+  return {
+    ...process.env,
+    PGHOST: process.env.PGHOST || baseUrl.hostname,
+    PGPORT: process.env.PGPORT || String(baseUrl.port || 5432),
+    PGUSER: process.env.PGUSER || decodeURIComponent(baseUrl.username),
+    PGPASSWORD: process.env.PGPASSWORD || decodeURIComponent(baseUrl.password),
+    PGDATABASE: process.env.PGDATABASE || 'postgres',
+  };
+}
 
 function findPsql() {
   try {
@@ -48,12 +61,18 @@ function findPsql() {
 }
 
 const PSQL = findPsql();
+const psqlArgs = (sql) => ['-d', maintenanceUrl, '-tAc', sql];
+
 function run(sql) {
-  execFileSync(PSQL, [maintenanceUrl, '-tAc', sql], { stdio: 'pipe' });
+  execFileSync(PSQL, psqlArgs(sql), { stdio: 'pipe', env: pgClientEnv() });
 }
 function exists() {
   try {
-    const out = execFileSync(PSQL, [maintenanceUrl, '-tAc', `SELECT 1 FROM pg_database WHERE datname='${dbName}'`], { stdio: 'pipe', encoding: 'utf8' });
+    const out = execFileSync(
+      PSQL,
+      psqlArgs(`SELECT 1 FROM pg_database WHERE datname='${dbName}'`),
+      { stdio: 'pipe', encoding: 'utf8', env: pgClientEnv() }
+    );
     return out.trim() === '1';
   } catch {
     return false;
