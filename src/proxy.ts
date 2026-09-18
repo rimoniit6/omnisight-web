@@ -13,6 +13,7 @@ import {
 import { log, requestContext } from '@/lib/logger';
 import { checkRateLimit, getClientIpFromHeaders, RATE_LIMITS } from '@/lib/rate-limit';
 import { isWebSessionActive } from '@/lib/session';
+import { isDemoOrgId, isDemoBlockedPath } from '@/lib/demo/proxy-guard';
 
 // ─── Rate limiting (sensitive/expensive endpoints) ─────────────────────────
 // Applied centrally here (before auth, so unauthenticated floods are also
@@ -310,6 +311,23 @@ export async function proxy(req: NextRequest) {
       { error: 'Insufficient permissions' },
       { status: 403 }
     );
+  }
+
+  // Demo read-only enforcement (Phase 12): a session bound to the demo
+  // organization may only READ. Mutations from a demo session are rejected
+  // centrally here — before any route handler runs — so destructive/admin
+  // flows can never execute even if a page is still reachable client-side.
+  // Identification is server-side (org claim vs. resolved demo org id from
+  // the Organization.isDemo marker); never a client-provided flag. See
+  // src/lib/demo/proxy-guard.ts for the blocked-path rules and rationale.
+  if (method !== 'GET' && method !== 'HEAD' && method !== 'OPTIONS' && (await isDemoOrgId(payload.activeOrganizationId))) {
+    if (isDemoBlockedPath(pathname)) {
+      log.warn('proxy.demo.readonly_denied', { path: pathname, method }, requestContext(req));
+      return NextResponse.json(
+        { error: 'Demo mode is read-only. This action is not available in the demo.' },
+        { status: 403 }
+      );
+    }
   }
 
   return NextResponse.next();

@@ -364,6 +364,11 @@ model Organization {
   // backfill, the row keeps deploymentMode=MANAGED but is flagged here so a
   // human reviews it instead of silently running under the wrong mode.
   deploymentModeUnresolved Boolean        @default(false)
+  // Demo-First Experience marker (Phase 1): the single source of truth for
+  // demo-organization identification. Resolved server-side ONLY — never from
+  // client input. Exactly one row may carry isDemo=true (enforced by the
+  // idempotent bootstrap + partial unique index in the migration).
+  isDemo                   Boolean        @default(false)
   createdAt                DateTime       @default(now())
   updatedAt                DateTime       @updatedAt
 

@@ -3,6 +3,7 @@
 import { motion, useReducedMotion } from 'framer-motion';
 import {
   ArrowRight,
+  PlayCircle,
   Activity,
   BrainCircuit,
   TrendingUp,
@@ -184,6 +185,9 @@ export function HeroSection() {
   const subtitle = h.subtitle ?? HERO_DEFAULT_SUBTITLE;
   const primaryLabel = h.primaryCta ?? 'Get Started';
   const secondaryLabel = h.secondaryCta ?? 'Explore Platform';
+  // Demo CTA label is deliberately NOT CMS-overridable: the button must
+  // always describe where it leads, whatever the marketing copy says.
+  const demoCtaLabel = 'Explore Live Demo';
 
   return (
     <section className="relative flex min-h-[100dvh] min-h-[700px] flex-col overflow-hidden">
@@ -231,6 +235,14 @@ export function HeroSection() {
           transition={{ duration: 0.7, delay: 0.8 }}
           className="mt-9 flex flex-col items-center gap-3 sm:flex-row"
         >
+          {/* Demo-first CTA (Phase 14): primary action is the live demo —
+              a plain link to the public demo entry endpoint, which rate-
+              limits, mints the demo session server-side, and redirects into
+              the real dashboard for the isolated demo organization. No new
+              client-side flow is introduced. */}
+          <GlowButton href="/api/demo/enter">
+            {demoCtaLabel} <PlayCircle size={15} aria-hidden />
+          </GlowButton>
           <GlowButton href="#pricing">
             {primaryLabel} <ArrowRight size={15} aria-hidden />
           </GlowButton>

@@ -15,6 +15,8 @@ import { runAlertRulesJob, type AlertRuleJobResult } from './alert-rules';
 import { runSubscriptionSweep, type SubscriptionSweepResult } from './subscription-sweep';
 import { syncDeviceCounts, type SyncDeviceCountResult } from './sync-device-count';
 import { runDataExpiryReminder, type DataExpiryReminderResult } from './data-expiry-reminder';
+import { runDemoSimulatorJob, type DemoSimulatorResult } from '@/lib/demo/simulator';
+import { runDemoResetJob, type DemoResetResult } from './demo-reset';
 
 const JOB_LEASE_MS = 5 * 60 * 1000;
 
@@ -34,6 +36,9 @@ export interface JobsResult {
   subscriptionSweep: SubscriptionSweepResult | null;
   syncDeviceCount: SyncDeviceCountResult | null;
   dataExpiryReminder: DataExpiryReminderResult | null;
+  /** Demo-First Experience: simulated telemetry + periodic reset. */
+  demoSimulator: DemoSimulatorResult | null;
+  demoReset: DemoResetResult | null;
   errors: string[];
 }
 
@@ -232,7 +237,7 @@ export async function runDataExpiryReminderJob(): Promise<DataExpiryReminderResu
 }
 
 export async function runScheduledJobs(): Promise<JobsResult> {
-  const result: JobsResult = { expiredConsents: 0, retention: { ...EMPTY_RETENTION }, projectTimeSync: null, anomalyDetection: null, agentTokenSweep: null, rateLimitSweep: null, deviceIntegrity: null, userSessionSweep: null, workDaySummary: null, alertRuleEvaluation: null, subscriptionSweep: null, syncDeviceCount: null, dataExpiryReminder: null, errors: [] };
+  const result: JobsResult = { expiredConsents: 0, retention: { ...EMPTY_RETENTION }, projectTimeSync: null, anomalyDetection: null, agentTokenSweep: null, rateLimitSweep: null, deviceIntegrity: null, userSessionSweep: null, workDaySummary: null, alertRuleEvaluation: null, subscriptionSweep: null, syncDeviceCount: null, dataExpiryReminder: null, demoSimulator: null, demoReset: null, errors: [] };
 
   const started = Date.now();
 
@@ -413,10 +418,28 @@ export async function runScheduledJobs(): Promise<JobsResult> {
     await finishJob('data_expiry_reminder', String(error)).catch(() => {});
   }
 
+  // Demo-First Experience (Phase 8/11): simulated demo-org telemetry + a
+  // 7-day-cadence demo dataset reset. Both are lease-guarded and fail closed
+  // when the demo organization is not provisioned — they are no-ops in a
+  // deployment where the demo was never bootstrapped.
+  try {
+    result.demoSimulator = await runDemoSimulatorJob();
+  } catch (error) {
+    result.errors.push(`demo_simulator: ${String(error)}`);
+    await finishJob('demo_simulator', String(error)).catch(() => {});
+  }
+
+  try {
+    result.demoReset = await runDemoResetJob();
+  } catch (error) {
+    result.errors.push(`demo_reset: ${String(error)}`);
+    await finishJob('demo_reset', String(error)).catch(() => {});
+  }
+
 
   const durationMs = Date.now() - started;
   await db.jobRun.updateMany({
-    where: { job: { in: ['expire_consents', 'retention_cleanup', 'project_time_sync', 'anomaly_detection', 'agent_token_sweep', 'rate_limit_sweep', 'device_integrity', 'user_session_sweep', 'audio_transcription', 'screenshot_processing', 'workday_summary', 'alert_rule_evaluation', 'subscription_sweep', 'sync_device_count', 'data_expiry_reminder'] } },
+    where: { job: { in: ['expire_consents', 'retention_cleanup', 'project_time_sync', 'anomaly_detection', 'agent_token_sweep', 'rate_limit_sweep', 'device_integrity', 'user_session_sweep', 'audio_transcription', 'screenshot_processing', 'workday_summary', 'alert_rule_evaluation', 'subscription_sweep', 'sync_device_count', 'data_expiry_reminder', 'demo_simulator', 'demo_reset'] } },
     data: { lastDurationMs: durationMs },
   });
 

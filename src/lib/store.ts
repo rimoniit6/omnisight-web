@@ -80,9 +80,13 @@ interface AuthState {
   token: string | null;
   user: AuthUser | null;
   organization: AuthOrg | null;
+  /** True when the hydrated session is bound to the demo organization
+   *  (server-derived from Organization.isDemo via /api/auth/me). Drives the
+   *  demo banner; never set from client input. */
+  isDemo: boolean;
   isAuthenticated: boolean;
   _hydrated: boolean;
-  login: (token: string, user: AuthUser, organization: AuthOrg | null) => void;
+  login: (token: string, user: AuthUser, organization: AuthOrg | null, isDemo?: boolean) => void;
   logout: () => void;
   updateUser: (user: Partial<AuthUser>) => void;
   hydrate: () => Promise<void>;
@@ -100,6 +104,7 @@ interface AuthState {
 export const useAuthStore = create<AuthState>((set, get) => ({
   token: null,
   user: null,    organization: null,
+  isDemo: false,
   isAuthenticated: false,
   _hydrated: false,
 
@@ -111,6 +116,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         set({
           user: data.user,
           organization: data.organization,
+          isDemo: data.isDemo === true,
           isAuthenticated: true,
           _hydrated: true,
         });
@@ -142,12 +148,12 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     set({ isAuthenticated: false, _hydrated: true });
   },
 
-  login: (token, user, organization) => {
-    set({ token, user, organization, isAuthenticated: true, _hydrated: true });
+  login: (token, user, organization, isDemo = false) => {
+    set({ token, user, organization, isDemo, isAuthenticated: true, _hydrated: true });
   },
 
   logout: () => {
-    set({ token: null, user: null, organization: null, isAuthenticated: false, _hydrated: true });
+    set({ token: null, user: null, organization: null, isDemo: false, isAuthenticated: false, _hydrated: true });
   },
 
   updateUser: (updates) => {

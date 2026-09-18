@@ -86,6 +86,14 @@ export function LandingNavbar() {
         </div>
 
         <div className="hidden items-center gap-3 md:flex">
+          {/* Secondary demo CTA (Phase 14): same public demo entry as the
+              hero. Deliberately the FIRST action — the demo-first funnel. */}
+          <a
+            href="/api/demo/enter"
+            className="tech-font rounded-full border border-cyan-300/30 bg-cyan-300/10 px-5 py-2 text-[12px] font-bold uppercase tracking-[0.14em] text-cyan-200 transition-colors hover:border-cyan-300/60 hover:text-cyan-100"
+          >
+            Live Demo
+          </a>
           <a
             href="/login"
             className="tech-font rounded-full border border-white/15 px-5 py-2 text-[12px] font-bold uppercase tracking-[0.14em] text-white/80 transition-colors hover:border-white/40 hover:text-white"
@@ -133,6 +141,12 @@ export function LandingNavbar() {
                 </button>
               ))}
               <div className="mt-2 flex flex-col gap-2 border-t border-white/10 pt-4">
+                <a
+                  href="/api/demo/enter"
+                  className="tech-font rounded-full border border-cyan-300/30 bg-cyan-300/10 px-5 py-3 text-center text-[12px] font-bold uppercase tracking-[0.14em] text-cyan-200"
+                >
+                  Live Demo
+                </a>
                 <a
                   href="/login"
                   className="tech-font rounded-full border border-white/20 px-5 py-3 text-center text-[12px] font-bold uppercase tracking-[0.14em] text-white"

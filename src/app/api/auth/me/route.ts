@@ -4,6 +4,7 @@ import { getRequestToken, getRoleLabel } from '@/lib/auth';
 import { verifySessionToken } from '@/lib/session';
 import { log, requestContext } from '@/lib/logger';
 import { resolveActiveMembership } from '@/lib/membership';
+import { isDemoOrgId } from '@/lib/demo/guards';
 
 export async function GET(req: NextRequest) {
   try {
@@ -86,11 +87,17 @@ export async function GET(req: NextRequest) {
         })
       : null;
 
+    // Demo context flag (Phase 13): derived server-side from the
+    // Organization.isDemo marker — never from client input. Drives the
+    // non-intrusive demo banner in the app shell.
+    const isDemo = await isDemoOrgId(effectiveOrgId);
+
     const initials = adminUser.name
       ? adminUser.name.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2)
       : 'AD';
 
     return NextResponse.json({
+      isDemo,
       user: {
         id: adminUser.id,
         name: adminUser.name,

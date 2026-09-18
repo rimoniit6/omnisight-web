@@ -12,8 +12,6 @@
 //    once and persisted for the working directory (see getEncryptionKey). This
 //    keeps local workflows friction-free while never falling back to JWT_SECRET.
 
-import 'server-only';
-
 import {
   createCipheriv,
   createDecipheriv,

@@ -18,6 +18,7 @@
 import { db } from '@/lib/db';
 import { getPrismaForOrg } from '@/lib/org-db';
 import { sendDataExpiryReminder } from '@/lib/email';
+import { getDemoOrgIdCached } from '@/lib/demo/guards';
 
 export const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -87,9 +88,17 @@ export async function earliestDataAt(orgId: string): Promise<Date | null> {
  * retentionDays when it has one; otherwise it is skipped (no defined window).
  */
 async function loadEligibleOrgs(now: Date): Promise<EligibleOrg[]> {
+  // Demo exclusion (Phase 17): the demo organization is not a customer and
+  // must never receive (or trigger) reminder emails. Resolve the demo id
+  // FIRST and filter the subscription list; on lookup error getDemoOrgIdCached
+  // returns null and nothing is filtered (fail-open for a non-isolation UX
+  // job — worst case is a harmless reminder to demo-role addresses).
+  const demoOrgId = await getDemoOrgIdCached();
+
   const subscriptions = await db.subscription.findMany({
     where: {
       status: 'ACTIVE',
+      ...(demoOrgId ? { organizationId: { not: demoOrgId } } : {}),
       OR: [{ endDate: null }, { endDate: { gt: now } }],
     },
     select: { organizationId: true, plan: { select: { retentionDays: true, features: true } } },

@@ -7,6 +7,7 @@ import { CommandPalette } from '@/components/layout/command-palette';
 import { MobileSidebarContent } from '@/components/layout/mobile-sidebar';
 import { ForcePasswordChangeScreen } from '@/components/auth/ForcePasswordChangeScreen';
 import { MarketingPage } from '@/components/marketing/MarketingPage';
+import { DemoBanner } from '@/components/layout/demo-banner';
 import { useAppStore, useAuthStore } from '@/lib/store';
 import { useIsMobile } from '@/hooks/use-mobile';
 import { useEffectiveBranding } from '@/hooks/use-effective-branding';
@@ -144,6 +145,7 @@ function AppLayout() {
       <div className='flex flex-1 min-h-0'>
         {!isMobile && <AppSidebar />}
         <div className='flex-1 flex flex-col min-w-0'>
+          <DemoBanner />
           <AppHeader isMobile={isMobile} onMobileMenuToggle={() => setMobileOpen(true)} />
           <main id="main-content" role="main" aria-label="Main content" className='flex-1 px-4 py-4 md:px-6 md:py-6 lg:px-8 xl:px-10 overflow-y-auto min-h-0 w-full'>
             <AnimatePresence mode="wait">
