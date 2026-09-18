@@ -33,6 +33,12 @@ let listenHandler: InvalidationHandler | null = null;
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 let reconnectAttempts = 0;
 const MAX_RECONNECT_ATTEMPTS = 3;
+// Guard against duplicate connection attempts during async startup.
+// Multiple module-level callers (org-db.ts, org-storage.ts) can invoke
+// startCacheInvalidationListener() before the first connectAndListen()
+// resolves — without this flag, each caller creates a separate pg.Client,
+// resulting in duplicate LISTEN subscriptions on the same channel.
+let connecting = false;
 
 /**
  * Broadcast a cache invalidation event to all processes listening on the
@@ -74,7 +80,9 @@ export function startCacheInvalidationListener(handler: InvalidationHandler): vo
   if (process.env.NEXT_RUNTIME !== 'nodejs') return;
 
   // If already connected with a handler, just update the handler reference.
-  if (listenClient) return;
+  // If a connection attempt is already in progress (async), skip — the
+  // in-flight attempt will pick up the handler when it resolves.
+  if (listenClient || connecting) return;
 
   connectAndListen();
 }
@@ -86,6 +94,7 @@ function connectAndListen(): void {
     return;
   }
 
+  connecting = true;
   const client = new Client({ connectionString: url });
 
   client.on('notification', (msg) => {
@@ -103,6 +112,7 @@ function connectAndListen(): void {
   client.on('error', (err) => {
     console.error('[cache-invalidation] LISTEN connection error:', err.message);
     listenClient = null;
+    connecting = false;
     scheduleReconnect();
   });
 
@@ -110,12 +120,14 @@ function connectAndListen(): void {
     .then(() => client.query(`LISTEN ${CACHE_INVALIDATION_CHANNEL}`))
     .then(() => {
       listenClient = client;
+      connecting = false;
       reconnectAttempts = 0; // reset on success
       console.log(`[cache-invalidation] listening on pg_notify('${CACHE_INVALIDATION_CHANNEL}')`);
     })
     .catch((err) => {
       console.error('[cache-invalidation] failed to connect LISTEN:', err.message);
       listenClient = null;
+      connecting = false;
       scheduleReconnect();
     });
 }
@@ -141,6 +153,7 @@ export async function stopCacheInvalidationListener(): Promise<void> {
     clearTimeout(reconnectTimer);
     reconnectTimer = null;
   }
+  connecting = false;
   if (listenClient) {
     try {
       await listenClient.end();
@@ -160,5 +173,6 @@ export async function stopCacheInvalidationListener(): Promise<void> {
  */
 export async function resetCacheInvalidationState(): Promise<void> {
   await stopCacheInvalidationListener();
+  connecting = false;
   reconnectAttempts = 0;
 }
