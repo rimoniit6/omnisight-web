@@ -6,6 +6,26 @@ import type { Prisma } from '@prisma/client';
 import { requireManagerOrg, authError, getPrismaForOrg } from '@/lib/api';
 import { hasActiveConsent } from '@/lib/consent';
 import { log, requestContext } from '@/lib/logger';
+import { claimJob, finishJob } from '@/lib/jobs/lease';
+
+/**
+ * JobRun lease for the analyze route. Analysis with AI enabled can
+ * legitimately run 10+ minutes (50 employees × provider latency at
+ * concurrency 3), so this lease is LONGER than the scheduler default —
+ * otherwise a second worker would start mid-run. This replaces the previous
+ * in-process `runningAnalyses` Set, which did not protect against duplicate
+ * runs across processes/multi-pod deployments.
+ *
+ * The lease is PER-ORG (`sentiment_analyze:<orgId>`) so different tenants can
+ * analyze concurrently — matching the previous per-(org, period) semantics
+ * minus the period distinction: one analysis per ORG at a time (same-window
+ * reruns are the exact race the lease exists to prevent, and different-window
+ * runs from the same org during a long analysis would interleave the same
+ * replace transaction anyway).
+ */
+const ANALYZE_LEASE_MS = 20 * 60 * 1000;
+/** JobRun row key prefix claimed while an analysis run is in flight. */
+const ANALYZE_LEASE_PREFIX = 'sentiment_analyze:';
 
 interface Signals {
   productivityTrend: number;
@@ -140,6 +160,27 @@ function calculateSignals(
   };
 }
 
+/**
+ * Heuristic sentiment score (0–100, base 50).
+ *
+ * DOCUMENTED ASYMMETRY (kept intentionally — do not "fix" without product
+ * sign-off): positive productivity trends are rewarded more readily than
+ * negative ones are punished — a +6% trend earns +10, but a −6% trend earns
+ * 0 (only ≤−10% is penalized, and only −5). Rationale: short dips are common
+ * (PTO, meetings-heavy weeks, onboarding) and would otherwise flag healthy
+ * employees, while sustained growth is a stronger positive signal. The
+ * practical consequence is a positive bias of up to ~15 points on the trend
+ * axis; negative sentiment therefore requires corroboration from idle
+ * rate/overtime/anomalies, which is the desired conservative behavior for an
+ * HR-facing surface.
+ *
+ * Edge case: `productivityTrend` is 0 whenever the previous period had no
+ * productive time (`calculateSignals` guards division by zero) — so a first
+ * week and a 0→8h recovery both read as neutral trend. Change only together
+ * with the project-level scorer in src/lib/project-sentiment.ts, which uses
+ * DIFFERENT weights over the same 0–100 scale (cross-surface score
+ * comparisons are intentionally directional, not absolute).
+ */
 function calculateScore(signals: Signals): number {
   let score = 50;
 
@@ -326,9 +367,9 @@ async function mapWithConcurrency<T, R>(
   return results;
 }
 
-// In-process guard: only one analysis run per (org, period start) at a time.
-// The 409 is transient — the UI can simply retry after the current run ends.
-const runningAnalyses = new Set<string>();
+// (The previous per-(org, period) in-process Set was NOT cross-process safe:
+// multi-pod/cluster deployments could run two identical analyses concurrently
+// and commit duplicate rows — the JobRun lease claimed above closes that hole.)
 
 export async function POST(req: NextRequest) {
   // RBAC: running analyses costs AI credits and mutates org data — manager+.
@@ -380,15 +421,17 @@ export async function POST(req: NextRequest) {
   // same window identity — reruns replace, instead of stacking duplicates.
   periodStart.setUTCHours(0, 0, 0, 0);
 
-  // Duplicate-run guard (per org + period window)
-  const runKey = `${orgId}:${periodStart.toISOString()}`;
-  if (runningAnalyses.has(runKey)) {
+  // Duplicate-run guard (cross-process safe — JobRun lease, not in-memory,
+  // keyed per org so different tenants never block each other). Mirrors the
+  // previous 409 semantics: a concurrent run is transient; the UI can simply
+  // retry after the current run ends.
+  const runKey = `${ANALYZE_LEASE_PREFIX}${orgId}`;
+  if (!(await claimJob(runKey, ANALYZE_LEASE_MS))) {
     return NextResponse.json(
       { error: 'An analysis for this period is already running. Try again once it completes.' },
       { status: 409 }
     );
   }
-  runningAnalyses.add(runKey);
 
   try {
     // Determine employees to analyze (tenant-scoped: org always from the
@@ -586,7 +629,9 @@ export async function POST(req: NextRequest) {
         };
         return { ok: true, employee, data };
       } catch (err) {
-        log.error('api.sentiment.analyze.', { error: String(`Failed to analyze employee ${employee.id}:`) }, requestContext(req));log.error('api.sentiment\analyze\route.ts.', { error: String(`Failed to analyze employee ${employee.id}:`) }, requestContext(req));
+        // FIX (T1): log the actual error, not a constant string; the duplicated
+        // garbled second log call (merge artifact) is removed.
+        log.error('api.sentiment.analyze.', { error: String(err) }, requestContext(req));
         return { ok: false as const, employeeId: employee.id, reason: String(err) };
       }
     });
@@ -635,7 +680,25 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const txResults = await orgData.$transaction(writeOps);
+    let txResults: unknown[];
+    try {
+      txResults = await orgData.$transaction(writeOps);
+    } catch (error) {
+      // FIX (T2): SentimentRecord now carries a unique constraint on
+      // (employeeId, projectId, periodStart). A concurrent same-window run
+      // (e.g. another pod whose own lease expired mid-run) can commit first —
+      // that is a transient conflict, not a server fault. Map it to 409 so
+      // the client retries instead of surfacing a 500.
+      const code = (error as { code?: string } | null)?.code;
+      if (code === 'P2002') {
+        log.info('api.sentiment.analyze.', { error: 'concurrent same-window run committed first (P2002) — client should retry' }, requestContext(req));
+        return NextResponse.json(
+          { error: 'An analysis for this period was just completed by another run. Retry in a moment.' },
+          { status: 409 }
+        );
+      }
+      throw error;
+    }
     const results = txResults.slice(1) as SentimentRecord[];
 
     // Audit log for the run (actor, org, outcome counters)
@@ -662,12 +725,15 @@ export async function POST(req: NextRequest) {
       periodEnd,
     });
   } catch (error) {
-    log.error('api.sentiment.analyze.', { error: String('Sentiment analyze error:') }, requestContext(req));
+    // FIX (T1): log the actual error object, not a constant string.
+    log.error('api.sentiment.analyze.', { error: String(error) }, requestContext(req));
     return NextResponse.json(
       { error: 'Failed to analyze sentiment' },
       { status: 500 }
     );
   } finally {
-    runningAnalyses.delete(runKey);
+    // Release the cross-process lease so the next run (or a retry after a
+    // client timeout — the server-side transaction still completes) can start.
+    await finishJob(runKey).catch(() => {});
   }
 }

@@ -63,16 +63,69 @@ function findPsql() {
 const PSQL = findPsql();
 const psqlArgs = (sql) => ['-d', maintenanceUrl, '-tAc', sql];
 
+// ── Docker fallback ─────────────────────────────────────────────────────────
+// Hosts without a local psql client (e.g. Docker-only dev machines) can still
+// administer the test server by exec-ing psql inside a running postgres
+// container. Override with PG_TEST_DOCKER_CONTAINER when several are up.
+function findPostgresContainer() {
+  const override = process.env.PG_TEST_DOCKER_CONTAINER;
+  if (override) return override;
+  try {
+    const out = execFileSync(
+      'docker',
+      ['ps', '--format', '{{.Names}}\t{{.Image}}', '--filter', 'status=running'],
+      { stdio: 'pipe', encoding: 'utf8' }
+    );
+    const line = out
+      .split('\n')
+      .map((l) => l.trim())
+      .filter(Boolean)
+      .find((l) => /postgres/i.test(l));
+    return line ? line.split('\t')[0] : null;
+  } catch {
+    return null;
+  }
+}
+
+function runViaDocker(sql) {
+  const container = findPostgresContainer();
+  if (!container) return null;
+  const args = [
+    'exec',
+    '-e', `PGPASSWORD=${decodeURIComponent(baseUrl.password)}`,
+    container,
+    'psql',
+    '-U', decodeURIComponent(baseUrl.username),
+    '-d', 'postgres',
+    '-tAc', sql,
+  ];
+  try {
+    return execFileSync('docker', args, { stdio: 'pipe', encoding: 'utf8' });
+  } catch (err) {
+    // Surface real SQL/connection failures; only ENOENT (no docker) may fall through.
+    if (err && err.code === 'ENOENT') return null;
+    throw err;
+  }
+}
+
+function psql(sql) {
+  try {
+    return execFileSync(PSQL, psqlArgs(sql), { stdio: 'pipe', encoding: 'utf8', env: pgClientEnv() });
+  } catch (err) {
+    if (err && err.code === 'ENOENT') {
+      const out = runViaDocker(sql);
+      if (out !== null) return out;
+    }
+    throw err;
+  }
+}
+
 function run(sql) {
-  execFileSync(PSQL, psqlArgs(sql), { stdio: 'pipe', env: pgClientEnv() });
+  psql(sql);
 }
 function exists() {
   try {
-    const out = execFileSync(
-      PSQL,
-      psqlArgs(`SELECT 1 FROM pg_database WHERE datname='${dbName}'`),
-      { stdio: 'pipe', encoding: 'utf8', env: pgClientEnv() }
-    );
+    const out = psql(`SELECT 1 FROM pg_database WHERE datname='${dbName}'`);
     return out.trim() === '1';
   } catch {
     return false;

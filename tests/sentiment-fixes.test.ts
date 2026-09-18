@@ -15,6 +15,9 @@ import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { execSync } from 'node:child_process';
 import { NextRequest } from 'next/server';
+// Must run before the dynamic `import(...)` calls in before(): replaces the
+// `server-only` marker (which throws under plain Node/tsx) with a no-op.
+import './helpers/mock-server-only.cjs';
 
 // ─── Test DB isolation (set BEFORE any app module import) ──────────────────
 const PG_TEST_BASE = process.env.PG_TEST_BASE_URL || 'postgresql://postgres:123456@localhost:5432';
@@ -23,10 +26,17 @@ const TEST_DB_URL = `${PG_TEST_BASE}/${TEST_DB_NAME}?schema=public`;
 
 process.env.DATABASE_URL = TEST_DB_URL;
 process.env.DIRECT_URL = TEST_DB_URL;
+// The package scripts set NEXT_RUNTIME=nodejs, but inside a `node --test`
+// process that only enables the pg_notify LISTEN sockets (cache-listener.ts),
+// whose permanent connections prevent the runner from ever exiting (same
+// issue documented in tests/demo.test.ts). No NEXT_RUNTIME-dependent branch
+// is exercised positively by this suite, so drop it before app imports.
+delete process.env.NEXT_RUNTIME;
 process.env.JWT_SECRET = 'test-jwt-secret-sentiment-0123456789abcdef';
 process.env.SUPER_ADMIN_EMAIL = 'root@sentiment.local';
 process.env.SUPER_ADMIN_PASSWORD = 'S3cure!Sentiment2026x';
 (process.env as Record<string, string>).NODE_ENV = 'test';
+
 
 before(() => {
   execSync(`node scripts/pg-test-db.mjs ensure ${TEST_DB_NAME}`, { env: { ...process.env, PG_TEST_BASE_URL: PG_TEST_BASE }, stdio: 'pipe' });

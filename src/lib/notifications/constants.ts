@@ -20,6 +20,10 @@ export const NOTIFICATION_TYPES = [
   'consent_update',
   'project_deadline',
   'overtime_alert',
+  // Real producer: src/lib/jobs/sentiment-alerts.ts (lease-guarded scheduler
+  // job) — notified when an employee's latest sentiment lands in
+  // negative/critical with a 7-day per-employee cooldown.
+  'low_sentiment',
   // Preserved legacy type: already produced/consumed in the repository
   // (e.g. live-monitor event stats seed 'system' notifications).
   'system',
@@ -69,6 +73,7 @@ export const NOTIFICATION_TYPE_REGISTRY: NotificationTypeMeta[] = [
   { value: 'consent_update', label: 'Consent Update', icon: 'FileCheck', color: 'blue', active: false },
   { value: 'project_deadline', label: 'Project Deadline', icon: 'FolderKanban', color: 'orange', active: false },
   { value: 'overtime_alert', label: 'Overtime Alert', icon: 'Clock', color: 'amber', active: false },
+  { value: 'low_sentiment', label: 'Low Sentiment', icon: 'HeartPulse', color: 'rose', active: true },
 ];
 
 export function isNotificationType(value: unknown): value is NotificationType {

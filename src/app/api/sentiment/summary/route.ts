@@ -23,15 +23,50 @@ export async function GET(req: NextRequest) {
     const orgId = scope.organizationId;
     const orgData = (await getPrismaForOrg(orgId)).client;
 
-    // All historical rows for the org are loaded once and collapsed to the
-    // latest-per-employee set below. This endpoint is only consumed by
-    // dashboard widgets (not per-employee lists), so the load is bounded by
-    // org size; no page-request pagination applies.
+    // FIX (T4): optional date-window filter — same overlap semantics as the
+    // list endpoint (a record qualifies when its window intersects the
+    // requested range). Absent params = whole history (dashboard default).
+    const { searchParams } = new URL(req.url);
+    const startDateRaw = searchParams.get('startDate') || '';
+    const endDateRaw = searchParams.get('endDate') || '';
+    let startDate: Date | null = null;
+    let endDate: Date | null = null;
+    if (startDateRaw) {
+      const d = new Date(startDateRaw);
+      if (Number.isNaN(d.getTime())) {
+        return NextResponse.json({ error: 'startDate must be an ISO date' }, { status: 400 });
+      }
+      startDate = d;
+    }
+    if (endDateRaw) {
+      const d = new Date(endDateRaw);
+      if (Number.isNaN(d.getTime())) {
+        return NextResponse.json({ error: 'endDate must be an ISO date' }, { status: 400 });
+      }
+      endDate = d;
+    }
+    if (startDate && endDate && startDate > endDate) {
+      return NextResponse.json({ error: 'startDate must not be after endDate' }, { status: 400 });
+    }
+
+    // All historical rows in the (optionally windowed) range are loaded once
+    // and collapsed to the latest-per-employee set below. This endpoint is
+    // only consumed by dashboard widgets (not per-employee lists), so the
+    // load is bounded by org size; no page-request pagination applies.
     // Employee-level records only (projectId IS NULL) — project-scoped
     // sentiment is surfaced in the project context, never in the org-wide
     // summary.
     const records = await orgData.sentimentRecord.findMany({
-      where: { employee: { organizationId: orgId }, projectId: null },
+      where: {
+        employee: { organizationId: orgId },
+        projectId: null,
+        ...(startDate || endDate
+          ? {
+              periodStart: { lte: endDate ?? undefined },
+              periodEnd: { gte: startDate ?? undefined },
+            }
+          : {}),
+      },
       include: {
         employee: {
           select: {
@@ -167,7 +202,8 @@ export async function GET(req: NextRequest) {
       totalRecords: latestByEmployee.size,
     });
   } catch (error) {
-    log.error('api.sentiment.summary.', { error: String('Sentiment summary error:') }, requestContext(req));
+    // FIX (T1): log the actual error, not a constant string.
+    log.error('api.sentiment.summary.', { error: String(error) }, requestContext(req));
     return NextResponse.json(
       { error: 'Failed to fetch sentiment summary' },
       { status: 500 }

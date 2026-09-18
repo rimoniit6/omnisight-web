@@ -74,7 +74,8 @@ export async function GET(
       },
     });
   } catch (error) {
-    log.error('api.sentiment.id.', { error: String('Sentiment GET by ID error:') }, requestContext(req));
+    // FIX (T1): log the actual error, not a constant string.
+    log.error('api.sentiment.id.', { error: String(error) }, requestContext(req));
     return NextResponse.json(
       { error: 'Failed to fetch sentiment record' },
       { status: 500 }
@@ -107,7 +108,8 @@ export async function DELETE(
     await orgData.sentimentRecord.delete({ where: { id } });
     return NextResponse.json({ success: true });
   } catch (error) {
-    log.error('api.sentiment.id.', { error: String('Sentiment DELETE error:') }, requestContext(req));
+    // FIX (T1): log the actual error, not a constant string.
+    log.error('api.sentiment.id.', { error: String(error) }, requestContext(req));
     return NextResponse.json(
       { error: 'Failed to delete sentiment record' },
       { status: 500 }

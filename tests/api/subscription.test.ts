@@ -29,6 +29,12 @@ const TEST_DB_URL = `${PG_TEST_BASE}/${TEST_DB_NAME}?schema=public`;
 
 process.env.DATABASE_URL = TEST_DB_URL;
 process.env.DIRECT_URL = TEST_DB_URL;
+// The integration script sets NEXT_RUNTIME=nodejs, but inside a `node --test`
+// process that only enables the pg_notify LISTEN sockets (cache-listener.ts),
+// whose permanent connections prevent the runner from ever exiting (same
+// issue documented in tests/demo.test.ts). No NEXT_RUNTIME-dependent branch
+// is exercised positively by this suite, so drop it before app imports.
+delete process.env.NEXT_RUNTIME;
 process.env.JWT_SECRET = 'test-jwt-secret-subscription-0123456';
 
 let db: PrismaClient;

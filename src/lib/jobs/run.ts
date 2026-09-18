@@ -17,8 +17,13 @@ import { syncDeviceCounts, type SyncDeviceCountResult } from './sync-device-coun
 import { runDataExpiryReminder, type DataExpiryReminderResult } from './data-expiry-reminder';
 import { runDemoSimulatorJob, type DemoSimulatorResult } from '@/lib/demo/simulator';
 import { runDemoResetJob, type DemoResetResult } from './demo-reset';
+import { runSentimentAlertsJob, type SentimentAlertsResult } from './sentiment-alerts';
 
-const JOB_LEASE_MS = 5 * 60 * 1000;
+// Lease primitives live in ./lease so callers that only need claim/release
+// (sentiment analyze route, demo simulator) don't import the whole job graph.
+import { claimJob, finishJob, JOB_LEASE_MS } from './lease';
+
+export { claimJob, finishJob, JOB_LEASE_MS };
 
 export interface JobsResult {
   expiredConsents: number;
@@ -39,6 +44,8 @@ export interface JobsResult {
   /** Demo-First Experience: simulated telemetry + periodic reset. */
   demoSimulator: DemoSimulatorResult | null;
   demoReset: DemoResetResult | null;
+  /** Low-sentiment alerting (negative/critical → org notification, 7-day cooldown). */
+  sentimentAlerts: SentimentAlertsResult | null;
   errors: string[];
 }
 
@@ -63,56 +70,6 @@ function emptySyncResult(): SyncRunResult {
     timeEntriesUpdated: 0,
     auditWritten: false,
   };
-}
-
-export async function claimJob(job: string): Promise<boolean> {
-  const now = new Date();
-  const leaseExpiresAt = new Date(now.getTime() + JOB_LEASE_MS);
-
-  // Atomic claim: a single UPDATE that only matches when the job is NOT owned
-  // (not running, or its lease has lapsed). Concurrent workers serialize on the
-  // row lock — exactly one UPDATE matches, the rest see the freshly written
-  // `running` status and match zero rows. (The previous check-then-upsert had a
-  // TOCTOU race: two simultaneous workers could both claim the same job.)
-  const claimed = await db.jobRun.updateMany({
-    where: {
-      job,
-      OR: [{ status: { not: 'running' } }, { leaseExpiresAt: { lt: now } }],
-    },
-    data: { status: 'running', startedAt: now, leaseExpiresAt, lastError: null },
-  });
-  if (claimed.count > 0) return true;
-
-  // No row yet (or the row exists but is actively leased). Ensure the row
-  // exists in a NEUTRAL state (status defaults to 'idle' — creating it as
-  // 'running' would make the claim below unable to match it), then retry the
-  // atomic claim — the retry is what decides ownership.
-  await db.jobRun.upsert({
-    where: { job },
-    create: { job }, // neutral 'idle' row — claim below decides ownership
-    update: { job }, // no-op on the content; ownership is decided by the claim below
-  });
-  const retry = await db.jobRun.updateMany({
-    where: {
-      job,
-      OR: [{ status: { not: 'running' } }, { leaseExpiresAt: { lt: now } }],
-    },
-    data: { status: 'running', startedAt: now, leaseExpiresAt, lastError: null },
-  });
-  return retry.count > 0;
-}
-
-export async function finishJob(job: string, error?: string, lastResult?: Record<string, unknown> | null): Promise<void> {
-  await db.jobRun.update({
-    where: { job },
-    data: {
-      status: error ? 'failed' : 'completed',
-      finishedAt: new Date(),
-      lastRunAt: new Date(),
-      lastError: error ?? null,
-      lastResult: lastResult ? JSON.stringify(lastResult) : null,
-    },
-  });
 }
 
 const EMPTY_RETENTION: RetentionResult = {
@@ -237,7 +194,7 @@ export async function runDataExpiryReminderJob(): Promise<DataExpiryReminderResu
 }
 
 export async function runScheduledJobs(): Promise<JobsResult> {
-  const result: JobsResult = { expiredConsents: 0, retention: { ...EMPTY_RETENTION }, projectTimeSync: null, anomalyDetection: null, agentTokenSweep: null, rateLimitSweep: null, deviceIntegrity: null, userSessionSweep: null, workDaySummary: null, alertRuleEvaluation: null, subscriptionSweep: null, syncDeviceCount: null, dataExpiryReminder: null, demoSimulator: null, demoReset: null, errors: [] };
+  const result: JobsResult = { expiredConsents: 0, retention: { ...EMPTY_RETENTION }, projectTimeSync: null, anomalyDetection: null, agentTokenSweep: null, rateLimitSweep: null, deviceIntegrity: null, userSessionSweep: null, workDaySummary: null, alertRuleEvaluation: null, subscriptionSweep: null, syncDeviceCount: null, dataExpiryReminder: null, demoSimulator: null, demoReset: null, sentimentAlerts: null, errors: [] };
 
   const started = Date.now();
 
@@ -436,10 +393,20 @@ export async function runScheduledJobs(): Promise<JobsResult> {
     await finishJob('demo_reset', String(error)).catch(() => {});
   }
 
+  // Low-sentiment alerting (T3): latest negative/critical sentiment per
+  // employee → org notification, 7-day per-employee cooldown. Lease-guarded;
+  // per-org failures are isolated inside the job itself.
+  try {
+    result.sentimentAlerts = await runSentimentAlertsJob();
+  } catch (error) {
+    result.errors.push(`sentiment_alerts: ${String(error)}`);
+    await finishJob('sentiment_alerts', String(error)).catch(() => {});
+  }
+
 
   const durationMs = Date.now() - started;
   await db.jobRun.updateMany({
-    where: { job: { in: ['expire_consents', 'retention_cleanup', 'project_time_sync', 'anomaly_detection', 'agent_token_sweep', 'rate_limit_sweep', 'device_integrity', 'user_session_sweep', 'audio_transcription', 'screenshot_processing', 'workday_summary', 'alert_rule_evaluation', 'subscription_sweep', 'sync_device_count', 'data_expiry_reminder', 'demo_simulator', 'demo_reset'] } },
+    where: { job: { in: ['expire_consents', 'retention_cleanup', 'project_time_sync', 'anomaly_detection', 'agent_token_sweep', 'rate_limit_sweep', 'device_integrity', 'user_session_sweep', 'audio_transcription', 'screenshot_processing', 'workday_summary', 'alert_rule_evaluation', 'subscription_sweep', 'sync_device_count', 'data_expiry_reminder', 'demo_simulator', 'demo_reset', 'sentiment_alerts'] } },
     data: { lastDurationMs: durationMs },
   });
 

@@ -53,6 +53,32 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: 'search must be at most 100 characters' }, { status: 400 });
     }
 
+    // FIX (T4): optional date-window filter — narrows to analyses whose window
+    // OVERLAPS [startDate, endDate]. Sentinel bounds keep non-overlapping
+    // windows out (a record starting after `end`, or ending before `start`,
+    // is excluded). Both params are optional; absent = whole history.
+    const startDateRaw = searchParams.get('startDate') || '';
+    const endDateRaw = searchParams.get('endDate') || '';
+    let startDate: Date | null = null;
+    let endDate: Date | null = null;
+    if (startDateRaw) {
+      const d = new Date(startDateRaw);
+      if (Number.isNaN(d.getTime())) {
+        return NextResponse.json({ error: 'startDate must be an ISO date' }, { status: 400 });
+      }
+      startDate = d;
+    }
+    if (endDateRaw) {
+      const d = new Date(endDateRaw);
+      if (Number.isNaN(d.getTime())) {
+        return NextResponse.json({ error: 'endDate must be an ISO date' }, { status: 400 });
+      }
+      endDate = d;
+    }
+    if (startDate && endDate && startDate > endDate) {
+      return NextResponse.json({ error: 'startDate must not be after endDate' }, { status: 400 });
+    }
+
     // ── Dedup: one (latest) record per employee ──
     // Re-runs create one row per employee per period; stats and the list must
     // reflect the LATEST analysis of each employee, never every historical
@@ -71,7 +97,16 @@ export async function GET(req: NextRequest) {
     // appear here, where they would be presented without their project
     // context.
     const allRecords = await orgData.sentimentRecord.findMany({
-      where: { employee: { organizationId: orgId }, projectId: null },
+      where: {
+        employee: { organizationId: orgId },
+        projectId: null,
+        ...(startDate || endDate
+          ? {
+              periodStart: { lte: endDate ?? undefined },
+              periodEnd: { gte: startDate ?? undefined },
+            }
+          : {}),
+      },
       include: {
         employee: {
           select: {
@@ -201,7 +236,8 @@ export async function GET(req: NextRequest) {
       departments,
     });
   } catch (error) {
-    log.error('api.sentiment.', { error: String('Sentiment GET error:') }, requestContext(req));
+    // FIX (T1): log the actual error, not a constant string.
+    log.error('api.sentiment.', { error: String(error) }, requestContext(req));
     return NextResponse.json(
       { error: 'Failed to fetch sentiment records' },
       { status: 500 }

@@ -2148,6 +2148,17 @@ model SentimentRecord {
   @@index([employeeId])
   @@index([projectId])
   @@index([employeeId, periodStart])
+  // Read-path + purge indexes: list/summary date-window filters, the analyze
+  // rerun replaceMany, and the retention deleteMany all filter by org+period.
+  @@index([organizationId, periodStart])
+  @@index([organizationId, createdAt])
+  // Integrity: one record per (employee, project, period window). Reruns
+  // replace via deleteMany+create inside one transaction, so this constraint
+  // only trips on genuinely concurrent writers. NOTE: Postgres NULLs are
+  // DISTINCT in unique constraints, so employee-level rows (projectId IS
+  // NULL) are NOT protected by this constraint — their cross-process safety
+  // comes from the JobRun lease claimed by the analyze route.
+  @@unique([employeeId, projectId, periodStart])
 }
 
 // ==================== Audio Recording ====================
