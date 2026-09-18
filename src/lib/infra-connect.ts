@@ -13,6 +13,8 @@
 // decrypted password only ever lives in the connection call. The platform
 // `db` (src/lib/db) is NEVER switched.
 
+import 'server-only';
+
 import { Client } from 'pg';
 import type { Prisma } from '@prisma/client';
 import { encryptSecret, maskSecret } from '@/lib/crypto';

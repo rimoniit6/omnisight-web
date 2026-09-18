@@ -20,6 +20,8 @@
 // into a per-org analytics DB. Call it from routes that read/write analytics
 // data when the org has enabled useOwnDb.
 
+import 'server-only';
+
 import { PrismaClient } from '@prisma/client';
 import { db } from '@/lib/db';
 import { decryptSecret } from '@/lib/crypto';

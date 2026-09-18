@@ -5,6 +5,9 @@ import { log, requestContext } from '@/lib/logger';
 import { safeTimezone, localDayKey, dayKeysBetween } from '@/lib/timezone';
 import { rebuildDaysForOrg } from '@/lib/jobs/workday-summary';
 
+export const runtime = 'nodejs';
+export const dynamic = 'force-dynamic';
+
 // POST /api/workday-summaries/rebuild — deterministic whole-day recompute +
 // upsert for a bounded org-local date range (manager+ only; viewer/employee
 // are never allowed to trigger aggregation work). Reads the SAME raw Activity

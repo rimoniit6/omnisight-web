@@ -83,6 +83,6 @@ if (action === 'ensure') {
   if (!exists()) run(`CREATE DATABASE "${dbName}"`);
   console.log(`postgres test db ensured: ${dbName}`);
 } else {
-  run(`DROP DATABASE IF EXISTS "${dbName}" WITH (FORCE)`);
+  run(`DROP DATABASE IF EXISTS "${dbName}"`);
   console.log(`postgres test db dropped: ${dbName}`);
 }

@@ -14,6 +14,8 @@
 //   • LISTEN connection is lazily initialized and reconnects on error.
 //   • The channel name is stable and shared across all OmniSight processes.
 
+import 'server-only';
+
 import { Client } from 'pg';
 
 export const CACHE_INVALIDATION_CHANNEL = 'omnisight_cache_invalidation';

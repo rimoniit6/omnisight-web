@@ -1,7 +1,9 @@
+'use client';
+
 import Link from 'next/link';
 import Image from 'next/image';
 import { Linkedin, Twitter, Github } from 'lucide-react';
-import { getPlatformBranding } from '@/lib/branding';
+import { useEffectiveBranding } from '@/hooks/use-effective-branding';
 
 const QUICK_LINKS = [
   { href: '/#features', label: 'Features' },
@@ -16,8 +18,8 @@ const SOCIALS = [
   { href: 'https://github.com/', label: 'GitHub', Icon: Github },
 ];
 
-export async function PublicFooter() {
-  const branding = await getPlatformBranding();
+export function PublicFooter() {
+  const branding = useEffectiveBranding();
   const appName = branding.brandName || 'OmniSight';
   const logoUrl = branding.logoUrl || '/logos/omnisight.svg';
 

@@ -68,89 +68,126 @@ jobs:
       - name: Typecheck (with generated-types clean)
         run: bun run typecheck
 
-  test:
-    name: Test
-    runs-on: ubuntu-latest
+test:
+     name: Test
+     runs-on: ubuntu-latest
 
-    services:
-      postgres:
-        image: postgres:16
-        env:
-          POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: postgres
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U postgres -d postgres"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
+     services:
+       postgres:
+         image: postgres:16
+         env:
+           POSTGRES_USER: postgres
+           POSTGRES_PASSWORD: postgres
+           POSTGRES_DB: postgres
+         ports:
+           - 5432:5432
+         options: >-
+           --health-cmd "pg_isready -U postgres -d postgres"
+           --health-interval 10s
+           --health-timeout 5s
+           --health-retries 5
 
-    env:
-      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/postgres?schema=public
-      DIRECT_URL: postgresql://postgres:postgres@localhost:5432/postgres?schema=public
+     env:
+       # Base URL for creating isolated test databases
+       PG_TEST_BASE_URL: postgresql://postgres:postgres@localhost:5432
+       # Next.js server gets its own isolated database
+       SERVER_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/test_server?schema=public
+       SERVER_DIRECT_URL: postgresql://postgres:postgres@localhost:5432/test_server?schema=public
+       # Defaults (overridden per-test-suite by run-tests.mjs)
+       DATABASE_URL: postgresql://postgres:postgres@localhost:5432/test_server?schema=public
+       DIRECT_URL: postgresql://postgres:postgres@localhost:5432/test_server?schema=public
 
-      PGHOST: localhost
-      PGPORT: "5432"
-      PGUSER: postgres
-      PGPASSWORD: postgres
-      PGDATABASE: postgres
+       PGHOST: localhost
+       PGPORT: "5432"
+       PGUSER: postgres
+       PGPASSWORD: postgres
+       PGDATABASE: postgres
 
-    steps:
-      - uses: actions/checkout@v4
+       # CI-only values — the server is booted fresh in the test job and the
+       # bootstrap-super-admin script creates this user. Never real credentials.
+       SUPER_ADMIN_EMAIL: ci@omnisight.test
+       SUPER_ADMIN_PASSWORD: CiSuperAdmin-Test-1234
+       JWT_SECRET: ci-jwt-secret-0123456789abcdef-0123456789abcdef
+       ENCRYPTION_KEY: 0000000000000000000000000000000000000000000000000000000000000000
+       NODE_ENV: test
 
-      - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: latest
+     steps:
+       - uses: actions/checkout@v4
 
-      - run: bun install --frozen-lockfile
+       - uses: oven-sh/setup-bun@v2
+         with:
+           bun-version: latest
 
-      - name: Install PostgreSQL client
-        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+       - run: bun install --frozen-lockfile
 
-      - name: Wait for PostgreSQL
-        run: |
-          for i in $(seq 1 30); do
-            if pg_isready -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE"; then
-              echo "PostgreSQL is ready after ${i} attempt(s)"
-              exit 0
-            fi
-            sleep 2
-          done
-          echo "PostgreSQL did not become ready"
-          exit 1
+       - name: Install PostgreSQL client
+         run: sudo apt-get update && sudo apt-get install -y postgresql-client
 
-      - name: Generate Prisma client
-        run: bun run db:generate
+       - name: Wait for PostgreSQL
+         run: |
+           for i in $(seq 1 30); do
+             if pg_isready -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE"; then
+               echo "PostgreSQL is ready after ${i} attempt(s)"
+               exit 0
+             fi
+             sleep 2
+           done
+           echo "PostgreSQL did not become ready"
+           exit 1
 
-      - name: Apply migrations
-        run: bun run db:deploy
+       - name: Create isolated test databases
+         run: |
+           for db in test_server test_unit test_integration test_all; do
+             psql -v ON_ERROR_STOP=1 \
+               -h "$PGHOST" \
+               -U "$PGUSER" \
+               -d "$PGDATABASE" \
+               -c "DROP DATABASE IF EXISTS \"$db\" WITH (FORCE);"
+             psql -v ON_ERROR_STOP=1 \
+               -h "$PGHOST" \
+               -U "$PGUSER" \
+               -d "$PGDATABASE" \
+               -c "CREATE DATABASE \"$db\";"
+           done
 
-      - name: Bootstrap Super Admin
-        run: bunx tsx scripts/bootstrap-super-admin.ts
+       - name: Generate Prisma client
+         run: bun run db:generate
 
-      - name: Start Next.js dev server
-        run: |
-          nohup bun run dev:app > /tmp/next.log 2>&1 &
-          for i in $(seq 1 60); do
-            if curl -sf http://localhost:3000/api/health > /dev/null 2>&1; then
-              echo "Server is up after ${i}x2s"
-              break
-            fi
-            sleep 2
-          done
-          curl -sf http://localhost:3000/api/health > /dev/null \
-            || { echo "Server failed to start"; tail -80 /tmp/next.log; exit 1; }
+       - name: Apply migrations to server database
+         run: |
+           DATABASE_URL="$SERVER_DATABASE_URL" DIRECT_URL="$SERVER_DIRECT_URL" bun run db:deploy
 
-      - name: Run all test suites
-        run: bun run test
+       - name: Bootstrap Super Admin on server database
+         run: |
+           DATABASE_URL="$SERVER_DATABASE_URL" DIRECT_URL="$SERVER_DIRECT_URL" bunx tsx scripts/bootstrap-super-admin.ts
 
-      - name: Unit tests (subscription helpers)
-        run: bun run test:unit
+       - name: Start Next.js dev server (isolated database)
+         run: |
+           nohup DATABASE_URL="$SERVER_DATABASE_URL" DIRECT_URL="$SERVER_DIRECT_URL" bun run dev:app > /tmp/next.log 2>&1 &
+           for i in $(seq 1 60); do
+             if curl -sf http://localhost:3000/api/health > /dev/null 2>&1; then
+               echo "Server is up after ${i}x2s"
+               break
+             fi
+             sleep 2
+           done
+           curl -sf http://localhost:3000/api/health > /dev/null \
+             || { echo "Server failed to start"; tail -80 /tmp/next.log; exit 1; }
 
-      - name: Integration tests (subscription, invoices, data-expiry reminders)
-        run: bun run test:integration
+       - name: Run unit tests (subscription helpers)
+         run: |
+           DATABASE_URL="postgresql://postgres:postgres@localhost:5432/test_unit?schema=public" \
+           DIRECT_URL="postgresql://postgres:postgres@localhost:5432/test_unit?schema=public" \
+           bun run test:unit
+
+       - name: Run integration tests (subscription, invoices, data-expiry reminders)
+         run: |
+           DATABASE_URL="postgresql://postgres:postgres@localhost:5432/test_integration?schema=public" \
+           DIRECT_URL="postgresql://postgres:postgres@localhost:5432/test_integration?schema=public" \
+           bun run test:integration
+
+       - name: Run all test suites (isolated databases per suite)
+         run: bun run test
 
   build:
     name: Build

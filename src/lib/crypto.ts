@@ -12,8 +12,20 @@
 //    once and persisted for the working directory (see getEncryptionKey). This
 //    keeps local workflows friction-free while never falling back to JWT_SECRET.
 
-import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'crypto';
-import { mkdirSync, existsSync, readFileSync, writeFileSync } from 'fs';
+import 'server-only';
+
+import {
+  createCipheriv,
+  createDecipheriv,
+  createHash,
+  randomBytes,
+} from 'crypto';
+import {
+  mkdirSync,
+  existsSync,
+  readFileSync,
+  writeFileSync,
+} from 'fs';
 import path from 'path';
 import { assertProductionSecret } from '@/lib/auth';
 
