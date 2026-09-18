@@ -83,6 +83,14 @@ const eslintConfig = [
     },
   },
   {
+    // Test-only CommonJS preload shim. This file must use require() to
+    // seed Node's module cache before application modules are imported.
+    files: ["tests/**/*.cjs"],
+    rules: {
+      "@typescript-eslint/no-require-imports": "off",
+    },
+  },
+  {
     ignores: [
       "node_modules/**",
       // Claude Code local helper scripts (CommonJS `require()` hooks) — not
