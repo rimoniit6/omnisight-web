@@ -161,9 +161,14 @@ jobs:
         run: |
           DATABASE_URL="$SERVER_DATABASE_URL" DIRECT_URL="$SERVER_DIRECT_URL" bunx tsx scripts/bootstrap-super-admin.ts
 
+      # ✅ FIXED: Using 'env' to correctly pass variables to nohup/bun process
       - name: Start Next.js dev server (isolated database)
         run: |
-          nohup DATABASE_URL="$SERVER_DATABASE_URL" DIRECT_URL="$SERVER_DIRECT_URL" bun run dev:app > /tmp/next.log 2>&1 &
+          env \
+            DATABASE_URL="$SERVER_DATABASE_URL" \
+            DIRECT_URL="$SERVER_DIRECT_URL" \
+            nohup bun run dev:app > /tmp/next.log 2>&1 &
+
           for i in $(seq 1 60); do
             if curl -sf http://localhost:3000/api/health > /dev/null 2>&1; then
               echo "Server is up after ${i}x2s"
@@ -171,8 +176,13 @@ jobs:
             fi
             sleep 2
           done
+
           curl -sf http://localhost:3000/api/health > /dev/null \
-            || { echo "Server failed to start"; tail -80 /tmp/next.log; exit 1; }
+            || {
+              echo "Server failed to start"
+              tail -80 /tmp/next.log
+              exit 1
+            }
 
       - name: Run unit tests (subscription helpers)
         run: |

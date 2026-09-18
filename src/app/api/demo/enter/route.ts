@@ -88,11 +88,14 @@ export async function GET(req: NextRequest) {
     }
 
     // 4) Create a NORMAL server-authoritative UserSession (S-04) that expires
-    //    in lockstep with the short demo JWT lifetime.
+    //    in lockstep with the short demo JWT lifetime. activeOrganizationId is
+    //    persisted so the session row matches the JWT's activeOrganizationId
+    //    claim (same consistency the org-switch flow maintains via P2-01).
     const expiresAt = new Date(Date.now() + DEMO_SESSION_LIFETIME_SECONDS * 1000);
     const { id: sessionId } = await createUserSession({
       userId: user.id,
       organizationId: demo.id,
+      activeOrganizationId: demo.id,
       ipAddress: clientIp,
       userAgent: getUserAgent(req),
       expiresAt,

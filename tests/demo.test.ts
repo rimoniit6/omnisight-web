@@ -239,6 +239,24 @@ test('DEMO-E1: GET /api/demo/enter mints a session and redirects to /', async ()
   assert.equal(payload.role, 'manager');
 });
 
+test('DEMO-E1b: proxy treats /api/demo/enter as public (no token required)', async () => {
+  // Regression for the production 401: the proxy MUST short-circuit the exact
+  // entry path to NextResponse.next() WITHOUT any auth token — the route
+  // handler (invoked in DEMO-E1) is the authorizer.
+  const NextRequestMod = await import('next/server');
+  const request = new NextRequestMod.NextRequest('http://localhost:3000/api/demo/enter', { method: 'GET' });
+  const res = await proxyModule.proxy(request);
+  assert.notEqual(res.status, 401, 'demo entry must not be rejected by the proxy auth gate');
+  assert.equal(res.headers.get('x-middleware-next'), '1');
+});
+
+test('DEMO-E1c: proxy still rejects an unauthenticated protected route (control)', async () => {
+  const NextRequestMod = await import('next/server');
+  const request = new NextRequestMod.NextRequest('http://localhost:3000/api/employees', { method: 'GET' });
+  const res = await proxyModule.proxy(request);
+  assert.equal(res.status, 401, 'adding /api/demo/enter to PUBLIC_PREFIXES must not weaken other routes');
+});
+
 test('DEMO-E2: /api/auth/me reports isDemo=true for the demo session', async () => {
   const res = await meRoute.GET(req(demoToken));
   assert.equal(res.status, 200);
@@ -246,6 +264,31 @@ test('DEMO-E2: /api/auth/me reports isDemo=true for the demo session', async () 
   assert.equal(body.isDemo, true);
   assert.equal(body.organization.id, demoOrgId);
   assert.equal(body.user.role, 'manager');
+});
+
+test('DEMO-E2b: demo session row is consistent (organizationId + activeOrganizationId) and passes verifySessionToken', async () => {
+  // 1. The minted JWT carries a sessionId — the UserSession row must hold the
+  //    SAME organization in both organizationId and activeOrganizationId so it
+  //    matches the JWT's activeOrganizationId claim (P2-01 consistency).
+  const payload = JSON.parse(Buffer.from(demoToken.split('.')[1], 'base64url').toString('utf8')) as {
+    sessionId?: string; activeOrganizationId?: string;
+  };
+  assert.ok(payload.sessionId, 'demo JWT must carry a sessionId');
+  const session = await db.userSession.findUnique({
+    where: { id: payload.sessionId! },
+    select: { organizationId: true, activeOrganizationId: true, revokedAt: true, expiresAt: true },
+  });
+  assert.ok(session, 'session row must exist');
+  assert.equal(session.organizationId, demoOrgId);
+  assert.equal(session.activeOrganizationId, demoOrgId, 'session.activeOrganizationId must match JWT claim');
+  assert.equal(session.revokedAt, null);
+
+  // 2. The token passes the FULL normal session-validation path (JWT verify +
+  //    isWebSessionActive + verifySessionActiveOrg) — no demo-specific mechanism.
+  const { verifySessionToken } = await import('../src/lib/session');
+  const verified = await verifySessionToken(demoToken);
+  assert.ok(verified, 'demo session must pass the normal verifySessionToken path');
+  assert.equal(verified.activeOrganizationId, demoOrgId);
 });
 
 test('DEMO-E3: /api/auth/me reports isDemo=false for a customer session', async () => {

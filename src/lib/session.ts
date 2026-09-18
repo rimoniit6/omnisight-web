@@ -46,10 +46,18 @@ export function getUserAgent(req: Request): string | null {
 /**
  * Create a session row for a successful web login. Returns the session id the
  * JWT must carry.
+ *
+ * `activeOrganizationId` is OPTIONAL: normal login omits it (the user may
+ * pick/switch the org later; P2-01 treats a null session org as legacy-accept),
+ * while flows that mint a session for a KNOWN active org (e.g. the demo entry
+ * route) pass it so the row matches the JWT's activeOrganizationId claim —
+ * keeping session.organizationId, session.activeOrganizationId and
+ * JWT.activeOrganizationId consistent.
  */
 export async function createUserSession(input: {
   userId: string;
   organizationId?: string | null;
+  activeOrganizationId?: string | null;
   ipAddress?: string | null;
   userAgent?: string | null;
   expiresAt?: Date;
@@ -58,6 +66,7 @@ export async function createUserSession(input: {
     data: {
       userId: input.userId,
       organizationId: input.organizationId ?? null,
+      activeOrganizationId: input.activeOrganizationId ?? null,
       ipAddress: input.ipAddress ?? null,
       userAgent: sanitizeUserAgent(input.userAgent ?? null),
       expiresAt: input.expiresAt ?? new Date(Date.now() + WEB_SESSION_LIFETIME_MS),

@@ -144,6 +144,12 @@ async function enforceRateLimit(req: NextRequest): Promise<NextResponse | null> 
 // ─── Public / agent-token whitelist (exact path prefixes) ──────────────────
 const PUBLIC_PREFIXES = [
   '/api/auth/login',
+  // Demo-First Experience public entry: rate-limited inside the route, the
+  // demo org/user are resolved SERVER-SIDE (isDemo marker + configured demo
+  // user email), and the minted session is a normal org-bound session. The
+  // route itself performs all authorization; only the exact entry path is
+  // public — never a broad /api/demo prefix.
+  '/api/demo/enter',
   // Public marketing surfaces: pricing catalog (active plans only) and the
   // contact-sales lead form. Both routes are documented public, rate-limited,
   // and leak no credentials or tenant data.
