@@ -3,7 +3,7 @@
 // `node --test` runs each file in a separate process — required because the
 // suites set process.env.DATABASE_URL to per-suite throwaway databases BEFORE
 // importing app modules (they cannot share one process). Windows cmd.exe does
-// not expand `tests/*.test.ts` globs, so the glob is expanded here instead.
+// not expand `tests/*.test.ts` globs, so the glob is expanded here.
 //
 // The suite hits the live app on :3000 for ~60% of files — boot the dev
 // server first (`npm run dev`), then run this. Exit code is non-zero if any
@@ -32,7 +32,12 @@ for (const file of files) {
   process.stdout.write(`\n=== tests/${file} ===\n`);
   const r = spawnSync(process.execPath, ['--import', 'tsx', '--test', `tests/${file}`], {
     stdio: 'inherit',
-    env: { ...process.env, PG_TEST_BASE_URL },
+    env: { 
+      ...process.env, 
+      PG_TEST_BASE_URL,
+      NEXT_RUNTIME: 'nodejs',
+      NODE_ENV: 'test',
+    },
   });
   if (r.status !== 0) {
     failed += 1;
