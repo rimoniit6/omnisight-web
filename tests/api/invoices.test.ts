@@ -16,6 +16,9 @@ import assert from 'node:assert/strict';
 import { execSync } from 'node:child_process';
 import type { PrismaClient } from '@prisma/client';
 import { req } from '../helpers/request';
+// Must run before the dynamic `import(...)` calls in before(): replaces the
+// `server-only` marker (which throws under plain Node) with a no-op.
+import '../helpers/mock-server-only.cjs';
 
 const PG_TEST_BASE = process.env.PG_TEST_BASE_URL || 'postgresql://postgres:123456@localhost:5432';
 const TEST_DB_NAME = 'workai_test_invoices';
