@@ -48,6 +48,6 @@ ALTER TABLE "DeviceRouting"
 -- org database are backfilled lazily by the first lookup miss and by the
 -- daily data-integrity backfill — see src/lib/device-index.ts.
 INSERT INTO "DeviceRouting" ("id", "deviceId", "agentKey", "organizationId", "dbMode", "lastSeenAt", "createdAt", "updatedAt")
-SELECT 'drtx_' || d."id", d."id", d."agentKey", d."organizationId", 'cloud', d."updatedAt", d."createdAt", d."updatedAt"
+SELECT 'drtx_' || d."id", d."id", d."agentKey", d."organizationId", 'cloud', d."updatedAt", d."registeredAt", d."updatedAt"
 FROM "Device" d
 ON CONFLICT ("deviceId") DO NOTHING;
