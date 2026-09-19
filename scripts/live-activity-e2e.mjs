@@ -14,8 +14,12 @@ if (!token) { console.log('NO AGENT TOKEN'); process.exit(1); }
 ts(`device=${dev.name} employee=${dev.employee.firstName} org=${dev.employee.organization.name}`);
 
 // 2. Browser: login + open Live Monitor
-const ADMIN_EMAIL = process.env.ADMIN_EMAIL || 'admin@worklens.ai';
-const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'Admin@2025xy';
+const ADMIN_EMAIL = process.env.ADMIN_EMAIL;
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD;
+if (!ADMIN_EMAIL || !ADMIN_PASSWORD) {
+  console.error('ADMIN_EMAIL and ADMIN_PASSWORD (real credentials) must come from the environment — never hardcoded.');
+  process.exit(1);
+}
 const browser = await chromium.launch({ executablePath: 'C:/Program Files/Google/Chrome/Application/chrome.exe', headless: true });
 const page = await browser.newPage();
 const consoleErrors = [];

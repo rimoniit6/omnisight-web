@@ -215,7 +215,23 @@ export async function resolvePrice(args: ResolvePriceArgs): Promise<PriceBreakdo
         offer = pinned as OfferRow;
       }
     } else {
-      const candidates = await db.offer.findMany({ where: { isActive: true } });
+      const candidates = await db.offer.findMany({
+        where: { isActive: true },
+        select: {
+          id: true,
+          name: true,
+          discountType: true,
+          discountValue: true,
+          isFree: true,
+          startsAt: true,
+          endsAt: true,
+          planId: true,
+          deploymentMode: true,
+          billingPeriod: true,
+          pricingId: true,
+          createdAt: true,
+        },
+      });
       const matching = candidates.filter(
         (o) => offerValidNow(o, now) && offerMatches(o, { planId, deploymentMode, billingPeriod, pricingId: pricing?.id ?? null }),
       );

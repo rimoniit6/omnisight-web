@@ -52,6 +52,7 @@ export async function GET(
         where: { employeeId: id, status: { not: 'active' } },
         orderBy: { startedAt: 'desc' },
         take: 5,
+        select: { sessionId: true, startedAt: true, endedAt: true, endedReason: true, startedBy: true },
       }),
       hasActiveConsent(employee.id, 'webcam_access'),
       resolveOrgMonitoring(employee.organizationId),

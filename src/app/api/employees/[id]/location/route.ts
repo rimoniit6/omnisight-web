@@ -93,6 +93,7 @@ export async function GET(
         orderBy: { recordedAt: 'desc' },
         skip: (page - 1) * pageSize,
         take: pageSize,
+        select: { id: true, latitude: true, longitude: true, accuracy: true, recordedAt: true, source: true },
       }),
       orgData.locationEvent.count({ where }),
       orgData.locationEvent.findFirst({ where, orderBy: { recordedAt: 'desc' } }),

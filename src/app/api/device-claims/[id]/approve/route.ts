@@ -109,6 +109,7 @@ export async function POST(
             id: { in: projects },
             organizationId: admin.organizationId,
           },
+          select: { id: true, name: true, status: true },
         })
       : [];
     if (validProjects.length !== projects.length) {

@@ -7,10 +7,12 @@ import { db } from '@/lib/db';
 // Unlike /api/health (liveness — degrades to 200) this endpoint returns 503
 // when a critical dependency is unavailable, so load balancers / orchestrators
 // can take the instance out of rotation. Checks:
-//   - database    (SELECT 1 — connectivity only)
-//   - storage     (driver resolution — no credentials exposed)
-//   - config      (presence of the runtime-critical secrets; booleans only —
-//                  values are NEVER exposed)
+//   - database       (SELECT 1 — connectivity only)
+//   - deviceRouting  (Device Index table reachable — platform migration applied)
+//   - jobs           (JobRun lease table reachable — scheduler/cron can run)
+//   - storage        (driver resolution — no credentials exposed)
+//   - config         (presence of the runtime-critical secrets; booleans only —
+//                     values are NEVER exposed)
 // The body never contains secrets, env values, or stack traces. A database
 // outage returns 503; storage misconfiguration returns 503 in production
 // (fail-closed driver) and is reported as a warning field otherwise.
@@ -23,6 +25,26 @@ export async function GET() {
     await db.$queryRaw`SELECT 1`;
   } catch {
     database = 'unreachable';
+  }
+
+  // Device Routing engine reachability: the DeviceRouting table backs the
+  // global Device Index (src/lib/device-index.ts). Presence is our migration-
+  // applied proxy — a missing table means the platform migration did not run.
+  let deviceRouting: 'ok' | 'unreachable' = 'ok';
+  try {
+    await db.deviceRouting.findFirst({ select: { id: true } });
+  } catch {
+    deviceRouting = 'unreachable';
+  }
+
+  // Background-job tracker reachability: the JobRun lease table is what makes
+  // the scheduler / `npm run jobs` / instrumentation loops crash-safe. A
+  // missing table means jobs cannot make progress.
+  let jobs: 'ok' | 'unreachable' = 'ok';
+  try {
+    await db.jobRun.findFirst({ select: { id: true } });
+  } catch {
+    jobs = 'unreachable';
   }
 
   // Storage driver resolution. resolveStorageDriver throws on placeholder or
@@ -41,7 +63,11 @@ export async function GET() {
   }));
 
   const ready =
-    database === 'ok' && storage === 'ok' && config.every((c) => c.present);
+    database === 'ok' &&
+    deviceRouting === 'ok' &&
+    jobs === 'ok' &&
+    storage === 'ok' &&
+    config.every((c) => c.present);
 
   return NextResponse.json(
     {
@@ -49,6 +75,8 @@ export async function GET() {
       timestamp: new Date().toISOString(),
       checks: {
         database,
+        deviceRouting,
+        jobs,
         storage,
         config: config.map((c) => ({ key: c.key, present: c.present })),
       },

@@ -321,6 +321,7 @@ async function computeActivityReport(orgId: string, startDate: Date, endDate: Da
     where: { employee: { organizationId: orgId }, timestamp: { gte: startDate, lte: endDate } },
     orderBy: { timestamp: 'desc' },
     take: REPORT_SCAN_CAP,
+    select: { duration: true, category: true, applicationName: true, url: true },
   }));
   const truncated = activities.length === REPORT_SCAN_CAP;
 

@@ -36,6 +36,7 @@ export async function GET(req: NextRequest) {
 
     const rows = await db.organizationSetting.findMany({
       where: { organizationId: scope.organizationId, key: { in: Object.keys(RETENTION_KEYS) } },
+      select: { key: true, value: true },
     });
     const raw = new Map(rows.map((r) => [r.key, r.value]));
 

@@ -15,7 +15,7 @@ const BASE = process.env.BASE_URL || 'http://localhost:3000'
 const DB_PATH = process.env.DB_PATH || 'db/custom.db'
 
 const INSTALLATION_ID = 'inst_demo_default'
-const JOIN_KEY = 'WL-DEMO-JOINKEY-2026' // demo install backfilled in M003
+import { DEMO_JOIN_KEY as JOIN_KEY } from './shared/demo-fixtures.mjs';
 
 let passed = 0
 let failed = 0

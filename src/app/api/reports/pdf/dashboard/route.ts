@@ -223,6 +223,7 @@ export async function POST(request: NextRequest) {
       where: orgFilter,
       orderBy: { createdAt: 'desc' },
       take: 10,
+      select: { id: true, title: true, severity: true, status: true, createdAt: true, description: true },
     });
 
     // ── Active projects ──

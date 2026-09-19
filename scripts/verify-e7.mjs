@@ -30,7 +30,7 @@ const BASE = process.env.BASE_URL || 'http://localhost:3107'
 const DB_PATH = process.env.DB_PATH || 'db/custom.db'
 const STORAGE_ROOT = path.resolve(process.env.STORAGE_PATH || 'storage/screenshots')
 const INSTALLATION_ID = 'inst_demo_default'
-const JOIN_KEY = 'WL-DEMO-JOINKEY-2026'
+import { DEMO_JOIN_KEY as JOIN_KEY } from './shared/demo-fixtures.mjs';
 // One unique TEST-NET-3 IP per device — the register route enforces 5/min per
 // IP (contract §3); a fresh address per simulated agent keeps the suite
 // deterministic across back-to-back runs (25 agents, 25 distinct IPs).

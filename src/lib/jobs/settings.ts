@@ -288,6 +288,7 @@ export async function resolveOrgMonitoring(
 ): Promise<ResolvedMonitoring> {
   const rows = await db.organizationSetting.findMany({
     where: { organizationId: orgId, key: { in: Object.keys(MONITORING_KEYS) } },
+    select: { key: true, value: true },
   });
   const stored = new Map(rows.map((r) => [r.key, r.value]));
 

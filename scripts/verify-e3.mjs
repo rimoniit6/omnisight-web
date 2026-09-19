@@ -21,7 +21,7 @@ import { sha256Hex } from '../src/lib/agent-auth/tokens'
 const BASE = process.env.BASE_URL || 'http://localhost:3104'
 const DB_PATH = process.env.DB_PATH || 'db/custom.db'
 const INSTALLATION_ID = 'inst_demo_default'
-const JOIN_KEY = 'WL-DEMO-JOINKEY-2026'
+import { DEMO_JOIN_KEY as JOIN_KEY } from './shared/demo-fixtures.mjs';
 const E1_IP = '203.0.113.40'
 
 let passed = 0

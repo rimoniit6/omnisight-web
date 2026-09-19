@@ -23,7 +23,7 @@ import { signAgentRequest } from '../src/lib/agent-auth/signature'
 const BASE = process.env.BASE_URL || 'http://localhost:3108'
 const DB_PATH = process.env.DB_PATH || 'db/custom.db'
 const INSTALLATION_ID = 'inst_demo_default'
-const JOIN_KEY = 'WL-DEMO-JOINKEY-2026'
+import { DEMO_JOIN_KEY as JOIN_KEY } from './shared/demo-fixtures.mjs';
 const E1_IP = '203.0.113.70'
 
 let passed = 0

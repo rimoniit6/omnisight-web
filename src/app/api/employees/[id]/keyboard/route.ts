@@ -100,6 +100,7 @@ export async function GET(
         orderBy: { intervalStart: 'desc' },
         skip: (page - 1) * pageSize,
         take: pageSize,
+        select: { id: true, intervalStart: true, intervalEnd: true, keystrokeCount: true, activeTypingSeconds: true, application: true },
       }),
       orgData.keyboardActivity.count({ where }),
       orgData.keyboardActivity.aggregate({

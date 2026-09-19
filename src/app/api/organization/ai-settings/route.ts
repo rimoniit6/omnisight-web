@@ -56,6 +56,7 @@ export async function GET(req: NextRequest) {
         organizationId: orgId,
         key: { in: [...AI_SETTINGS_SET] },
       },
+      select: { key: true, value: true },
     });
 
     // Build the settings map: org values take precedence, SystemSetting as fallback

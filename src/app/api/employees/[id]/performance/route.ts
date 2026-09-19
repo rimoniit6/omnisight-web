@@ -32,6 +32,7 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
     const activities = excludeInternalAgentActivities(await orgData.activity.findMany({
       where: { employeeId: id, timestamp: { gte: thirtyDaysAgo } },
       orderBy: { timestamp: 'desc' },
+      select: { id: true, title: true, duration: true, category: true, type: true, applicationName: true, url: true, timestamp: true },
     }));
 
     // Calculate time totals
@@ -161,6 +162,7 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
     const devices = await orgData.device.findMany({
       where: { employeeId: id, status: { not: 'retired' } },
       orderBy: { registeredAt: 'desc' },
+      select: { id: true, name: true, status: true, lastHeartbeat: true },
     });
 
     // Recent activities (last 10)

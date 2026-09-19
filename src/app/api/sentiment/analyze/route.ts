@@ -443,6 +443,7 @@ export async function POST(req: NextRequest) {
         organizationId: orgId,
         ...(employeeIds && employeeIds.length > 0 ? { id: { in: employeeIds } } : {}),
       },
+      select: { id: true, firstName: true, lastName: true },
     });
 
     if (employees.length === 0) {

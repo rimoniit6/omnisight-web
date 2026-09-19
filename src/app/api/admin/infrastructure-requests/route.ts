@@ -48,7 +48,25 @@ export async function GET(req: NextRequest) {
     // queue shows migration status instead of implying approval = done).
     const pendingIds = pending.concat(recent).map((r) => r.id);
     const migrations = pendingIds.length
-      ? await db.infrastructureMigration.findMany({ where: { requestId: { in: pendingIds } } })
+      ? await db.infrastructureMigration.findMany({
+          where: { requestId: { in: pendingIds } },
+          select: {
+            requestId: true,
+            id: true,
+            status: true,
+            recordsDone: true,
+            recordsTotal: true,
+            objectsDone: true,
+            objectsTotal: true,
+            bytesDone: true,
+            bytesTotal: true,
+            currentTable: true,
+            errorStage: true,
+            errorMessage: true,
+            verifiedAt: true,
+            activatedAt: true,
+          },
+        })
       : [];
     const migrationByRequest = new Map(migrations.map((m) => [m.requestId, m]));
     const migrationView = (m: (typeof migrations)[number]) => ({

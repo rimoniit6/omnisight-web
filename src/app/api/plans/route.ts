@@ -21,12 +21,19 @@ export async function GET(req: NextRequest) {
     const plans = await db.plan.findMany({
       where: { isActive: true },
       orderBy: [{ priceMonthly: 'asc' }, { name: 'asc' }],
+      select: { id: true, name: true, description: true, currency: true, features: true },
     });
 
     const planIds = plans.map((p) => p.id);
     const [pricings, offers] = await Promise.all([
-      db.planPricing.findMany({ where: { planId: { in: planIds }, isActive: true } }),
-      db.offer.findMany({ where: { isActive: true } }),
+      db.planPricing.findMany({
+        where: { planId: { in: planIds }, isActive: true },
+        select: { planId: true, deploymentMode: true, billingPeriod: true, basePrice: true, currency: true, includedDevices: true, additionalDevicePrice: true },
+      }),
+      db.offer.findMany({
+        where: { isActive: true },
+        select: { name: true, isFree: true, discountType: true, discountValue: true, planId: true, startsAt: true, endsAt: true },
+      }),
     ]);
 
     const matchingOffers = offers.filter(

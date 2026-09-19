@@ -43,7 +43,6 @@ for (const file of files) {
     env: { 
       ...process.env, 
       PG_TEST_BASE_URL,
-      NEXT_RUNTIME: 'nodejs',
       NODE_ENV: 'test',
     },
   });

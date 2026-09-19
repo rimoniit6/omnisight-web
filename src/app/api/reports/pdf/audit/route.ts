@@ -61,6 +61,7 @@ export async function POST(request: NextRequest) {
       where,
       orderBy: { createdAt: 'desc' },
       take: 200,
+      select: { id: true, action: true, resource: true, description: true, userId: true, ipAddress: true, createdAt: true },
     });
 
     // Compute summary stats from the filtered logs

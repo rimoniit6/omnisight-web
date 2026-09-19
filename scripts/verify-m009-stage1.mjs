@@ -22,7 +22,7 @@ const DB_PATH = process.env.DB_PATH || 'db/custom.db'
 const ADMIN_EMAIL = process.env.SUPER_ADMIN_EMAIL || 'aria.martin@umbrella.com'
 const ADMIN_PASSWORD = process.env.SUPER_ADMIN_PASSWORD || ''
 const INSTALLATION_ID = 'inst_demo_default'
-const JOIN_KEY = 'WL-DEMO-JOINKEY-2026'
+import { DEMO_JOIN_KEY as JOIN_KEY } from './shared/demo-fixtures.mjs';
 
 let passed = 0
 let failed = 0

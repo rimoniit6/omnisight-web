@@ -29,6 +29,8 @@
  *     guarded by an atomic DB claim inside the runner itself, so it never
  *     double-runs a migration even across processes.
  */
+import { installShutdownHandlers, isDraining, registerDrainable } from '@/lib/graceful-shutdown';
+
 export async function register() {
   // Runtime boundary: Next.js compiles instrumentation.ts for BOTH the Node.js
   // and Edge runtimes. The job scheduler below (and its transitive imports:
@@ -43,7 +45,7 @@ export async function register() {
 
   // Fail fast on missing/incorrect required environment variables before any
   // other initialisation. Throws with a clear message when misconfigured.
-  const { validateEnv } = await import('@/lib/env');
+  const { validateEnv, readIntervalSeconds } = await import('@/lib/env-validator');
   validateEnv();
 
   // NOTE: the self-hosted startup license check was removed with the
@@ -57,19 +59,25 @@ export async function register() {
     __infraMigrationLoopStarted?: boolean;
   };
 
+  // Every scheduler interval is tracked here so graceful shutdown can stop
+  // them all in one go (see the drainable registered at the bottom of this
+  // function).
+  const schedulerTimers: Array<ReturnType<typeof setInterval>> = [];
+
   // 1. Hourly maintenance scheduler (production only — matches prior behavior).
   if (process.env.NODE_ENV === 'production' && !g.__jobsSchedulerStarted) {
     g.__jobsSchedulerStarted = true;
 
     const { runScheduledJobs } = await import('@/lib/jobs/run');
 
-    const intervalSec = parseInt(process.env.JOBS_INTERVAL_SECONDS || '3600', 10);
-    const safeInterval = Number.isFinite(intervalSec) && intervalSec >= 60 ? intervalSec : 3600;
+    const safeInterval = readIntervalSeconds('JOBS_INTERVAL_SECONDS', 3600, 60);
 
-    await runScheduledJobs().catch((error) => console.error('[jobs] startup run failed:', error));
-    setInterval(() => {
+    const tick = () => {
+      if (isDraining()) return;
       runScheduledJobs().catch((error) => console.error('[jobs] scheduled run failed:', error));
-    }, safeInterval * 1000);
+    };
+    await tick();
+    schedulerTimers.push(setInterval(tick, safeInterval * 1000));
 
     console.log(`[jobs] scheduler started (interval ${safeInterval}s)`);
   }
@@ -80,14 +88,14 @@ export async function register() {
 
     const { runProjectTimeSyncJob } = await import('@/lib/jobs/run');
 
-    const intervalSec = parseInt(process.env.PROJECT_TIME_SYNC_INTERVAL_SECONDS || '60', 10);
-    const safeInterval = Number.isFinite(intervalSec) && intervalSec >= 15 ? intervalSec : 60;
+    const safeInterval = readIntervalSeconds('PROJECT_TIME_SYNC_INTERVAL_SECONDS', 60, 15);
 
     const tick = () => {
+      if (isDraining()) return;
       runProjectTimeSyncJob().catch((error) => console.error('[jobs] project-time sync run failed:', error));
     };
     await tick();
-    setInterval(tick, safeInterval * 1000);
+    schedulerTimers.push(setInterval(tick, safeInterval * 1000));
 
     console.log(`[jobs] project-time sync loop started (interval ${safeInterval}s)`);
   }
@@ -100,16 +108,16 @@ export async function register() {
 
     const { runScreenshotProcessingJob } = await import('@/lib/jobs/run');
 
-    const intervalSec = parseInt(process.env.SCREENSHOT_PROCESSING_INTERVAL_SECONDS || '60', 10);
-    const safeInterval = Number.isFinite(intervalSec) && intervalSec >= 15 ? intervalSec : 60;
+    const safeInterval = readIntervalSeconds('SCREENSHOT_PROCESSING_INTERVAL_SECONDS', 60, 15);
 
     const tick = () => {
+      if (isDraining()) return;
       runScreenshotProcessingJob().catch((error) =>
         console.error('[jobs] screenshot processing run failed:', error)
       );
     };
     await tick();
-    setInterval(tick, safeInterval * 1000);
+    schedulerTimers.push(setInterval(tick, safeInterval * 1000));
 
     console.log(`[jobs] screenshot processing loop started (interval ${safeInterval}s)`);
   }
@@ -122,16 +130,16 @@ export async function register() {
 
     const { runSyncDeviceCountsJob } = await import('@/lib/jobs/run');
 
-    const intervalSec = parseInt(process.env.SYNC_DEVICE_COUNT_INTERVAL_SECONDS || '1800', 10);
-    const safeInterval = Number.isFinite(intervalSec) && intervalSec >= 300 ? intervalSec : 1800;
+    const safeInterval = readIntervalSeconds('SYNC_DEVICE_COUNT_INTERVAL_SECONDS', 1800, 300);
 
     const tick = () => {
+      if (isDraining()) return;
       runSyncDeviceCountsJob().catch((error) =>
         console.error('[jobs] device-count sync run failed:', error)
       );
     };
     await tick();
-    setInterval(tick, safeInterval * 1000);
+    schedulerTimers.push(setInterval(tick, safeInterval * 1000));
 
     console.log(`[jobs] device-count sync loop started (interval ${safeInterval}s)`);
   }
@@ -145,17 +153,39 @@ export async function register() {
 
     const { runMigrationJob } = await import('@/lib/migration/runner');
 
-    const intervalSec = parseInt(process.env.INFRA_MIGRATION_INTERVAL_SECONDS || '30', 10);
-    const safeInterval = Number.isFinite(intervalSec) && intervalSec >= 10 ? intervalSec : 30;
+    const safeInterval = readIntervalSeconds('INFRA_MIGRATION_INTERVAL_SECONDS', 30, 10);
 
     const tick = () => {
+      if (isDraining()) return;
       runMigrationJob().catch((error) =>
         console.error('[jobs] infrastructure migration run failed:', error)
       );
     };
     await tick();
-    setInterval(tick, safeInterval * 1000);
+    schedulerTimers.push(setInterval(tick, safeInterval * 1000));
 
     console.log(`[jobs] infrastructure migration loop started (interval ${safeInterval}s)`);
   }
+
+  // Graceful shutdown: on SIGTERM/SIGINT stop scheduling new job runs, give
+  // the in-flight lease-guarded run a short grace window, disconnect Prisma,
+  // then exit. JobRun leases are crash-safe, so a hard kill past the grace
+  // window can never double-execute a job.
+  registerDrainable({
+    name: 'instrumentation-schedulers',
+    stop: () => {
+      for (const timer of schedulerTimers) clearInterval(timer);
+    },
+  });
+  installShutdownHandlers({
+    exitAfterDrainMs: 5000,
+    onDrainComplete: async () => {
+      try {
+        const { db } = await import('@/lib/db');
+        await db.$disconnect();
+      } catch (error) {
+        console.error('[jobs] prisma disconnect during drain failed:', error);
+      }
+    },
+  });
 }

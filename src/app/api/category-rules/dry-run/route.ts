@@ -88,6 +88,7 @@ export async function POST(req: NextRequest) {
       const saved = await db.categoryRule.findMany({
         where: { organizationId: orgId, enabled: true },
         orderBy: [{ priority: 'asc' }, { createdAt: 'asc' }],
+        select: { id: true, matchType: true, pattern: true, category: true, priority: true, enabled: true, createdAt: true },
       });
       rules = saved;
       usedSaved = true;

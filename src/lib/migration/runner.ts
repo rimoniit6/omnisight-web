@@ -435,6 +435,7 @@ export async function resumeStrandedCutovers(): Promise<void> {
     where: { status: 'cutover', updatedAt: { lt: new Date(Date.now() - STALE_MIGRATING_MS) } },
     orderBy: { updatedAt: 'asc' },
     take: 1,
+    select: { id: true, kind: true, requestId: true, organizationId: true, status: true },
   });
   if (stranded.length === 0) return;
   const m = stranded[0];

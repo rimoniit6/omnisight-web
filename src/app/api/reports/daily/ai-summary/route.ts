@@ -146,6 +146,7 @@ export async function POST(req: NextRequest) {
 
     const activities = excludeInternalAgentActivities(await orgData.activity.findMany({
       where: { timestamp: { gte: targetDate, lt: nextDay }, employee: { organizationId: org.id } },
+      select: { duration: true, type: true, category: true },
     }));
 
     let data: Record<string, unknown> = {};

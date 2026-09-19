@@ -35,7 +35,7 @@ const BASE = process.env.BASE_URL || 'http://localhost:3107'
 const DB_PATH = process.env.DB_PATH || 'db/custom.db'
 const STORAGE_ROOT = path.resolve(process.env.STORAGE_PATH || 'storage/screenshots')
 const INSTALLATION_ID = 'inst_demo_default'
-const JOIN_KEY = 'WL-DEMO-JOINKEY-2026'
+import { DEMO_JOIN_KEY as JOIN_KEY } from './shared/demo-fixtures.mjs';
 const IPS = Array.from({ length: 60 }, (_, i) => `203.0.113.${i + 1}`)
 const ADMIN_EMAIL = 'aria.martin@umbrella.com'
 const ADMIN_PASSWORD = process.env.SUPER_ADMIN_PASSWORD || ''
