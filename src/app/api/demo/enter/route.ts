@@ -130,8 +130,18 @@ export async function GET(req: NextRequest) {
     // 6) Redirect into the existing SPA root with the standard cookie set.
     //    NextResponse.redirect + cookie: the AuthGuard hydrates from
     //    /api/auth/me and lands in the real dashboard for the demo org.
-    const url = new URL('/', req.url);
-    const res = NextResponse.redirect(url, { status: 302 });
+    //
+    //    REDIRECT TARGET: a RELATIVE '/'. Building an absolute URL from
+    //    `new URL('/', req.url)` resolves against the address Next bound
+    //    (0.0.0.0 in containerized/`next start` runs) → the Location becomes
+    //    `http://0.0.0.0:3000/`, which browsers refuse to navigate to
+    //    (ERR_ADDRESS_INVALID / "site can't be reached" — the exact
+    //    "Page not found" symptom). A relative Location is RFC 7231 §7.1.2
+    //    valid and the browser resolves it against the origin it used for the
+    //    request. (NextResponse.redirect('/') cannot be used: Next's
+    //    validateURL requires an absolute URL and would throw.)
+    const res = new NextResponse(null, { status: 302 });
+    res.headers.set('Location', '/');
     return setSessionCookie(res, token, DEMO_SESSION_LIFETIME_SECONDS);
   } catch (error) {
     log.error('api.demo.enter.error', { error: String(error) }, ctx);

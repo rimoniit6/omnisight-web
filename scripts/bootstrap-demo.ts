@@ -13,10 +13,14 @@
 //     payment records, no purchase requests — never touches customer flows)
 //   • every write is asserted to target the demo org (assertDemoOrg)
 //
-// Usage:  DEMO_USER_PASSWORD=... npx tsx scripts/bootstrap-demo.ts
-// (DEMO_USER_PASSWORD is optional; a random password is generated when unset —
-// it is never printed and never needed: sessions are minted server-side by
-// /api/demo/enter, not by password login.)
+// Usage:  npx tsx --require ./tests/helpers/mock-server-only.cjs scripts/bootstrap-demo.ts
+// (DEMO_USER_PASSWORD env is optional; a random password is generated when
+// unset — it is never printed and never needed: sessions are minted
+// server-side by /api/demo/enter, not by password login.)
+//
+// NOTE: The --require flag pre-seeds Node's require cache with a no-op
+// `server-only` shim BEFORE tsx processes the ESM module graph. See
+// scripts/seed-demo.ts header for the full explanation.
 
 import { randomBytes } from 'crypto';
 import { db } from '@/lib/db';
@@ -164,6 +168,7 @@ export async function bootstrapDemo(): Promise<BootstrapResult> {
   // retention (365d screenshots). NEVER billable: no Invoice, no PaymentRecord,
   // no PurchaseRequest is created; endDate far-future; no payment fields.
   let subscriptionCreated = false;
+  let subscriptionId: string | null = null;
   const activeSub = await db.subscription.findFirst({
     where: {
       organizationId: demo.id,
@@ -172,7 +177,9 @@ export async function bootstrapDemo(): Promise<BootstrapResult> {
     },
     select: { id: true },
   });
-  if (!activeSub) {
+  if (activeSub) {
+    subscriptionId = activeSub.id;
+  } else {
     // Use the built-in Business plan catalog entry (seeded by src/lib/seed.ts
     // / production bootstrap of plans). Fall back to any active plan so the
     // bootstrap never fails on a missing catalog name.
@@ -184,7 +191,7 @@ export async function bootstrapDemo(): Promise<BootstrapResult> {
         'No Plan catalog entry exists. Run the plan bootstrap (scripts/bootstrap-super-admin.ts or db:seed:dev) before bootstrapping the demo.'
       );
     }
-    await db.subscription.create({
+    const sub = await db.subscription.create({
       data: {
         organizationId: demo.id,
         planId: plan.id,
@@ -195,7 +202,27 @@ export async function bootstrapDemo(): Promise<BootstrapResult> {
       },
       select: { id: true },
     });
+    subscriptionId = sub.id;
     subscriptionCreated = true;
+  }
+
+  // 5. Self-heal: link the CURRENT-subscription pointer and reactivate the
+  //    org. The subscription-sweep job reads `org.subscription` (resolved via
+  //    Organization.subscriptionId) — an orphaned Subscription row leaves the
+  //    pointer null, the sweep sees "no active subscription", pauses the demo
+  //    org, and resolveDemoOrganization() then fails NOT_ACTIVE → the public
+  //    /api/demo/enter path 503s. Idempotent on every bootstrap run.
+  if (subscriptionId) {
+    const currentOrg = await db.organization.findUnique({
+      where: { id: demo.id },
+      select: { subscriptionId: true, status: true },
+    });
+    if (currentOrg && (currentOrg.subscriptionId !== subscriptionId || currentOrg.status !== 'active')) {
+      await db.organization.update({
+        where: { id: demo.id },
+        data: { subscriptionId, status: 'active' },
+      });
+    }
   }
 
   return {

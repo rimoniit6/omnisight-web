@@ -24,10 +24,14 @@ export async function runSubscriptionSweep(now = new Date()): Promise<Subscripti
     data: { status: 'EXPIRED' },
   });
 
-  // 2) Suspension: orgs with no remaining active subscription and no valid   //    trial -> 'paused'. Only active orgs are considered; a manually
-  //    archived org is never touched.
+  // 2) Suspension: orgs with no remaining active subscription and no valid
+  //    trial -> 'paused'. Only active orgs are considered; a manually
+  //    archived org is never touched. The demo org is EXCLUDED — its
+  //    subscription is fictional (never billable, never expires) and the
+  //    public /api/demo/enter endpoint fails closed (NOT_ACTIVE) when the
+  //    org is paused, taking the live demo offline.
   const orgs = await db.organization.findMany({
-    where: { status: 'active' },
+    where: { status: 'active', isDemo: false },
     select: {
       id: true,
       trialEndsAt: true,

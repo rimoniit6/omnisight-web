@@ -274,6 +274,17 @@ export function GlowButton({
   );
 
   if (href) {
+    // API endpoints (e.g. /api/demo/enter) return redirects that require a
+    // full-page navigation; hash anchors scroll within the page. Neither
+    // should go through Next.js <Link> which intercepts the request as a
+    // client-side RSC transition and swallows the redirect/scroll.
+    if (href.startsWith('/api/') || href.startsWith('#')) {
+      return (
+        <a href={href} className={classes}>
+          {children}
+        </a>
+      );
+    }
     return (
       <Link href={href} className={classes}>
         {children}

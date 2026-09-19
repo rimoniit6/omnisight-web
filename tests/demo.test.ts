@@ -223,7 +223,11 @@ test('DEMO-E1: GET /api/demo/enter mints a session and redirects to /', async ()
   const res = await enterRoute.GET(req(null, { ip: '203.0.113.10' }));
   assert.equal(res.status, 302);
   const loc = res.headers.get('location');
-  assert.equal(loc, 'http://localhost:3000/');
+  // Relative redirect: the browser resolves it against the origin it used
+  // for the request. An absolute URL built from `new URL('/', req.url)`
+  // would carry the bound address (0.0.0.0 in containerized/`next start`
+  // runs) → `http://0.0.0.0:3000/`, which browsers refuse to follow.
+  assert.equal(loc, '/');
   const setCookie = res.headers.get('set-cookie') || '';
   assert.ok(setCookie.length > 0, 'session cookie must be set');
   // The cookie name comes from the app's SESSION_COOKIE_NAME (default
