@@ -21,9 +21,11 @@ import { detectAnomaliesForEmployees, type DetectedAnomaly } from './detect';
 import { safeTimezone } from './time';
 import { parseHHMM } from './time';
 import { anomalyDedupeKey } from './constants';
+import { withTxAdvisoryLock, anomalyBatchLockKey } from '@/lib/pg-locks';
+import { ANOMALY_RECENT_DAYS, ANOMALY_BASELINE_WINDOW_DAYS } from '@/config/constants';
 
-const RECENT_DAYS = 7;
-const BASELINE_WINDOW_DAYS = 30; // baseline = [30d ago, 7d ago)
+const RECENT_DAYS = ANOMALY_RECENT_DAYS;
+const BASELINE_WINDOW_DAYS = ANOMALY_BASELINE_WINDOW_DAYS; // baseline = [30d ago, 7d ago)
 
 export type RunAnomalyDetectionResult =
   | { status: 'disabled'; reason: string }
@@ -78,7 +80,7 @@ export async function persistAnomaly(
   data: PrismaClient = db
 ): Promise<{ created: boolean; anomalyId: string }> {
   try {
-    return await data.$transaction(async (tx) => {
+    return await withTxAdvisoryLock(data, anomalyBatchLockKey(orgId, 'detection'), async (tx) => {
       const created = await tx.anomaly.create({
         data: {
           type: a.type,
@@ -167,12 +169,30 @@ export async function runAnomalyDetection(options: RunAnomalyDetectionOptions): 
       id: true,
       firstName: true,
       lastName: true,
+      // Hardening area 4: new hires / immature baselines are in the anomaly
+      // grace period (set daily by refresh-baselines). They are EXCLUDED from
+      // scoring until anomalyGraceUntil passes — no fabricated "productivity
+      // drop" verdicts on shallow history (F-17 floor, made explicit).
+      anomalyGraceUntil: true,
       devices: { where: { status: { not: 'offline' } }, select: { id: true }, orderBy: { updatedAt: 'desc' }, take: 1 },
     },
   });
 
-  const employeeIds = employees.map((e) => e.id);
-  const deviceByEmployee = new Map(employees.map((e) => [e.id, e.devices[0]?.id]));
+  // Grace filter: employees with an unexpired grace window are skipped and
+  // surfaced in skippedReasons (observability, not error). The persisted
+  // baseline store carries the same maturity signal for dashboard tooling.
+  const nowMs = now.getTime();
+  const graceSkips = new Set<string>();
+  const inGrace = employees.filter((e) => {
+    if (e.anomalyGraceUntil && new Date(e.anomalyGraceUntil).getTime() > nowMs) {
+      graceSkips.add(`${e.id}: in_grace_period until ${new Date(e.anomalyGraceUntil).toISOString()}`);
+      return false;
+    }
+    return true;
+  });
+
+  const employeeIds = inGrace.map((e) => e.id);
+  const deviceByEmployee = new Map(inGrace.map((e) => [e.id, e.devices[0]?.id]));
 
   // F-6: the activity WINDOWS are instant arithmetic (now - N days) so the
   // load boundary never depends on the server's local clock. The ENGINE then
@@ -209,7 +229,7 @@ export async function runAnomalyDetection(options: RunAnomalyDetectionOptions): 
     baselineByEmployee.set(a.employeeId, list);
   }
 
-  const engineInputs = employees.map((emp) => ({
+  const engineInputs = inGrace.map((emp) => ({
     employee: { id: emp.id, firstName: emp.firstName, lastName: emp.lastName },
     recent: (recentByEmployee.get(emp.id) ?? []) as ActivityRow[],
     baseline: (baselineByEmployee.get(emp.id) ?? []) as ActivityRow[],
@@ -222,6 +242,9 @@ export async function runAnomalyDetection(options: RunAnomalyDetectionOptions): 
     workEndMinutes: ctx.workEndMinutes,
     now,
   });
+  // Grace skips are rule-skips (observability, never errors) — surface them
+  // alongside the engine's own skip reasons.
+  const allSkippedReasons = [...graceSkips, ...skippedReasons];
 
   // F-14 dedupe: pre-check what already exists for today's bucket, then let
   // the unique index catch any concurrent race.
@@ -262,11 +285,11 @@ export async function runAnomalyDetection(options: RunAnomalyDetectionOptions): 
 
   return {
     status: 'ok',
-    scannedEmployees: employees.length,
+    scannedEmployees: inGrace.length,
     detected: createdIds.length,
     skipped,
     createdIds,
-    skippedReasons,
+    skippedReasons: allSkippedReasons,
     orgId,
   };
 }

@@ -2,6 +2,7 @@ import nextCoreWebVitals from "eslint-config-next/core-web-vitals";
 import nextTypescript from "eslint-config-next/typescript";
 import { dirname } from "path";
 import { fileURLToPath } from "url";
+import omnisightPrismaSelect from "./eslint-rules/prisma-select.mjs";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -44,6 +45,19 @@ const eslintConfig = [
       "react-hooks/purity": "off",
       "react-hooks/preserve-manual-memoization": "off",
       "react-hooks/set-state-in-effect": "off",
+    },
+  },
+  {
+    // OmniSight custom rule — Prisma projection discipline (hardening area 5).
+    // Scoped to product source (src/**), severity warn: flag `.findMany()`
+    // calls missing `select`/`include` so full-row reads (JSON/blob columns
+    // included) are visible to reviewers without failing the build.
+    files: ["src/**/*.{js,jsx,ts,tsx}"],
+    plugins: {
+      "omnisight": omnisightPrismaSelect,
+    },
+    rules: {
+      "omnisight/prisma-select": "warn",
     },
   },
   {
@@ -93,6 +107,11 @@ const eslintConfig = [
   {
     ignores: [
       "node_modules/**",
+      // Nested git worktrees (`.kilo/**`) are separate checkouts with their own
+      // history — linting them from this working tree double-counts errors and
+      // can flag files this checkout does not control. Each worktree lints
+      // itself.
+      ".kilo/**",
       // Claude Code local helper scripts (CommonJS `require()` hooks) — not
       // part of the product source tree; keeping them linted would add errors
       // that have nothing to do with src/ or tests/.

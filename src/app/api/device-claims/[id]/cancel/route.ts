@@ -1,7 +1,8 @@
 'use server';
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
-import { getPrismaForOrg, findDeviceAcrossActivatedOrgDbs } from '@/lib/org-db';
+import { getPrismaForOrg } from '@/lib/org-db';
+import { resolveDeviceByAgentKeyAcrossOrgDbs } from '@/lib/device-index';
 import { verifyClaimSecret } from '@/lib/agent/auth';
 import { checkRateLimit, RATE_LIMITS, getClientIpFromHeaders } from '@/lib/rate-limit';
 import { log, requestContext } from '@/lib/logger';
@@ -70,26 +71,16 @@ export async function POST(
 
     // ORG DATA BOUNDARY: DeviceClaim/Device are org-owned (copied to the org
     // DB at cutover). The claim id alone doesn't reveal the org, so resolve it
-    // from the platform device registry first (control-plane index) and read
-    // the claim from the org DB; fall back to the bounded cross-org scan for
-    // devices first seen after a cutover.
-    const knownDevice = await db.device.findFirst({
-      where: { agentKey: deviceKey },
-      select: { organizationId: true },
-    });
+    // through the GLOBAL DEVICE ROUTING INDEX (self-healing, index-first) and
+    // read the claim from the org DB; last resort is the platform rows for
+    // orgs that never cut over.
+    const routed = await resolveDeviceByAgentKeyAcrossOrgDbs(deviceKey);
     let claim: Awaited<ReturnType<typeof resolveClaim>> | null = null;
-    if (knownDevice) {
-      claim = await resolveClaim(id, deviceKey, (await getPrismaForOrg(knownDevice.organizationId)).client);
+    if (routed) {
+      claim = await resolveClaim(id, deviceKey, (await getPrismaForOrg(routed.organizationId)).client);
     }
     if (!claim) {
-      // Bounded fallback scan over activated org DBs (same policy as discover).
-      const platformDevice = await findDeviceAcrossActivatedOrgDbs(deviceKey);
-      if (platformDevice) {
-        claim = await resolveClaim(id, deviceKey, (await getPrismaForOrg(platformDevice.organizationId)).client);
-      }
-    }
-    if (!claim) {
-      // Last resort: platform rows for orgs that never cut over.
+      // Platform rows for orgs that never cut over.
       claim = await resolveClaim(id, deviceKey, db);
     }
     // Claim id + deviceKey are both required — a wrong id is indistinguishable

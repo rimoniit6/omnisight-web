@@ -530,7 +530,7 @@ export async function GET(
       },
     });
   } catch (error) {
-    log.error('api.export.param.', { error: String(`Export [${exportType}] error:`) }, requestContext(req));log.error('api.export\param\route.ts.', { error: String(`Export [${exportType}] error:`) }, requestContext(req));
+    log.error('api.export.param.', { error: String(`Export [${exportType}] error:`) }, requestContext(req));
     return NextResponse.json(
       { error: 'Failed to generate export.' },
       { status: 500 }

@@ -5,6 +5,7 @@ import {
   StorageObject,
   storageError,
   SCREENSHOTS_KEY_PREFIX,
+  SCREENSHOTS_BUCKET,
   AVATARS_KEY_PREFIX,
 } from './types';
 import { getLocalUploadsRoot } from './local-path';
@@ -103,6 +104,49 @@ export class LocalStorageDriver implements StorageDriver {
 
   getPublicUrl(): string | null {
     return null;
+  }
+
+  /**
+   * List screenshot objects as storage keys. The local layout is FLAT (the
+   * orgId segment is intentionally dropped — see the key mapping in the class
+   * comment), so the orgId in each returned key is unknown and emitted as the
+   * bucket-root shape "screenshots/<file>". Reconcile by BASENAME — the
+   * common denominator with Supabase keys and with the DB filePath column.
+   * `prefix` narrows to a bucket when given ("screenshots/"); `limit` bounds
+   * the walk for huge directories.
+   */
+  async listObjects(options: { prefix?: string; limit?: number } = {}): Promise<string[]> {
+    const { prefix = SCREENSHOTS_KEY_PREFIX, limit = 5000 } = options;
+    const bucket = prefix.split('/')[0];
+    if (bucket && bucket !== SCREENSHOTS_BUCKET) return []; // only screenshots listed here
+    const entries = await this.readFlat(this.rootFor(SCREENSHOTS_KEY_PREFIX));
+    const keys = entries
+      .filter((name) => !name.startsWith('.'))
+      .slice(0, limit)
+      .map((name) => `${SCREENSHOTS_BUCKET}/${name}`);
+    return keys;
+  }
+
+  private async readFlat(dir: string): Promise<string[]> {
+    try {
+      const names = await fs.readdir(dir);
+      const files: string[] = [];
+      for (const name of names) {
+        try {
+          const stat = await fs.stat(join(dir, name));
+          if (stat.isFile()) files.push(name);
+          else if (stat.isDirectory()) files.push(...(await this.readFlat(join(dir, name))));
+        } catch {
+          // race: entry vanished between readdir and stat
+        }
+      }
+      return files;
+    } catch (error) {
+      if (error && typeof error === 'object' && 'code' in error && (error as { code?: string }).code === 'ENOENT') {
+        return []; // storage root does not exist yet — nothing to list
+      }
+      throw error;
+    }
   }
 
   /** Local filesystem storage is always filesystem-backed. */

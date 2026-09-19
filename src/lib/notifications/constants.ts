@@ -27,6 +27,11 @@ export const NOTIFICATION_TYPES = [
   // Preserved legacy type: already produced/consumed in the repository
   // (e.g. live-monitor event stats seed 'system' notifications).
   'system',
+  // Real producer: src/lib/jobs/device-claim-reminders.ts (lease-guarded
+  // scheduler job) — sent when a pending device claim awaits approval past
+  // DEVICE_CLAIM_REMINDER_AFTER_MS and the per-claim reminder cooldown
+  // (DEVICE_CLAIM_REMINDER_COOLDOWN_MS) has elapsed.
+  'device_approval_reminder',
 ] as const;
 
 export type NotificationType = (typeof NOTIFICATION_TYPES)[number];
@@ -49,6 +54,7 @@ export const ACTIVE_NOTIFICATION_TYPES: readonly NotificationType[] = [
   'anomaly_detected',
   'policy_violation',
   'new_employee',
+  'device_approval_reminder',
 ];
 
 export interface NotificationTypeMeta {
@@ -74,6 +80,7 @@ export const NOTIFICATION_TYPE_REGISTRY: NotificationTypeMeta[] = [
   { value: 'project_deadline', label: 'Project Deadline', icon: 'FolderKanban', color: 'orange', active: false },
   { value: 'overtime_alert', label: 'Overtime Alert', icon: 'Clock', color: 'amber', active: false },
   { value: 'low_sentiment', label: 'Low Sentiment', icon: 'HeartPulse', color: 'rose', active: true },
+  { value: 'device_approval_reminder', label: 'Device Approval Reminder', icon: 'BellRing', color: 'amber', active: true },
 ];
 
 export function isNotificationType(value: unknown): value is NotificationType {

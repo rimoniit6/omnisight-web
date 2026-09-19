@@ -6,6 +6,7 @@ import { requireManagerOrg, authError, getPrismaForOrg } from '@/lib/api';
 import { hasActiveConsent } from '@/lib/consent';
 import { checkRateLimit, getClientIpFromHeaders, RATE_LIMITS } from '@/lib/rate-limit';
 import { log, requestContext } from '@/lib/logger';
+import { toClientMessage } from '@/lib/error-boundary';
 import {
   calculateProjectSignals,
   calculateProjectScore,
@@ -358,8 +359,8 @@ export async function POST(
           },
         };
       } catch (err) {
-        log.error('api.projects.id.sentiment.analyze.', { error: String(`Failed to analyze project sentiment for employee ${member.id}:`) }, requestContext(req));log.error('api.projects\id\sentiment\analyze\route.ts.', { error: String(`Failed to analyze project sentiment for employee ${member.id}:`) }, requestContext(req));
-        return { ok: false as const, employeeId: member.id, reason: String(err) };
+        log.error('api.projects.id.sentiment.analyze.', { error: String(`Failed to analyze project sentiment for employee ${member.id}:`) }, requestContext(req));
+        return { ok: false as const, employeeId: member.id, reason: toClientMessage(err) };
       }
     });
 

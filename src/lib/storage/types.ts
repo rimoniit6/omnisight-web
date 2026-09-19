@@ -63,6 +63,18 @@ export interface StorageDriver {
   getSignedUrl(key: string, expiresInSeconds?: number): Promise<string | null>;
   /** Stable public URL for a public-bucket object; null when unsupported. */
   getPublicUrl(key: string): string | null;
+  /**
+   * List existing object keys. Keys returned are STORAGE KEYS (never display
+   * paths) and can be fed back into get/delete. Best-effort and bounded:
+   * `prefix` filters when the driver models a hierarchy (supabase), and the
+   * optional `limit` caps the result size for huge buckets. Implementations
+   * are NOT required to page beyond the limit.
+   *
+   * Used by the daily data-integrity job to reconcile rows <-> objects; the
+   * caller compares by basename, which is the common denominator across the
+   * drivers' key shapes.
+   */
+  listObjects(options?: { prefix?: string; limit?: number }): Promise<string[]>;
 }
 
 /** Canonical bucket names used across the codebase. */

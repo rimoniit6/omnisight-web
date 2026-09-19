@@ -23,6 +23,20 @@
  */
 import type { AnomalySeverity, AnomalyType } from './constants';
 import { tzDayKey, tzMinutesSinceMidnight, isWithinWorkWindow, safeTimezone } from './time';
+// Hardening area 5: rule thresholds are centralized in src/config/constants so
+// the engine, the baseline store and the docs can never disagree. Aliased to
+// the historical local names — every computation and metadata payload below
+// keeps reading the same identifiers.
+import {
+  ANOMALY_PRODUCTIVITY_DROP_THRESHOLD_PCT as PRODUCTIVITY_DROP_THRESHOLD_PCT,
+  ANOMALY_MIN_BASELINE_DAYS as MIN_BASELINE_DAYS,
+  ANOMALY_EXCESSIVE_IDLE_THRESHOLD_MINUTES as EXCESSIVE_IDLE_THRESHOLD_MINUTES,
+  ANOMALY_OFF_HOURS_MIN_COUNT as OFF_HOURS_MIN_COUNT,
+  ANOMALY_OFF_HOURS_MIN_RATIO as OFF_HOURS_MIN_RATIO,
+  ANOMALY_LOW_ACTIVITY_MIN_AVG as LOW_ACTIVITY_MIN_AVG,
+  ANOMALY_LOW_ACTIVITY_RATIO as LOW_ACTIVITY_RATIO,
+  ANOMALY_LOW_ACTIVITY_MAX_TODAY as LOW_ACTIVITY_MAX_TODAY,
+} from '@/config/constants';
 
 // ─── Input shapes (decoupled from Prisma so the engine is unit-testable) ───
 export interface ActivityLike {
@@ -78,14 +92,11 @@ export interface EmployeeDetectResult {
 }
 
 // ─── Rule constants ────────────────────────────────────────────────────────
-const PRODUCTIVITY_DROP_THRESHOLD_PCT = 30;
-const MIN_BASELINE_DAYS = 5; // distinct baseline days with activity required
-const EXCESSIVE_IDLE_THRESHOLD_MINUTES = 120;
-const OFF_HOURS_MIN_COUNT = 5;
-const OFF_HOURS_MIN_RATIO = 0.5;
-const LOW_ACTIVITY_MIN_AVG = 20;
-const LOW_ACTIVITY_RATIO = 0.3;
-const LOW_ACTIVITY_MAX_TODAY = 10;
+// NOTE: thresholds live in src/config/constants.ts (imported above). The
+// historical local values were: PRODUCTIVITY_DROP_THRESHOLD_PCT=30,
+// MIN_BASELINE_DAYS=5, EXCESSIVE_IDLE_THRESHOLD_MINUTES=120, OFF_HOURS_MIN
+// _COUNT=5, OFF_HOURS_MIN_RATIO=0.5, LOW_ACTIVITY_MIN_AVG=20,
+// LOW_ACTIVITY_RATIO=0.3, LOW_ACTIVITY_MAX_TODAY=10.
 
 const clampScore = (v: number) => Math.max(0, Math.min(100, Math.round(v)));
 const clampConfidence = (v: number) => Math.max(0, Math.min(0.95, v));

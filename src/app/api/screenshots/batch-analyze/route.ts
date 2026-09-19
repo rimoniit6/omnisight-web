@@ -6,6 +6,7 @@ import type { Prisma } from '@prisma/client';
 import { authError, requireAdminOrg, getPrismaForOrg } from '@/lib/api';
 import { screenshotAiInput } from '@/lib/storage';
 import { log, requestContext } from '@/lib/logger';
+import { toClientMessage } from '@/lib/error-boundary';
 
 /** Org-scoped metered vision call: records one AiUsage row per provider call. */
 async function meterVisionCall(
@@ -157,14 +158,16 @@ Respond in valid JSON:
         });
         analyzed++;
       } catch (err) {
-        log.error('api.screenshots.batch-analyze.', { error: String(`Error processing screenshot ${screenshot.id}:`) }, requestContext(req));log.error('api.screenshots\batch-analyze\route.ts.', { error: String(`Error processing screenshot ${screenshot.id}:`) }, requestContext(req));
+        log.error('api.screenshots.batch-analyze.', { error: String(`Error processing screenshot ${screenshot.id}:`) }, requestContext(req));
         results.push({
           id: screenshot.id,
           ocrText: '',
           aiAnalysis: {},
           flagged: false,
           flagReason: null,
-          error: err instanceof Error ? err.message : 'Analysis failed',
+          // Boundary: developer-authored messages pass; DB/provider internals
+          // are collapsed (never leak query/connection detail to the client).
+          error: toClientMessage(err, 'Analysis failed'),
         });
         failed++;
       }

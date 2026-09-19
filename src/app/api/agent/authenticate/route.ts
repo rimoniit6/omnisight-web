@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
-import { getPrismaForOrg, findDeviceAcrossActivatedOrgDbs } from '@/lib/org-db';
+import { getPrismaForOrg } from '@/lib/org-db';
+import { resolveDeviceByIdAcrossOrgDbs } from '@/lib/device-index';
 import { generateToken, verifyClaimSecret } from '@/lib/agent/auth';
 import {
   acquireActiveSlot,
@@ -54,31 +55,6 @@ export async function POST(req: NextRequest) {
   }
 }
 
-/** Bounded scan for a device id across activated org DBs (org-id variant of
- *  findDeviceAcrossActivatedOrgDbs, used when the platform index is stale). */
-async function findDeviceAcrossActivatedOrgDbsById(
-  deviceId: string
-): Promise<{ organizationId: string } | null> {
-  const activated = await db.organizationSettings.findMany({
-    where: { useOwnDb: true },
-    select: { organizationId: true },
-    take: 25,
-  });
-  for (const s of activated) {
-    try {
-      const client = (await getPrismaForOrg(s.organizationId)).client;
-      const d = await client.device.findFirst({
-        where: { id: deviceId },
-        select: { organizationId: true },
-      });
-      if (d) return d;
-    } catch {
-      continue; // misconfigured org — skip; its own requests fail closed
-    }
-  }
-  return null;
-}
-
 /** PATH A — device credential authentication. */
 async function authenticateDevice(args: {
   req: NextRequest;
@@ -104,18 +80,13 @@ async function authenticateDevice(args: {
     // there — the authentication decision MUST read the authoritative org DB
     // so a revocation takes effect immediately. AgentToken/AgentAccount stay
     // platform-side (credential control plane, deliberately never copied).
-    // Resolution: the platform device registry acts as an index to find the
-    // org; the bounded cross-org scan covers devices first seen after a
-    // cutover (same policy as discover).
-    const platformDevice = await db.device.findFirst({
-      where: { id: deviceId },
-      select: { organizationId: true },
-    });
-    let orgIdForClaim = platformDevice?.organizationId ?? null;
-    if (!orgIdForClaim) {
-      const scanned = await findDeviceAcrossActivatedOrgDbsById(deviceId);
-      orgIdForClaim = scanned?.organizationId ?? null;
-    }
+    // Resolution: the GLOBAL DEVICE ROUTING INDEX answers which org owns this
+    // device with ONE indexed platform lookup (the index was seeded from the
+    // platform Device table at migration and is self-healing); the bounded
+    // cross-org scan is only the index-miss cold start, same policy as
+    // discover.
+    const routed = await resolveDeviceByIdAcrossOrgDbs(deviceId);
+    const orgIdForClaim = routed?.organizationId ?? null;
     const orgData = orgIdForClaim
       ? (await getPrismaForOrg(orgIdForClaim)).client
       : db;

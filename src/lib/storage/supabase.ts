@@ -123,6 +123,37 @@ export class SupabaseStorageDriver implements StorageDriver {
     return `${this.base()}/object/public/${encodeURIComponent(bucket)}/${encodeKey(objectKey)}`;
   }
 
+  /**
+   * List objects as storage keys. Supabase Storage models a hierarchy, so
+   * `prefix` (e.g. "screenshots/<orgId>/") narrows the listing cheaply and
+   * `limit` caps the response. The list endpoint returns bare names inside
+   * the bucket; every key is emitted in the canonical "screenshots/..." shape
+   * so callers (data-integrity job) can reconcile with DB filePath values by
+   * basename.
+   */
+  async listObjects(options: { prefix?: string; limit?: number } = {}): Promise<string[]> {
+    const { prefix = 'screenshots/', limit = 1000 } = options;
+    const bucket = prefix.split('/')[0] || 'screenshots';
+    const folder = prefix.slice(bucket.length + 1).replace(/\/+$/, '');
+    const res = await fetch(`${this.base()}/object/list/${encodeURIComponent(bucket)}`, {
+      method: 'POST',
+      headers: this.authHeaders({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify({
+        prefix: folder || '',
+        limit,
+        sortBy: { column: 'name', order: 'asc' },
+      }),
+    });
+    if (!res.ok) {
+      const detail = await res.text().catch(() => '');
+      throw storageError('unavailable', storageFailureMessage('list', res.status, detail));
+    }
+    const data = (await res.json()) as Array<{ name?: string }>;
+    return (data ?? [])
+      .map((entry) => (entry.name ? `${bucket}/${entry.name}` : null))
+      .filter((key): key is string => key !== null);
+  }
+
   /** Supabase Storage is object storage, not a locally reachable filesystem. */
   isFilesystemBacked(): boolean {
     return false;

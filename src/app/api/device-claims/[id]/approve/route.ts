@@ -5,6 +5,7 @@ import { authError, requireAdminOrg, SAFE_EMPLOYEE_SELECT, getPrismaForOrg } fro
 import { checkDeviceEntitlement } from '@/lib/device-entitlement';
 import { checkRateLimit, RATE_LIMITS, getClientIpFromHeaders } from '@/lib/rate-limit';
 import { createOrgNotification } from '@/lib/notifications/service';
+import { deviceClaimLockKey } from '@/lib/pg-locks';
 import { log, requestContext } from '@/lib/logger';
 
 // POST /api/device-claims/[id]/approve
@@ -125,6 +126,14 @@ export async function POST(
     }
 
     const result = await orgData.$transaction(async (tx) => {
+      // Cross-process serialization for this device's claim lifecycle: an
+      // approve racing a discover fresh-claim / cancel / reject on the SAME
+      // device is queued here (advisory lock in this tx, auto-released on
+      // commit/rollback), so the guarded CLAIM_NOT_PENDING_ANYMORE check below
+      // always sees a settled state and the partial unique index
+      // (one pending per device) can never be tripped by a true race.
+      await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtextextended(${deviceClaimLockKey(claim.deviceId)}, 0))`;
+
       // Serialize concurrent approvals for the SAME employee by taking a row
       // lock on the Employee row (SELECT ... FOR UPDATE).
       await tx.$queryRaw`SELECT id FROM "Employee" WHERE id = ${employee.id} FOR UPDATE`;

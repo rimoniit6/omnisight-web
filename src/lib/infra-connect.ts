@@ -23,6 +23,7 @@ import { invalidateOrgStorageCache } from '@/lib/org-storage';
 import { validateHostIsPublic, safeFetch } from '@/lib/ssrf';
 import { broadcastCacheInvalidation } from '@/lib/cache-invalidation';
 import { ensureCacheInvalidationListener } from '@/lib/cache-listener';
+import { setRoutingDbModeForOrg } from '@/lib/device-index';
 import type { DbSpec, StorageSpec } from '@/lib/infrastructure';
 
 // Start listening for cross-process cache invalidation events on first import.
@@ -441,6 +442,12 @@ export async function applyDatabaseSwitch(
       },
     });
   }
+  // Global device index write-through: flip the routing mode for every device
+  // of this org ATOMICALLY with the settings flip (same transaction). The
+  // routing index and the live routing decision can never disagree — an
+  // anonymous re-discover right after cutover resolves through the index's
+  // dbMode, which now points at the org's own database.
+  await setRoutingDbModeForOrg(client, orgId, spec.useOwnDb === false ? 'cloud' : 'own');
   await invalidateOrgDbCache(orgId);
   // Broadcast to other processes (Next.js instances, live-updates service)
   await broadcastCacheInvalidation(orgId, 'db');
@@ -467,6 +474,8 @@ export async function revertDatabaseSwitch(client: Prisma.TransactionClient, org
       useOwnDb: false,
     },
   });
+  // Global device index write-through (same atomic transaction as the flip).
+  await setRoutingDbModeForOrg(client, orgId, 'cloud');
   await invalidateOrgDbCache(orgId);
   await broadcastCacheInvalidation(orgId, 'db');
 }

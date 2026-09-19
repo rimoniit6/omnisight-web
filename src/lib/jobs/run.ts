@@ -18,6 +18,10 @@ import { runDataExpiryReminder, type DataExpiryReminderResult } from './data-exp
 import { runDemoSimulatorJob, type DemoSimulatorResult } from '@/lib/demo/simulator';
 import { runDemoResetJob, type DemoResetResult } from './demo-reset';
 import { runSentimentAlertsJob, type SentimentAlertsResult } from './sentiment-alerts';
+import { runDataIntegrityJob, type DataIntegrityResult } from './data-integrity';
+import { runSchemaDriftCheck, type SchemaDriftResult } from './schema-drift';
+import { runRefreshBaselinesJob, type RefreshBaselinesResult } from './refresh-baselines';
+import { runDeviceClaimRemindersJob, type DeviceClaimReminderJobResult } from './device-claim-reminders';
 
 // Lease primitives live in ./lease so callers that only need claim/release
 // (sentiment analyze route, demo simulator) don't import the whole job graph.
@@ -46,6 +50,14 @@ export interface JobsResult {
   demoReset: DemoResetResult | null;
   /** Low-sentiment alerting (negative/critical → org notification, 7-day cooldown). */
   sentimentAlerts: SentimentAlertsResult | null;
+  /** Daily data-integrity & storage-hygiene audit (device-index backfill, row↔object reconcile, FK sample). */
+  dataIntegrity: DataIntegrityResult | null;
+  /** Daily schema-drift monitor — platform + every activated org DB vs information_schema. */
+  schemaDrift: SchemaDriftResult | null;
+  /** Daily rolling-baseline refresh (hardening area 4) — persists EmployeeBaseline + grace periods. */
+  baselineRefresh: RefreshBaselinesResult | null;
+  /** Hourly device-claim approval reminders (hardening area 4) — cooldown-gated org notifications. */
+  deviceClaimReminders: DeviceClaimReminderJobResult | null;
   errors: string[];
 }
 
@@ -194,7 +206,7 @@ export async function runDataExpiryReminderJob(): Promise<DataExpiryReminderResu
 }
 
 export async function runScheduledJobs(): Promise<JobsResult> {
-  const result: JobsResult = { expiredConsents: 0, retention: { ...EMPTY_RETENTION }, projectTimeSync: null, anomalyDetection: null, agentTokenSweep: null, rateLimitSweep: null, deviceIntegrity: null, userSessionSweep: null, workDaySummary: null, alertRuleEvaluation: null, subscriptionSweep: null, syncDeviceCount: null, dataExpiryReminder: null, demoSimulator: null, demoReset: null, sentimentAlerts: null, errors: [] };
+  const result: JobsResult = { expiredConsents: 0, retention: { ...EMPTY_RETENTION }, projectTimeSync: null, anomalyDetection: null, agentTokenSweep: null, rateLimitSweep: null, deviceIntegrity: null, userSessionSweep: null, workDaySummary: null, alertRuleEvaluation: null, subscriptionSweep: null, syncDeviceCount: null, dataExpiryReminder: null, demoSimulator: null, demoReset: null, sentimentAlerts: null, dataIntegrity: null, schemaDrift: null, baselineRefresh: null, deviceClaimReminders: null, errors: [] };
 
   const started = Date.now();
 
@@ -403,10 +415,81 @@ export async function runScheduledJobs(): Promise<JobsResult> {
     await finishJob('sentiment_alerts', String(error)).catch(() => {});
   }
 
+  // Daily data-integrity & storage-hygiene audit (hardening area 3): device-
+  // routing-index backfill, screenshot row↔object reconciliation, and an FK
+  // sample across platform + activated org DBs. Self-heals the index; reports
+  // (never deletes) drift. Under the same crash-safe lease as every job.
+  if (await claimJob('data_integrity')) {
+    try {
+      result.dataIntegrity = await runDataIntegrityJob();
+      await finishJob('data_integrity', undefined, {
+        ...result.dataIntegrity,
+      });
+    } catch (error) {
+      result.errors.push(`data_integrity: ${String(error)}`);
+      await finishJob('data_integrity', String(error));
+    }
+  }
+
+  // Daily schema-drift monitor (hardening area 3): platform + every activated
+  // org DB compared against information_schema; drift → structured counts +
+  // optional Slack webhook. Read-only; per-database failures are isolated.
+  if (await claimJob('schema_drift')) {
+    try {
+      result.schemaDrift = await runSchemaDriftCheck();
+      await finishJob('schema_drift', undefined, {
+        databasesChecked: result.schemaDrift.databasesChecked,
+        tablesChecked: result.schemaDrift.tablesChecked,
+        missingTables: result.schemaDrift.missingTables.length,
+        missingColumns: result.schemaDrift.missingColumns.length,
+      });
+    } catch (error) {
+      result.errors.push(`schema_drift: ${String(error)}`);
+      await finishJob('schema_drift', String(error));
+    }
+  }
+
+  // Rolling anomaly-baseline refresh (hardening area 4): persists each active
+  // employee's 30-day baseline (EmployeeBaseline) in the resolved org data DB
+  // and derives the anomaly grace period (Employee.anomalyGraceUntil). The
+  // anomaly detector consumes grace as its new-hire gate; the dashboard reads
+  // the persisted baseline for transparency.
+  if (await claimJob('refresh_baselines')) {
+    try {
+      result.baselineRefresh = await runRefreshBaselinesJob();
+      await finishJob('refresh_baselines', undefined, {
+        orgsScanned: result.baselineRefresh.orgsScanned,
+        employeesRefreshed: result.baselineRefresh.employeesRefreshed,
+        inGrace: result.baselineRefresh.inGrace,
+        clearedGrace: result.baselineRefresh.clearedGrace,
+        errors: result.baselineRefresh.errors.length,
+      });
+    } catch (error) {
+      result.errors.push(`refresh_baselines: ${String(error)}`);
+      await finishJob('refresh_baselines', String(error));
+    }
+  }
+
+  // Device-claim approval reminders (hardening area 4): pending claims past
+  // the awaiting-approval threshold get one org-scoped notification per claim,
+  // cooldown-gated by DeviceClaim.reminderSentAt inside the same transaction.
+  if (await claimJob('device_claim_reminders')) {
+    try {
+      result.deviceClaimReminders = await runDeviceClaimRemindersJob();
+      await finishJob('device_claim_reminders', undefined, {
+        pendingScanned: result.deviceClaimReminders.pendingScanned,
+        remindersSent: result.deviceClaimReminders.remindersSent,
+        skippedCooldown: result.deviceClaimReminders.skippedCooldown,
+      });
+    } catch (error) {
+      result.errors.push(`device_claim_reminders: ${String(error)}`);
+      await finishJob('device_claim_reminders', String(error));
+    }
+  }
 
   const durationMs = Date.now() - started;
   await db.jobRun.updateMany({
-    where: { job: { in: ['expire_consents', 'retention_cleanup', 'project_time_sync', 'anomaly_detection', 'agent_token_sweep', 'rate_limit_sweep', 'device_integrity', 'user_session_sweep', 'audio_transcription', 'screenshot_processing', 'workday_summary', 'alert_rule_evaluation', 'subscription_sweep', 'sync_device_count', 'data_expiry_reminder', 'demo_simulator', 'demo_reset', 'sentiment_alerts'] } },
+    where: { job: { in: ['expire_consents', 'retention_cleanup', 'project_time_sync', 'anomaly_detection', 'agent_token_sweep', 'rate_limit_sweep', 'device_integrity', 'user_session_sweep', 'audio_transcription', 'screenshot_processing', 'workday_summary', 'alert_rule_evaluation', 'subscription_sweep', 'sync_device_count', 'data_expiry_reminder', 'demo_simulator', 'demo_reset', 'sentiment_alerts', 'data_integrity', 'schema_drift', 'refresh_baselines', 'device_claim_reminders'] } },
     data: { lastDurationMs: durationMs },
   });
 

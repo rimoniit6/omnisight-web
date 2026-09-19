@@ -6,6 +6,7 @@ import type { Prisma } from '@prisma/client';
 import { requireManagerOrg, authError, getPrismaForOrg } from '@/lib/api';
 import { hasActiveConsent } from '@/lib/consent';
 import { log, requestContext } from '@/lib/logger';
+import { toClientMessage } from '@/lib/error-boundary';
 import { claimJob, finishJob } from '@/lib/jobs/lease';
 
 /**
@@ -632,7 +633,7 @@ export async function POST(req: NextRequest) {
         // FIX (T1): log the actual error, not a constant string; the duplicated
         // garbled second log call (merge artifact) is removed.
         log.error('api.sentiment.analyze.', { error: String(err) }, requestContext(req));
-        return { ok: false as const, employeeId: employee.id, reason: String(err) };
+        return { ok: false as const, employeeId: employee.id, reason: toClientMessage(err) };
       }
     });
 

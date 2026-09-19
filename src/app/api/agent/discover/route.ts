@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
-import { getPrismaForOrg, findDeviceAcrossActivatedOrgDbs } from '@/lib/org-db';
+import { getPrismaForOrg } from '@/lib/org-db';
+import { resolveDeviceByAgentKeyAcrossOrgDbs, upsertDeviceRouting } from '@/lib/device-index';
+import { deviceClaimLockKey } from '@/lib/pg-locks';
+import { DEVICE_CLAIM_TTL_MS } from '@/config/constants';
 import {
   generateClaimSecret,
   hashClaimSecret,
@@ -9,6 +12,9 @@ import { validateAgentSession } from '@/lib/agent/session';
 import { checkRateLimit, RATE_LIMITS, getClientIpFromHeaders } from '@/lib/rate-limit';
 import { createOrgNotification } from '@/lib/notifications/service';
 import { log } from '@/lib/logger';
+
+/** Sentinel thrown inside the locked transaction → mapped to a concealing 404. */
+const DENIED = new Error('DEVICE_ACCESS_DENIED');
 
 // POST /api/agent/discover
 // Device discovery: a freshly installed agent identifies its device to the
@@ -45,9 +51,28 @@ import { log } from '@/lib/logger';
 // claim state, status, or ownership is ever disclosed. An unassigned device
 // in the session's organization is bound to the session employee inside the
 // device row lock (rule D). Revoked devices fail closed and are NEVER rebound.
+//
+// GLOBAL DEVICE INDEX (write-through): every resolution that yields a device
+// here — authenticated read from the org DB, or the cross-org resolver's
+// self-healing upsert — keeps src/lib/device-index.ts in sync so an anonymous
+// re-discover after a cutover resolves with ONE indexed platform lookup.
 
-/** Sentinel thrown inside the locked transaction → mapped to a concealing 404. */
-const DENIED = new Error('DEVICE_ACCESS_DENIED');
+// Write-through (fire-and-forget) keep-alive for the global device routing
+// index. The index is the anonymous-discover hot path; a crash between the
+// org-DB device write below and this upsert is healed by the daily backfill,
+// so a failure here must never fail the request.
+function keepRoutingIndexFresh(input: {
+  deviceId: string;
+  agentKey: string;
+  organizationId: string;
+}): void {
+  void upsertDeviceRouting(input).catch((error) => {
+    log.warn('agent-discover.index-upsert-failed', {
+      error: String((error as Error)?.message ?? error),
+      deviceId: input.deviceId,
+    });
+  });
+}
 
 export async function POST(req: NextRequest) {
   const startTime = Date.now();
@@ -140,18 +165,13 @@ export async function POST(req: NextRequest) {
         });
       }
     } else {
-      // No session: look the device up on the platform table first (still the
-      // authoritative home for orgs that never cut over).
-      let known: { id: string; organizationId: string; employeeId: string | null } | null = await db.device.findFirst({
-        where: { agentKey: deviceKey },
-        select: { id: true, organizationId: true, employeeId: true },
-      });
-      if (!known) {
-        // RARE unauth fan-out: the platform copy is stale/missing for a device
-        // first discovered after this org cut over. The scan is capped (see
-        // findDeviceAcrossActivatedOrgDbs) and only ever runs on this path.
-        known = await findDeviceAcrossActivatedOrgDbs(deviceKey);
-      }
+      // No session: resolve through the GLOBAL DEVICE ROUTING INDEX — ONE
+      // indexed platform lookup that answers which org database owns this
+      // agentKey, then a single read of the authoritative org DB. The legacy
+      // bounded cross-org scan is only reached when the index has never seen
+      // this device (cold start / crash between device write and index
+      // upsert); the resolver self-heals by writing the index through.
+      const known = await resolveDeviceByAgentKeyAcrossOrgDbs(deviceKey);
       if (known) {
         org = await db.organization.findUnique({ where: { id: known.organizationId } });
         if (org) {
@@ -186,6 +206,18 @@ export async function POST(req: NextRequest) {
 
     log.info('agent-discover.org-resolution:success', { orgId: org.id, deviceFound: !!device, ...ctx });
 
+    // Global device index write-through: already-known devices (found above in
+    // either the authenticated org-DB read or the cross-org resolver) keep
+    // their routing row fresh so the anonymous re-discover path stays a single
+    // indexed lookup. Fire-and-forget — never blocks the response.
+    if (device) {
+      keepRoutingIndexFresh({
+        deviceId: device.id,
+        agentKey: deviceKey,
+        organizationId: org.id,
+      });
+    }
+
     if (!device) {
       // First sight: create the pending Device + claim atomically.
       log.info('agent-discover.transaction:start', { flow: 'new-device', ...ctx });
@@ -213,7 +245,7 @@ export async function POST(req: NextRequest) {
             deviceId: dev.id,
             claimSecretHash: hashClaimSecret(secret),
             status: 'pending',
-            expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
+expiresAt: new Date(Date.now() + DEVICE_CLAIM_TTL_MS),
           },
         });
         await tx.auditLog.create({
@@ -250,6 +282,12 @@ export async function POST(req: NextRequest) {
         ...ctx,
       });
 
+      keepRoutingIndexFresh({
+        deviceId: created.dev.id,
+        agentKey: deviceKey,
+        organizationId: org.id,
+      });
+
       return NextResponse.json(
         {
           success: true,
@@ -268,6 +306,13 @@ export async function POST(req: NextRequest) {
     // unique constraint is gone — the history model allows many claims).
     log.info('agent-discover.transaction:start', { flow: 'existing-device', ...ctx });
     const outcome = await orgData.$transaction(async (tx) => {
+      // Cross-process serialization for this device's claim lifecycle — the
+      // same advisory key used by the admin approve/cancel/reject paths. A
+      // fresh claim (below) and a concurrent approve on the SAME device are
+      // queued, so the partial unique index DeviceClaim_one_pending_per_device
+      // is never tripped by a true race. Auto-released at tx end.
+      await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtextextended(${deviceClaimLockKey(device.id)}, 0))`;
+
       await tx.$queryRaw`SELECT id FROM "Device" WHERE id = ${device.id} FOR UPDATE`;
 
       // RE-READ under the lock: the pre-transaction row may be stale if a

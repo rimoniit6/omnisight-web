@@ -62,6 +62,8 @@ export const MIGRATION_TABLES: MigrationTable[] = [
   { model: 'department', table: 'Department', nullableFks: ['managerId'] },
   { model: 'project', table: 'Project', nullableFks: ['departmentId'] },
   { model: 'employee', table: 'Employee', nullableFks: ['departmentId', 'activeTrackingProjectId'] },
+  // Rolling-baseline store (hardening area 4) — 1:1 with Employee, org-owned.
+  { model: 'employeeBaseline', table: 'EmployeeBaseline', nullableFks: [] },
   { model: 'device', table: 'Device', nullableFks: ['employeeId'] },
   { model: 'deviceClaim', table: 'DeviceClaim', nullableFks: ['employeeId'] },
   { model: 'agentCommand', table: 'AgentCommand', nullableFks: [] },

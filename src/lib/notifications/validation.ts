@@ -26,6 +26,7 @@ const SAFE_INTERNAL_PREFIXES = [
   '/notifications',
   '/alerts',
   '/security',
+  '/agent-approvals',
 ];
 
 const UNSAFE_PROTOCOLS = ['javascript:', 'data:', 'vbscript:', 'file:'];

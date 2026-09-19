@@ -4,6 +4,7 @@ import { db } from '@/lib/db';
 import { authError, requireSessionOrg, requireAdminOrg, validatePagination, getPrismaForOrg } from '@/lib/api';
 import { effectiveDeviceStatus } from '@/lib/device-status';
 import { checkDeviceEntitlement } from '@/lib/device-entitlement';
+import { upsertDeviceRouting } from '@/lib/device-index';
 import { log, requestContext } from '@/lib/logger';
 
 export async function GET(req: NextRequest) {
@@ -111,6 +112,20 @@ export async function POST(req: NextRequest) {
         status: 'online', organizationId: admin.organizationId,
       },
       include: { employee: { select: { id: true, firstName: true, lastName: true } } },
+    });
+    // Global device index write-through: an admin-created device resolves via
+    // the routing index on its first anonymous event just like an agent-
+    // discovered one. Fire-and-forget — a failure is healed by the daily
+    // backfill and must never roll back the admin's create.
+    void upsertDeviceRouting({
+      deviceId: device.id,
+      agentKey: null,
+      organizationId: admin.organizationId,
+    }).catch((error) => {
+      log.warn('api.devices.index-upsert-failed', {
+        error: String((error as Error)?.message ?? error),
+        deviceId: device.id,
+      });
     });
     return NextResponse.json({ data: device }, { status: 201 });
   } catch (error) {

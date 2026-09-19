@@ -400,7 +400,9 @@ model Organization {
   projectMembers               ProjectMember[]
   timeEntries                  TimeEntry[]
   projectTimeSyncs             ProjectTimeSync[]
+  deviceRouting                DeviceRouting[]
   sentimentRecords             SentimentRecord[]
+  employeeBaselines            EmployeeBaseline[]
   keyboardActivities           KeyboardActivity[]
   locationEvents               LocationEvent[]
   agentCommands                AgentCommand[]
@@ -484,6 +486,13 @@ model Employee {
   // project (engine falls back to the exactly-one-membership rule). SetNull
   // keeps the FK honest when a project row is deleted.
   activeTrackingProjectId String?
+  // Rolling-baseline grace period (hardening area 4): when set, the anomaly
+  // detector skips this employee (rule-skip reason `in_grace_period`) until
+  // the timestamp passes. Set for new employees / immature baselines by the
+  // refresh-baselines job; cleared automatically once the persisted baseline
+  // has >= MIN_BASELINE_DAYS days of activity. Prevents false "productivity
+  // drop" / "low activity" verdicts on shallow history.
+  anomalyGraceUntil      DateTime?
   createdAt               DateTime  @default(now())
   updatedAt               DateTime  @updatedAt
 
@@ -514,12 +523,54 @@ model Employee {
   audioRecordings       AudioRecording[]
   usbEvents             UsbEvent[]
   policyViolations      PolicyViolation[]
+  baseline              EmployeeBaseline? // 1:1 rolling 30-day baseline (hardening area 4)
 
   @@unique([email, organizationId])
   @@index([organizationId])
   @@index([departmentId])
   @@index([status])
   @@index([activeTrackingProjectId])
+}
+
+// ==================== Employee Baseline (Rolling 30-day) ====================
+// Persisted per-employee rolling baseline (hardening area 4). Computed daily
+// by src/lib/jobs/refresh-baselines.ts from the employee's trailing 30 days of
+// activity (window = [30d ago, 7d ago), the same window the detection engine
+// compares against) and stored in the ORG data database so it survives org DB
+// cutover like every other tenant row.
+//
+// What it buys beyond raw window re-computation:
+//   - a durable "baseline maturity" signal (activityDays >= MIN_BASELINE_DAYS)
+//     that drives the anomaly grace period on Employee.anomalyGraceUntil
+//   - insight/UX transparency: the dashboard can show "baseline: 18 active
+//     days, 92% productive ratio" instead of a silent rule skip
+//   - a single daily write per employee (bounded volume; update-in-place)
+
+model EmployeeBaseline {
+  id                String   @id @default(cuid())
+  employeeId        String   @unique // 1:1 with Employee
+  organizationId    String
+  // Window this baseline covers (rolling): [windowStart, windowEnd).
+  windowStart       DateTime
+  windowEnd         DateTime
+  // Distinct days (org timezone) with >= 1 activity row in the window.
+  activityDays      Int      @default(0)
+  // Non-idle work minutes in the window (idle never counts — F-3 parity).
+  totalMinutes      Int      @default(0)
+  productiveMinutes Int      @default(0)
+  productiveRatio   Float    @default(0) // productiveMinutes / totalMinutes (0 when total = 0)
+  avgDailyMinutes   Float    @default(0) // totalMinutes / activityDays (0 when none)
+  avgIdleMinutes    Float    @default(0) // idle minutes per window day
+  offHoursPerDay    Float    @default(0) // off-hours activity rows per window day
+  appsPerDay        Float    @default(0) // application activity rows per window day
+  computedAt        DateTime @default(now())
+
+  // Relations
+  employee     Employee     @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId])
+  @@index([windowEnd])
 }
 
 // ==================== Agent Account (Authenticated Agent Login) ====================
@@ -594,6 +645,49 @@ model Device {
   @@index([updatedAt])
 }
 
+// ==================== Device Routing Index (Global Device Lookup) =========
+// Platform/control-plane routing index mapping a device to the DATABASE that
+// holds its authoritative Device row.
+//
+//   agentKey -> deviceId -> organizationId + dbMode ('cloud' | 'own')
+//
+// BEFORE this index, an anonymous re-discover after a customer cutover had to
+// fan out to EVERY activated org DB (bounded 25) to locate a device by
+// agentKey — visible latency plus a cross-tenant existence oracle. With the
+// routing index the platform owns ONE row per device: the agent's query hits
+// a single indexed platform lookup, resolves the org + shard, and only then
+// touches the authoritative org DB.
+//
+// Write-through invariants:
+//   • Upserted atomically on device creation (agent discover + admin create).
+//   • dbMode is flipped to 'own'/'cloud' INSIDE the same transaction that
+//     flips OrganizationSettings.useOwnDb (applyDatabaseSwitch) — the index
+//     can never disagree with the live routing decision.
+//   • The daily data-integrity job backfills any straggler row (crash between
+//     device write and index upsert) so the index self-heals.
+//
+// Reads NEVER cross tenants: both lookup paths (by agentKey, by deviceId)
+// return the routing for a single device; the caller's own tenant checks then
+// apply exactly as they do for the platform Device table today.
+model DeviceRouting {
+  id             String   @id @default(cuid())
+  deviceId       String   @unique
+  agentKey       String?  @unique // null for admin-created devices without a machine identity yet
+  organizationId String
+  // Where the authoritative Device row lives: 'cloud' = platform DB,
+  // 'own' = the org's dedicated analytics DB (getPrismaForOrg mode).
+  dbMode         String   @default("cloud")
+  lastSeenAt     DateTime @default(now())
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  // Relations
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId])
+  @@index([updatedAt])
+}
+
 // ==================== Device Claim (Device Discovery) ====================
 // A discovered-but-unassigned device awaiting admin approval. Device approval
 // (assignment to an employee) is COMPLETELY SEPARATE from Consent — approving
@@ -616,6 +710,10 @@ model DeviceClaim {
   expiresAt           DateTime?
   createdAt           DateTime  @default(now())
   updatedAt           DateTime  @updatedAt
+  // Last approval-reminder notification sent for a pending claim (hardening
+  // area 4). Null = never reminded. Gates the device-claim-reminders job's
+  // cooldown so an old pending claim is not re-notified every run.
+  reminderSentAt      DateTime?
 
   // Relations
   device       Device       @relation(fields: [deviceId], references: [id], onDelete: Cascade)
