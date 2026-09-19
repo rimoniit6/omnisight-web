@@ -29,8 +29,6 @@
  *     guarded by an atomic DB claim inside the runner itself, so it never
  *     double-runs a migration even across processes.
  */
-import { installShutdownHandlers, isDraining, registerDrainable } from '@/lib/graceful-shutdown';
-
 export async function register() {
   // Runtime boundary: Next.js compiles instrumentation.ts for BOTH the Node.js
   // and Edge runtimes. The job scheduler below (and its transitive imports:
@@ -47,6 +45,13 @@ export async function register() {
   // other initialisation. Throws with a clear message when misconfigured.
   const { validateEnv, readIntervalSeconds } = await import('@/lib/env-validator');
   validateEnv();
+
+  // Graceful shutdown uses Node-only APIs (process signals, process.exit,
+  // timeout .unref()). Importing it here — AFTER the NEXT_RUNTIME guard —
+  // keeps graceful-shutdown out of the Edge instrumentation graph that
+  // Next.js compiles from this file, exactly like env-validator, jobs/run,
+  // migration/runner and db below.
+  const { installShutdownHandlers, isDraining, registerDrainable } = await import('@/lib/graceful-shutdown');
 
   // NOTE: the self-hosted startup license check was removed with the
   // LicenseKey / self-hosted architecture (not a V1 service model).
