@@ -4,6 +4,11 @@
 // suite. Each suite owns its own database (workai_test_<suite>), so parallel
 // test files never collide.
 //
+// `drop` terminates any lingering connections first (e.g. a Prisma pool or a
+// pg_notify LISTEN socket that outlived db.$disconnect()) so the teardown
+// cannot fail with "database ... is being accessed by other users" while a
+// sibling test process still owns a connection. Requires PostgreSQL >= 13.
+//
 // Usage:
 //   node scripts/pg-test-db.mjs ensure workai_test_zerotouch
 //   node scripts/pg-test-db.mjs drop   workai_test_zerotouch
@@ -136,6 +141,6 @@ if (action === 'ensure') {
   if (!exists()) run(`CREATE DATABASE "${dbName}"`);
   console.log(`postgres test db ensured: ${dbName}`);
 } else {
-  run(`DROP DATABASE IF EXISTS "${dbName}"`);
+  run(`DROP DATABASE IF EXISTS "${dbName}" WITH (FORCE)`);
   console.log(`postgres test db dropped: ${dbName}`);
 }

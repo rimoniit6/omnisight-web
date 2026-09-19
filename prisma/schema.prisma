@@ -1874,7 +1874,7 @@ model PolicyViolation {
 
 model Anomaly {
   id             String    @id @default(cuid())
-  type           String // productivity_drop, unusual_login, excessive_idle, rapid_app_switch, overtime_work, policy_breach, unusual_screenshot, low_activity_spike
+  type           String // productivity_drop, unusual_login, excessive_idle, rapid_app_switch, overtime_work, policy_breach, unusual_screenshot, low_activity_spike, device_missing
   severity       String    @default("medium") // low, medium, high, critical
   status         String    @default("detected") // detected, investigating, resolved, false_positive
   title          String

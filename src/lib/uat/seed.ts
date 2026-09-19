@@ -24,6 +24,7 @@ import { db } from '@/lib/db';
 import { getPrismaForOrg } from '@/lib/org-db';
 import { hashPasswordSync } from '@/lib/auth';
 import { hashClaimSecret } from '@/lib/agent/auth';
+import { logConsent } from '@/lib/consent';
 import {
   WORK_START_MINUTES,
   WORK_END_MINUTES,
@@ -46,6 +47,12 @@ export const UAT_ORG_TIMEZONE = 'Asia/Dhaka';
 export const UAT_ADMIN_EMAIL = process.env.UAT_ADMIN_EMAIL || 'uat-admin@omnisight.example.com';
 export const UAT_ADMIN_PASSWORD = process.env.UAT_ADMIN_PASSWORD || 'Uat@Admin2026!';
 export const UAT_AGENT_PASSWORD = process.env.UAT_AGENT_PASSWORD || 'UatAgent#2026';
+// Role-specific UAT logins (manager/viewer) — same synthetic, env-overridable
+// pattern as the admin credentials above.
+export const UAT_MANAGER_EMAIL = process.env.UAT_MANAGER_EMAIL || 'uat-manager@omnisight.example.com';
+export const UAT_MANAGER_PASSWORD = process.env.UAT_MANAGER_PASSWORD || 'Uat@Manager2026!';
+export const UAT_VIEWER_EMAIL = process.env.UAT_VIEWER_EMAIL || 'uat-viewer@omnisight.example.com';
+export const UAT_VIEWER_PASSWORD = process.env.UAT_VIEWER_PASSWORD || 'Uat@Viewer2026!';
 
 export const UAT_EMPLOYEE_COUNT = 50;
 export const ACTIVITY_DAYS = 30;
@@ -125,6 +132,8 @@ export interface UatSeedResult {
   workDaySummaries: number;
   consentPolicies: number;
   consentGrants: number;
+  consentLogs: number;
+  alerts: number;
   notifications: number;
   anomalies: number;
 }
@@ -209,6 +218,47 @@ export async function ensureUatAdmin(orgId: string): Promise<{ userId: string; c
 }
 
 /**
+ * Role-specific UAT logins: one `manager` and one `viewer`, exercising the
+ * real hasRolePermission() hierarchy (manager=20, viewer=10) through the same
+ * AppUser + OrganizationMembership path as the admin account above.
+ * Credentials are synthetic, env-overridable, documented in UAT-CHECKLIST.md.
+ */
+export async function ensureUatRbacUsers(orgId: string): Promise<{ managerId: string; viewerId: string }> {
+  const specs = [
+    { email: UAT_MANAGER_EMAIL, name: 'UAT Manager', password: UAT_MANAGER_PASSWORD, role: 'manager' },
+    { email: UAT_VIEWER_EMAIL, name: 'UAT Viewer', password: UAT_VIEWER_PASSWORD, role: 'viewer' },
+  ] as const;
+  const ids: Partial<Record<'manager' | 'viewer', string>> = {};
+  for (const spec of specs) {
+    let userId = (await db.appUser.findUnique({ where: { email: spec.email }, select: { id: true } }))?.id;
+    if (!userId) {
+      const user = await db.appUser.create({
+        data: {
+          email: spec.email,
+          name: spec.name,
+          password: hashPasswordSync(spec.password),
+          role: spec.role,
+          organizationId: orgId,
+          isActive: true,
+          mustChangePassword: false,
+        },
+        select: { id: true },
+      });
+      userId = user.id;
+    }
+    // Membership carries the org role used by hasRolePermission(); upsert
+    // keeps role/status in sync if an existing account drifted.
+    await db.organizationMembership.upsert({
+      where: { userId_organizationId: { userId, organizationId: orgId } },
+      update: { role: spec.role, status: 'ACTIVE' },
+      create: { userId, organizationId: orgId, role: spec.role, status: 'ACTIVE' },
+    });
+    ids[spec.role] = userId;
+  }
+  return { managerId: ids.manager!, viewerId: ids.viewer! };
+}
+
+/**
  * Delete ALL UAT-org data, constrained row-by-row to the resolved UAT org.
  * ConsentLog holds a Restrict FK to Consent, so it is removed first. The org
  * row itself is NEVER deleted, and the platform AppUser admin is untouched
@@ -230,6 +280,10 @@ export async function wipeUatData(uatOrgId: string): Promise<void> {
 
   await orgData.consentLog.deleteMany({ where: { organizationId: uatOrgId } });
   await orgData.consent.deleteMany({ where: { organizationId: uatOrgId } });
+  // Policies must go too: the seeder always writes version 'v1' and
+  // ConsentPolicy is @@unique([organizationId, consentType, version]) — leaving
+  // old policies behind would crash every re-seed after the first.
+  await orgData.consentPolicy.deleteMany({ where: { organizationId: uatOrgId } });
 
   await orgData.activity.deleteMany({ where: { employeeId: inEmp } });
   await orgData.activityBatchReceipt.deleteMany({ where: { organizationId: uatOrgId } });
@@ -317,7 +371,8 @@ export async function seedUatData(uatOrgId: string): Promise<UatSeedResult> {
   const result: UatSeedResult = {
     organizationId: uatOrgId,
     employees: 0, agentAccounts: 0, devices: 0, pendingClaims: 0, activities: 0,
-    workDaySummaries: 0, consentPolicies: 0, consentGrants: 0, notifications: 0, anomalies: 0,
+    workDaySummaries: 0, consentPolicies: 0, consentGrants: 0, consentLogs: 0, alerts: 0,
+    notifications: 0, anomalies: 0,
   };
 
   // ── Departments ──
@@ -463,20 +518,37 @@ export async function seedUatData(uatOrgId: string): Promise<UatSeedResult> {
     const empRowId = empIds.get(e.employeeId)!;
     for (const type of UAT_CONSENT_TYPES) {
       const isDeniedGap = CONSENT_GAP_EMPLOYEE_INDICES.includes(empIdx) && type === 'screenshot';
-      await orgData.consent.create({
+      const action = isDeniedGap ? 'denied' : 'granted';
+      const gapNotes = isDeniedGap ? 'UAT: intentional consent gap — employee declined screenshot consent.' : null;
+      const created = await orgData.consent.create({
         data: {
           employeeId: empRowId,
           consentType: type,
-          status: isDeniedGap ? 'denied' : 'granted',
+          status: action,
           grantedAt: isDeniedGap ? null : new Date(e.joinDate.getTime() + 24 * 60 * 60 * 1000),
           consentVersion: 'v1',
           policyId: policyIds.get(type) ?? null,
-          notes: isDeniedGap ? 'UAT: intentional consent gap — employee declined screenshot consent.' : null,
+          notes: gapNotes,
           organizationId: uatOrgId,
         },
         select: { id: true },
       });
+      // Production-lifecycle parity: in the app every consent is created
+      // 'pending' then moved through applyConsentTransition, which ALWAYS
+      // writes a ConsentLog row (Restrict FK — consents with history can
+      // never be hard-deleted). Backfill the equivalent history via the SAME
+      // production log writer so seeded data matches real audit semantics.
+      await logConsent(
+        orgData,
+        created.id,
+        action,
+        `Consent for ${type} pending -> ${action}${gapNotes ? ` (${gapNotes})` : ''}`,
+        `${e.firstName} ${e.lastName}`,
+        uatOrgId,
+        null
+      );
       result.consentGrants++;
+      result.consentLogs++;
     }
   }
 
@@ -633,6 +705,17 @@ export async function seedUatData(uatOrgId: string): Promise<UatSeedResult> {
     ],
   });
   result.notifications += 6;
+
+  // ── Alerts (3 — the dashboard "recent alerts" panel and checklist §A read
+  //    alert.count; the wipe already cleans alerts) ──
+  await orgData.alert.createMany({
+    data: [
+      { title: 'Device offline', description: 'A workstation stopped reporting heartbeats for over 3 hours.', type: 'device_offline', severity: 'error', status: 'pending', source: 'heartbeat-monitor', deviceId: offlineDevice?.id ?? null, organizationId: uatOrgId },
+      { title: 'Policy violation', description: 'An application blocked by the usage policy was launched during work hours.', type: 'policy_violation', severity: 'warning', status: 'acknowledged', source: 'policy-engine', organizationId: uatOrgId },
+      { title: 'Unapproved device discovered', description: 'A device was discovered on the network and awaits claim approval.', type: 'security', severity: 'critical', status: 'pending', source: 'device-discovery', organizationId: uatOrgId },
+    ],
+  });
+  result.alerts += 3;
 
   // ── Anomalies (dedupeKey null → never collides with live detection) ──
   const midEmp = fixtures[Math.floor(fixtures.length / 2)];

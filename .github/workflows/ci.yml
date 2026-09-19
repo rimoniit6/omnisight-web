@@ -160,9 +160,19 @@ jobs:
       - name: Generate Prisma client
         run: bun run db:generate
 
-      - name: Apply migrations to server database
+      # Every isolated test database must be migrated on its own before any
+      # suite uses it — not just test_server. test_unit / test_integration /
+      # test_all are created empty above and would otherwise fail with
+      # "_prisma_migrations does not exist" / missing app tables whenever a
+      # suite consumes the suite-level DATABASE_URL instead of self-provisioning
+      # a throwaway workai_test_* database.
+      - name: Apply migrations to all test databases
         run: |
-          DATABASE_URL="$SERVER_DATABASE_URL" DIRECT_URL="$SERVER_DIRECT_URL" bun run db:deploy
+          for db in test_server test_unit test_integration test_all; do
+            DATABASE_URL="${PG_TEST_BASE_URL}/${db}?schema=public" \
+            DIRECT_URL="${PG_TEST_BASE_URL}/${db}?schema=public" \
+            bun run db:deploy
+          done
 
       - name: Bootstrap Super Admin on server database
         run: |

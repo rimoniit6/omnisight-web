@@ -18,11 +18,16 @@ import { db } from '@/lib/db';
 import {
   ensureUatOrg,
   ensureUatAdmin,
+  ensureUatRbacUsers,
   wipeUatData,
   seedUatData,
   UAT_ADMIN_EMAIL,
   UAT_ADMIN_PASSWORD,
   UAT_AGENT_PASSWORD,
+  UAT_MANAGER_EMAIL,
+  UAT_MANAGER_PASSWORD,
+  UAT_VIEWER_EMAIL,
+  UAT_VIEWER_PASSWORD,
 } from '../src/lib/uat/seed';
 
 (async () => {
@@ -39,6 +44,9 @@ import {
   const admin = await ensureUatAdmin(org.id);
   console.log(`${admin.created ? '✅' : 'ℹ️'} UAT admin ${admin.created ? 'created' : 'exists (left unchanged)'}: ${UAT_ADMIN_EMAIL}`);
 
+  await ensureUatRbacUsers(org.id);
+  console.log(`✅ UAT role logins ensured: manager=${UAT_MANAGER_EMAIL}, viewer=${UAT_VIEWER_EMAIL}`);
+
   if (process.argv.includes('--wipe-only')) {
     await wipeUatData(org.id);
     console.log('✅ UAT data wiped (UAT org only).');
@@ -50,6 +58,8 @@ import {
 
   // Synthetic test-only credentials (see docs/UAT-CHECKLIST.md) — UAT org only.
   console.log(`   Admin login : ${UAT_ADMIN_EMAIL} / ${UAT_ADMIN_PASSWORD} (UAT test only)`);
+  console.log(`   Manager login: ${UAT_MANAGER_EMAIL} / ${UAT_MANAGER_PASSWORD} (UAT test only)`);
+  console.log(`   Viewer login : ${UAT_VIEWER_EMAIL} / ${UAT_VIEWER_PASSWORD} (UAT test only)`);
   console.log(`   Agent login : <employeeId> / ${UAT_AGENT_PASSWORD} (UAT test only, 50 accounts)`);
   await db.$disconnect();
 })().catch(async (e) => {

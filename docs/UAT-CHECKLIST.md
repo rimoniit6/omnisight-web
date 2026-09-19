@@ -39,15 +39,30 @@ SEED_ALLOWED=1 npm run seed:uat -- --wipe-only   # wipe UAT data only
 | WorkDaySummary | ~1.5k+ | rollups per (employee, day) + today's partial |
 | Consent policies | 6 | published `v1` for monitoring/screenshot/activity/keystroke/location/webcam |
 | Consent grants | 300 | granted for all 50 × 6 types; **3 employees deny screenshot** (indices 10/20/30) |
+| ConsentLog entries | 300 | one per consent (`granted` ×297 / `denied` ×3) — written through the production `logConsent` writer, so consent history is immutable (Restrict FK) as in production |
+| Alerts | 3 | device_offline (error/pending), policy_violation (warning/acknowledged), security (critical/pending) — feeds the dashboard "recent alerts" panel |
 | Notifications | 6 | mixed unread/read, incl. device_offline + pending-claim |
 | Anomalies | 4 | productivity_drop, excessive_idle, device_missing, rapid_app_switch (`dedupeKey null`) |
 
 **Test credentials (synthetic — documented here on purpose):**
 - Admin login: `uat-admin@omnisight.example.com / Uat@Admin2026!`
+- Manager login: `uat-manager@omnisight.example.com / Uat@Manager2026!` (org role `manager`)
+- Viewer login: `uat-viewer@omnisight.example.com / Uat@Viewer2026!` (org role `viewer` — read-only)
 - Agent login: `<employeeId> / UatAgent#2026` (all 50 accounts)
 - Pending-claim secrets: `UAT-claim-secret-1` … `UAT-claim-secret-10`
 
-Env overrides: `UAT_ADMIN_EMAIL`, `UAT_ADMIN_PASSWORD`, `UAT_AGENT_PASSWORD`.
+Env overrides: `UAT_ADMIN_EMAIL`, `UAT_ADMIN_PASSWORD`, `UAT_AGENT_PASSWORD`, `UAT_MANAGER_EMAIL`, `UAT_MANAGER_PASSWORD`, `UAT_VIEWER_EMAIL`, `UAT_VIEWER_PASSWORD`.
+
+## 2b. Intentional coverage boundaries (by design, not gaps)
+
+- **Customer DB / cutover / split-brain / multi-database isolation** — exercised by dedicated CI fixtures
+  (`tests/full-org-cutover.test.ts`, `tests/org-cutover-routing.test.ts`, `tests/realtime-customer-db.test.ts`,
+  `tests/consent-split-brain.test.ts`). The UAT org is intentionally `MANAGED` only.
+- **Screenshot records** — intentionally not seeded (no synthetic imagery); screenshot consent enforcement is
+  verified at the API level using the 3 screenshot-`denied` employees.
+- **Consent `revoked`/`expired`/`pending` standing rows** — every non-granted status fails closed identically;
+  lifecycle transitions are covered by CI suites, so UAT keeps the documented 297 granted / 3 denied distribution.
+- **Device `retired`/`inactive` states** — represented by CI fixtures; UAT pins the 28 online / 12 offline fleet.
 
 ## 3. Acceptance checklist
 
