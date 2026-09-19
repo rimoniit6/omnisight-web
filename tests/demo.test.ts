@@ -199,7 +199,7 @@ test('DEMO-G2: bootstrap creates exactly one demo org with MANAGED model and isD
   const memberships = await db.organizationMembership.findMany({ where: { userId: boot.demoUserId } });
   assert.equal(memberships.length, 1);
   assert.equal(memberships[0].organizationId, demoOrgId);
-  assert.equal(memberships[0].role, 'manager');
+  assert.equal(memberships[0].role, 'org_admin');
   assert.equal(memberships[0].status, 'ACTIVE');
 });
 
@@ -240,7 +240,7 @@ test('DEMO-E1: GET /api/demo/enter mints a session and redirects to /', async ()
     activeOrganizationId?: string; role?: string;
   };
   assert.equal(payload.activeOrganizationId, demoOrgId);
-  assert.equal(payload.role, 'manager');
+  assert.equal(payload.role, 'org_admin');
 });
 
 test('DEMO-E1b: proxy treats /api/demo/enter as public (no token required)', async () => {
@@ -267,7 +267,7 @@ test('DEMO-E2: /api/auth/me reports isDemo=true for the demo session', async () 
   const body = await res.json();
   assert.equal(body.isDemo, true);
   assert.equal(body.organization.id, demoOrgId);
-  assert.equal(body.user.role, 'manager');
+  assert.equal(body.user.role, 'org_admin');
 });
 
 test('DEMO-E2b: demo session row is consistent (organizationId + activeOrganizationId) and passes verifySessionToken', async () => {

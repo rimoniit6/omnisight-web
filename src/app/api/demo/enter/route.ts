@@ -102,7 +102,7 @@ export async function GET(req: NextRequest) {
     });
 
     // 5) Sign a NORMAL JWT (org-bound; role from the membership layer is
-    //    'manager' via the demo membership — mirror login's effectiveRole
+    //    'org_admin' via the demo membership — mirror login's effectiveRole
     //    resolution by reading the ACTIVE membership directly).
     const membership = await db.organizationMembership.findUnique({
       where: { userId_organizationId: { userId: user.id, organizationId: demo.id } },

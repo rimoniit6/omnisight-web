@@ -10,6 +10,14 @@
 // suite fails.
 import { spawnSync } from 'node:child_process';
 import { readdirSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { dirname, join } from 'node:path';
+
+// Preload the `server-only` marker mock before any test file so tsx can import
+// app modules (org-db, cache-invalidation, infra-connect, demo/guards) that
+// import the real `server-only` package — which throws outside a Next.js RSC
+// bundler. This replaces the per-file first-import requirement.
+const mockServerOnly = join(dirname(fileURLToPath(import.meta.url)), '..', 'tests', 'helpers', 'mock-server-only.cjs');
 
 const files = readdirSync('tests')
   .filter((f) => f.endsWith('.test.ts'))
@@ -30,7 +38,7 @@ const PG_TEST_BASE_URL =
 let failed = 0;
 for (const file of files) {
   process.stdout.write(`\n=== tests/${file} ===\n`);
-  const r = spawnSync(process.execPath, ['--import', 'tsx', '--test', `tests/${file}`], {
+  const r = spawnSync(process.execPath, ['--require', mockServerOnly, '--import', 'tsx', '--test', `tests/${file}`], {
     stdio: 'inherit',
     env: { 
       ...process.env, 

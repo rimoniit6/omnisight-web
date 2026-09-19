@@ -8,7 +8,9 @@
 // Guarantees:
 //   • at most one demo org (DB partial unique index + script-level checks)
 //   • demo user is NEVER super_admin (role 'user', no platform power)
-//   • demo membership role is 'manager' (full read surface incl. Reports)
+//   • demo membership role is 'org_admin' (Organization Admin view — full
+//     feature surface incl. Users, Settings, Security, AI Provider; visitors
+//     see the admin experience the customer would configure)
 //   • subscription is a fictional, non-billable ACTIVE row (no invoices, no
 //     payment records, no purchase requests — never touches customer flows)
 //   • every write is asserted to target the demo org (assertDemoOrg)
@@ -141,9 +143,10 @@ export async function bootstrapDemo(): Promise<BootstrapResult> {
     userCreated = true;
   }
 
-  // ── 3. ACTIVE membership (role: manager — full read surface incl. Reports,
-  //       dashboards, screenshots; NOT org_admin so admin-only surfaces stay
-  //       out of navigation naturally). ─────────────────────────────────────
+  // ── 3. ACTIVE membership (role: org_admin — the Organization Admin view:
+  //       the fullest feature surface a demo visitor can see, incl. Users,
+  //       Settings, Security, AI Provider. NOT super_admin — platform/control-
+  //       plane surfaces stay out of navigation naturally). ───────────────
   const membership = await db.organizationMembership.findUnique({
     where: { userId_organizationId: { userId, organizationId: demo.id } },
     select: { id: true, role: true, status: true },
@@ -151,14 +154,14 @@ export async function bootstrapDemo(): Promise<BootstrapResult> {
   let membershipCreated = false;
   if (membership) {
     const patch: Record<string, unknown> = {};
-    if (membership.role !== 'manager') patch.role = 'manager';
+    if (membership.role !== 'org_admin') patch.role = 'org_admin';
     if (membership.status !== 'ACTIVE') patch.status = 'ACTIVE';
     if (Object.keys(patch).length > 0) {
       await db.organizationMembership.update({ where: { id: membership.id }, data: patch });
     }
   } else {
     await db.organizationMembership.create({
-      data: { userId, organizationId: demo.id, role: 'manager', status: 'ACTIVE' },
+      data: { userId, organizationId: demo.id, role: 'org_admin', status: 'ACTIVE' },
     });
     membershipCreated = true;
   }
@@ -241,7 +244,7 @@ if (isMain) {
       console.log('✅ Demo bootstrap complete (idempotent).');
       console.log(`   Demo organization: ${r.demoOrgId}${r.created.org ? ' (created)' : ' (reused)'}`);
       console.log(`   Demo user:         ${r.demoUserId}${r.created.user ? ' (created)' : ' (reused)'}`);
-      if (r.created.membership) console.log('   Membership:        created (manager/ACTIVE)');
+      if (r.created.membership) console.log('   Membership:        created (org_admin/ACTIVE)');
       if (r.created.subscription) console.log('   Subscription:      created (fictional ACTIVE)');
       console.log('   Next: run the demo seeder to populate the deterministic dataset.');
     })
